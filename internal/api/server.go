@@ -1,0 +1,906 @@
+package api
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/certs"
+	"github.com/flatrun/agent/internal/docker"
+	"github.com/flatrun/agent/internal/networks"
+	"github.com/flatrun/agent/pkg/config"
+	"github.com/flatrun/agent/pkg/plugins"
+	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
+)
+
+type Server struct {
+	config          *config.Config
+	router          *gin.Engine
+	server          *http.Server
+	manager         *docker.Manager
+	certsDiscovery  *certs.Discovery
+	networksManager *networks.Manager
+	pluginRegistry  *plugins.Registry
+	authMiddleware  *auth.Middleware
+}
+
+func New(cfg *config.Config) *Server {
+	if cfg.Logging.Level == "debug" {
+		gin.SetMode(gin.DebugMode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	router := gin.Default()
+
+	if cfg.API.EnableCORS {
+		router.Use(corsMiddleware(cfg.API.AllowedOrigins))
+	}
+
+	manager := docker.NewManager(cfg.DeploymentsPath)
+	certsDiscovery := certs.NewDiscovery(cfg.DeploymentsPath)
+	networksManager := networks.NewManager()
+	pluginsDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins")
+	pluginRegistry := plugins.NewRegistry(pluginsDir)
+	pluginRegistry.LoadFromDisk()
+	authMiddleware := auth.NewMiddleware(&cfg.Auth)
+
+	s := &Server{
+		config:          cfg,
+		router:          router,
+		manager:         manager,
+		certsDiscovery:  certsDiscovery,
+		networksManager: networksManager,
+		pluginRegistry:  pluginRegistry,
+		authMiddleware:  authMiddleware,
+	}
+
+	s.setupRoutes()
+
+	return s
+}
+
+func (s *Server) setupRoutes() {
+	api := s.router.Group("/api")
+	{
+		api.GET("/health", s.healthCheck)
+		api.GET("/auth/status", s.authMiddleware.GetAuthStatus)
+		api.POST("/auth/login", s.authMiddleware.Login)
+		api.GET("/auth/validate", s.authMiddleware.ValidateToken)
+
+		protected := api.Group("")
+		protected.Use(s.authMiddleware.RequireAuth())
+		{
+			protected.GET("/deployments", s.listDeployments)
+			protected.GET("/deployments/:name", s.getDeployment)
+			protected.POST("/deployments", s.createDeployment)
+			protected.PUT("/deployments/:name", s.updateDeployment)
+			protected.DELETE("/deployments/:name", s.deleteDeployment)
+			protected.POST("/deployments/:name/start", s.startDeployment)
+			protected.POST("/deployments/:name/stop", s.stopDeployment)
+			protected.POST("/deployments/:name/restart", s.restartDeployment)
+			protected.GET("/deployments/:name/logs", s.getDeploymentLogs)
+			protected.GET("/networks", s.listNetworks)
+			protected.POST("/networks", s.createNetwork)
+			protected.DELETE("/networks/:name", s.deleteNetwork)
+			protected.POST("/networks/:name/connect", s.connectContainer)
+			protected.POST("/networks/:name/disconnect", s.disconnectContainer)
+			protected.GET("/certificates", s.listCertificates)
+			protected.GET("/settings", s.getSettings)
+			protected.PUT("/settings", s.updateSettings)
+			protected.GET("/plugins", s.listPlugins)
+			protected.GET("/plugins/:name", s.getPlugin)
+			protected.POST("/plugins/:name/deployments", s.createPluginDeployment)
+			protected.GET("/templates", s.listTemplates)
+			protected.GET("/stats", s.getSystemStats)
+			protected.GET("/containers", s.listContainers)
+			protected.POST("/containers/:id/start", s.startContainer)
+			protected.POST("/containers/:id/stop", s.stopContainer)
+			protected.POST("/containers/:id/restart", s.restartContainer)
+			protected.DELETE("/containers/:id", s.removeContainer)
+			protected.GET("/containers/:id/logs", s.getContainerLogs)
+			protected.GET("/images", s.listImages)
+			protected.DELETE("/images/:id", s.removeImage)
+			protected.POST("/images/pull", s.pullImage)
+			protected.GET("/volumes", s.listVolumes)
+			protected.POST("/volumes", s.createVolume)
+			protected.DELETE("/volumes/:name", s.removeVolume)
+			protected.POST("/volumes/prune", s.pruneVolumes)
+		}
+	}
+}
+
+func (s *Server) Start() error {
+	addr := fmt.Sprintf("%s:%d", s.config.API.Host, s.config.API.Port)
+
+	s.server = &http.Server{
+		Addr:    addr,
+		Handler: s.router,
+	}
+
+	return s.server.ListenAndServe()
+}
+
+func (s *Server) Stop() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.server.Shutdown(ctx)
+}
+
+func (s *Server) healthCheck(c *gin.Context) {
+	stats, _ := s.manager.GetStats()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":           "healthy",
+		"agent":            "flatrun",
+		"deployments_path": s.config.DeploymentsPath,
+		"stats":            stats,
+	})
+}
+
+func (s *Server) listDeployments(c *gin.Context) {
+	deployments, err := s.manager.ListDeployments()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"deployments": deployments,
+		"path":        s.manager.BasePath(),
+	})
+}
+
+func (s *Server) getDeployment(c *gin.Context) {
+	name := c.Param("name")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found",
+		})
+		return
+	}
+
+	composeContent, _ := s.manager.GetComposeFile(name)
+
+	c.JSON(http.StatusOK, gin.H{
+		"deployment":      deployment,
+		"compose_content": composeContent,
+	})
+}
+
+func (s *Server) createDeployment(c *gin.Context) {
+	var req struct {
+		Name           string `json:"name" binding:"required"`
+		ComposeContent string `json:"compose_content" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.manager.CreateDeployment(req.Name, req.ComposeContent); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Deployment created",
+		"name":    req.Name,
+	})
+}
+
+func (s *Server) updateDeployment(c *gin.Context) {
+	name := c.Param("name")
+
+	var req struct {
+		ComposeContent string `json:"compose_content" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.manager.UpdateDeployment(name, req.ComposeContent); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Deployment updated",
+		"name":    name,
+	})
+}
+
+func (s *Server) deleteDeployment(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.manager.DeleteDeployment(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Deployment deleted",
+		"name":    name,
+	})
+}
+
+func (s *Server) startDeployment(c *gin.Context) {
+	name := c.Param("name")
+
+	output, err := s.manager.StartDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  err.Error(),
+			"output": output,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Deployment started",
+		"name":    name,
+		"output":  output,
+	})
+}
+
+func (s *Server) stopDeployment(c *gin.Context) {
+	name := c.Param("name")
+
+	output, err := s.manager.StopDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  err.Error(),
+			"output": output,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Deployment stopped",
+		"name":    name,
+		"output":  output,
+	})
+}
+
+func (s *Server) restartDeployment(c *gin.Context) {
+	name := c.Param("name")
+
+	output, err := s.manager.RestartDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  err.Error(),
+			"output": output,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Deployment restarted",
+		"name":    name,
+		"output":  output,
+	})
+}
+
+func (s *Server) getDeploymentLogs(c *gin.Context) {
+	name := c.Param("name")
+
+	tailStr := c.DefaultQuery("tail", "100")
+	tail, err := strconv.Atoi(tailStr)
+	if err != nil {
+		tail = 100
+	}
+
+	logs, err := s.manager.GetDeploymentLogs(name, tail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"name": name,
+		"logs": logs,
+	})
+}
+
+func (s *Server) listNetworks(c *gin.Context) {
+	networks, err := s.networksManager.ListNetworks()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"networks": networks,
+	})
+}
+
+func (s *Server) createNetwork(c *gin.Context) {
+	var req struct {
+		Name   string            `json:"name" binding:"required"`
+		Driver string            `json:"driver"`
+		Labels map[string]string `json:"labels"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if req.Driver == "" {
+		req.Driver = "bridge"
+	}
+
+	if err := s.networksManager.CreateNetwork(req.Name, req.Driver, req.Labels); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Network created",
+		"name":    req.Name,
+	})
+}
+
+func (s *Server) deleteNetwork(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.networksManager.DeleteNetwork(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Network deleted",
+		"name":    name,
+	})
+}
+
+func (s *Server) connectContainer(c *gin.Context) {
+	networkName := c.Param("name")
+
+	var req struct {
+		Container string `json:"container" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.networksManager.ConnectContainer(networkName, req.Container); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Container connected",
+		"network":   networkName,
+		"container": req.Container,
+	})
+}
+
+func (s *Server) disconnectContainer(c *gin.Context) {
+	networkName := c.Param("name")
+
+	var req struct {
+		Container string `json:"container" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.networksManager.DisconnectContainer(networkName, req.Container); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Container disconnected",
+		"network":   networkName,
+		"container": req.Container,
+	})
+}
+
+func (s *Server) getSettings(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"settings": gin.H{
+			"deployments_path": s.config.DeploymentsPath,
+			"api_port":         s.config.API.Port,
+			"enable_cors":      s.config.API.EnableCORS,
+			"allowed_origins":  s.config.API.AllowedOrigins,
+		},
+	})
+}
+
+func (s *Server) updateSettings(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Settings update requires agent restart",
+	})
+}
+
+func (s *Server) listPlugins(c *gin.Context) {
+	pluginList := s.pluginRegistry.List()
+
+	c.JSON(http.StatusOK, gin.H{
+		"plugins": pluginList,
+	})
+}
+
+func (s *Server) getPlugin(c *gin.Context) {
+	name := c.Param("name")
+
+	plugin, exists := s.pluginRegistry.Get(name)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Plugin not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"plugin": plugin.Info(),
+	})
+}
+
+func (s *Server) createPluginDeployment(c *gin.Context) {
+	pluginName := c.Param("name")
+
+	plugin, exists := s.pluginRegistry.Get(pluginName)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Plugin not found",
+		})
+		return
+	}
+
+	deploymentPlugin, ok := plugin.(plugins.DeploymentPlugin)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Plugin does not support deployments",
+		})
+		return
+	}
+
+	var req struct {
+		Name   string                 `json:"name" binding:"required"`
+		Config map[string]interface{} `json:"config"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	result, err := deploymentPlugin.CreateDeployment(req.Name, req.Config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":    "Deployment created",
+		"deployment": result,
+	})
+}
+
+type TemplateMetadata struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	Icon        string `yaml:"icon"`
+	Category    string `yaml:"category"`
+}
+
+type Template struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+	Category    string `json:"category"`
+	Content     string `json:"content"`
+}
+
+func (s *Server) listTemplates(c *gin.Context) {
+	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+
+	if err := os.MkdirAll(templatesDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create templates directory",
+		})
+		return
+	}
+
+	var templates []Template
+
+	entries, err := os.ReadDir(templatesDir)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"templates": templates,
+		})
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		templateID := entry.Name()
+		templatePath := filepath.Join(templatesDir, templateID)
+
+		metadataPath := filepath.Join(templatePath, "metadata.yml")
+		composePath := filepath.Join(templatePath, "docker-compose.yml")
+
+		composeContent, err := os.ReadFile(composePath)
+		if err != nil {
+			continue
+		}
+
+		var metadata TemplateMetadata
+		metadataContent, err := os.ReadFile(metadataPath)
+		if err == nil {
+			yaml.Unmarshal(metadataContent, &metadata)
+		}
+
+		if metadata.Name == "" {
+			metadata.Name = strings.Title(strings.ReplaceAll(templateID, "-", " "))
+		}
+		if metadata.Icon == "" {
+			metadata.Icon = "pi pi-box"
+		}
+		if metadata.Category == "" {
+			metadata.Category = "general"
+		}
+
+		templates = append(templates, Template{
+			ID:          templateID,
+			Name:        metadata.Name,
+			Description: metadata.Description,
+			Icon:        metadata.Icon,
+			Category:    metadata.Category,
+			Content:     string(composeContent),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"templates": templates,
+	})
+}
+
+func (s *Server) listCertificates(c *gin.Context) {
+	certificates, err := s.certsDiscovery.FindCertificates()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"certificates": certificates,
+	})
+}
+
+func (s *Server) getSystemStats(c *gin.Context) {
+	stats, err := s.manager.GetStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	containerStats, _ := s.networksManager.GetContainerStats()
+	imageStats, _ := s.networksManager.GetImageStats()
+	volumeStats, _ := s.networksManager.GetVolumeStats()
+
+	c.JSON(http.StatusOK, gin.H{
+		"deployments": stats,
+		"containers":  containerStats,
+		"images":      imageStats,
+		"volumes":     volumeStats,
+	})
+}
+
+func (s *Server) listContainers(c *gin.Context) {
+	containers, err := s.networksManager.ListContainers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"containers": containers,
+	})
+}
+
+func (s *Server) startContainer(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := s.networksManager.StartContainer(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Container started",
+		"id":      id,
+	})
+}
+
+func (s *Server) stopContainer(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := s.networksManager.StopContainer(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Container stopped",
+		"id":      id,
+	})
+}
+
+func (s *Server) restartContainer(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := s.networksManager.RestartContainer(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Container restarted",
+		"id":      id,
+	})
+}
+
+func (s *Server) removeContainer(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := s.networksManager.RemoveContainer(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Container removed",
+		"id":      id,
+	})
+}
+
+func (s *Server) getContainerLogs(c *gin.Context) {
+	id := c.Param("id")
+
+	tailStr := c.DefaultQuery("tail", "100")
+	tail, err := strconv.Atoi(tailStr)
+	if err != nil {
+		tail = 100
+	}
+
+	logs, err := s.networksManager.GetContainerLogs(id, tail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":   id,
+		"logs": logs,
+	})
+}
+
+func (s *Server) listImages(c *gin.Context) {
+	images, err := s.networksManager.ListImages()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"images": images,
+	})
+}
+
+func (s *Server) removeImage(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := s.networksManager.RemoveImage(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Image removed",
+		"id":      id,
+	})
+}
+
+func (s *Server) pullImage(c *gin.Context) {
+	var req struct {
+		Name string `json:"name" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.networksManager.PullImage(req.Name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Image pulled",
+		"name":    req.Name,
+	})
+}
+
+func (s *Server) listVolumes(c *gin.Context) {
+	volumes, err := s.networksManager.ListVolumes()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"volumes": volumes,
+	})
+}
+
+func (s *Server) createVolume(c *gin.Context) {
+	var req struct {
+		Name   string            `json:"name" binding:"required"`
+		Driver string            `json:"driver"`
+		Labels map[string]string `json:"labels"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if req.Driver == "" {
+		req.Driver = "local"
+	}
+
+	if err := s.networksManager.CreateVolume(req.Name, req.Driver, req.Labels); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Volume created",
+		"name":    req.Name,
+	})
+}
+
+func (s *Server) removeVolume(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.networksManager.RemoveVolume(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Volume removed",
+		"name":    name,
+	})
+}
+
+func (s *Server) pruneVolumes(c *gin.Context) {
+	count, err := s.networksManager.PruneVolumes()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Unused volumes pruned",
+		"count":   count,
+	})
+}
+
+func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+
+		for _, allowed := range allowedOrigins {
+			if origin == allowed || allowed == "*" {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				break
+			}
+		}
+
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}

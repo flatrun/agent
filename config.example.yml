@@ -1,0 +1,35 @@
+deployments_path: /home/nfebe/work/deployments
+docker_socket: unix:///var/run/docker.sock
+
+api:
+  host: 0.0.0.0
+  port: 8090
+  enable_cors: true
+  allowed_origins:
+    - http://localhost:5173
+    - http://localhost:3000
+    - http://127.0.0.1:5173
+
+auth:
+  enabled: true
+  api_keys:
+    - "your-api-key-here"
+  jwt_secret: "generate-a-secure-random-string-here"
+
+nginx:
+  container_name: nginx
+  config_path: /deployments/nginx/conf.d
+  reload_command: nginx -s reload
+
+certbot:
+  container_name: certbot
+  email: your-email@example.com
+  staging: true
+
+logging:
+  level: info
+  format: json
+
+health:
+  check_interval: 30s
+  metrics_retention: 24h
