@@ -97,11 +97,11 @@ func (r *Registry) LoadFromDisk() error {
 		}
 
 		plugin := &ExternalPlugin{
-			info:    *info,
+			info:     *info,
 			basePath: filepath.Join(r.pluginsDir, entry.Name()),
 		}
 
-		r.Register(plugin)
+		_ = r.Register(plugin)
 	}
 
 	return nil

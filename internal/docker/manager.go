@@ -74,7 +74,7 @@ func (m *Manager) DeleteDeployment(name string) error {
 		return err
 	}
 
-	m.executor.Down(deployment.Path)
+	_, _ = m.executor.Down(deployment.Path)
 
 	return m.discovery.DeleteDeployment(name)
 }

@@ -26,9 +26,9 @@ type APIConfig struct {
 }
 
 type AuthConfig struct {
-	Enabled  bool     `yaml:"enabled"`
-	APIKeys  []string `yaml:"api_keys"`
-	JWTSecret string  `yaml:"jwt_secret"`
+	Enabled   bool     `yaml:"enabled"`
+	APIKeys   []string `yaml:"api_keys"`
+	JWTSecret string   `yaml:"jwt_secret"`
 }
 
 type NginxConfig struct {

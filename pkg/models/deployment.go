@@ -3,12 +3,12 @@ package models
 import "time"
 
 type Deployment struct {
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Services  []Service `json:"services,omitempty"`
+	Name      string           `json:"name"`
+	Path      string           `json:"path"`
+	Status    string           `json:"status"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
+	Services  []Service        `json:"services,omitempty"`
 	Metadata  *ServiceMetadata `json:"metadata,omitempty"`
 }
 
@@ -24,10 +24,10 @@ type Service struct {
 }
 
 type ServiceMetadata struct {
-	Name string `yaml:"name" json:"name"`
-	Type string `yaml:"type" json:"type"`
-	Networking NetworkingConfig `yaml:"networking" json:"networking"`
-	SSL SSLConfig `yaml:"ssl" json:"ssl"`
+	Name        string            `yaml:"name" json:"name"`
+	Type        string            `yaml:"type" json:"type"`
+	Networking  NetworkingConfig  `yaml:"networking" json:"networking"`
+	SSL         SSLConfig         `yaml:"ssl" json:"ssl"`
 	HealthCheck HealthCheckConfig `yaml:"healthcheck" json:"healthcheck"`
 }
 

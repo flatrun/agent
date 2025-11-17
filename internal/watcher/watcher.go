@@ -50,8 +50,8 @@ func (w *Watcher) Start() {
 
 func (w *Watcher) handleEvent(event fsnotify.Event) {
 	if filepath.Base(event.Name) == "docker-compose.yml" ||
-	   filepath.Base(event.Name) == "docker-compose.yaml" ||
-	   filepath.Base(event.Name) == "service.yml" {
+		filepath.Base(event.Name) == "docker-compose.yaml" ||
+		filepath.Base(event.Name) == "service.yml" {
 
 		switch event.Op {
 		case fsnotify.Create:

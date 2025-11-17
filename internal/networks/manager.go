@@ -16,14 +16,14 @@ func NewManager() *Manager {
 }
 
 type dockerNetwork struct {
-	ID         string            `json:"Id"`
-	Name       string            `json:"Name"`
-	Driver     string            `json:"Driver"`
-	Scope      string            `json:"Scope"`
-	IPAM       dockerIPAM        `json:"IPAM"`
+	ID         string                     `json:"Id"`
+	Name       string                     `json:"Name"`
+	Driver     string                     `json:"Driver"`
+	Scope      string                     `json:"Scope"`
+	IPAM       dockerIPAM                 `json:"IPAM"`
 	Containers map[string]dockerContainer `json:"Containers"`
-	Labels     map[string]string `json:"Labels"`
-	Created    string            `json:"Created"`
+	Labels     map[string]string          `json:"Labels"`
+	Created    string                     `json:"Created"`
 }
 
 type dockerIPAM struct {
@@ -88,13 +88,10 @@ func (m *Manager) inspectNetwork(id string) (*models.Network, error) {
 
 	var containers []models.NetworkContainer
 	for _, c := range dn.Containers {
-		name := c.Name
-		if strings.HasPrefix(name, "/") {
-			name = name[1:]
-		}
+		name := strings.TrimPrefix(c.Name, "/")
 		containers = append(containers, models.NetworkContainer{
-			Name:      name,
-			IPv4:      c.IPv4Address,
+			Name:       name,
+			IPv4:       c.IPv4Address,
 			MacAddress: c.MacAddress,
 		})
 	}
@@ -441,7 +438,7 @@ func parseSize(sizeStr string) int64 {
 	}
 
 	var size float64
-	fmt.Sscanf(strings.TrimSpace(sizeStr), "%f", &size)
+	_, _ = fmt.Sscanf(strings.TrimSpace(sizeStr), "%f", &size)
 	return int64(size * float64(multiplier))
 }
 

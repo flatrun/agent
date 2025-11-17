@@ -49,7 +49,7 @@ func New(cfg *config.Config) *Server {
 	networksManager := networks.NewManager()
 	pluginsDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins")
 	pluginRegistry := plugins.NewRegistry(pluginsDir)
-	pluginRegistry.LoadFromDisk()
+	_ = pluginRegistry.LoadFromDisk()
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
 
 	s := &Server{
@@ -586,11 +586,11 @@ func (s *Server) listTemplates(c *gin.Context) {
 		var metadata TemplateMetadata
 		metadataContent, err := os.ReadFile(metadataPath)
 		if err == nil {
-			yaml.Unmarshal(metadataContent, &metadata)
+			_ = yaml.Unmarshal(metadataContent, &metadata)
 		}
 
 		if metadata.Name == "" {
-			metadata.Name = strings.Title(strings.ReplaceAll(templateID, "-", " "))
+			metadata.Name = toTitleCase(strings.ReplaceAll(templateID, "-", " "))
 		}
 		if metadata.Icon == "" {
 			metadata.Icon = "pi pi-box"
@@ -879,6 +879,16 @@ func (s *Server) pruneVolumes(c *gin.Context) {
 		"message": "Unused volumes pruned",
 		"count":   count,
 	})
+}
+
+func toTitleCase(s string) string {
+	words := strings.Fields(s)
+	for i, word := range words {
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(string(word[0])) + strings.ToLower(word[1:])
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {

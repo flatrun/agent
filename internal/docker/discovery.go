@@ -168,7 +168,7 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 
 	backup := composePath + ".bak." + time.Now().Format("20060102150405")
 	if data, err := os.ReadFile(composePath); err == nil {
-		os.WriteFile(backup, data, 0644)
+		_ = os.WriteFile(backup, data, 0644)
 	}
 
 	return os.WriteFile(composePath, []byte(content), 0644)
