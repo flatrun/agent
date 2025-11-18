@@ -113,6 +113,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/volumes", s.createVolume)
 			protected.DELETE("/volumes/:name", s.removeVolume)
 			protected.POST("/volumes/prune", s.pruneVolumes)
+			protected.GET("/ports", s.listPorts)
+			protected.POST("/ports/:pid/kill", s.killProcess)
 		}
 	}
 }
@@ -878,6 +880,43 @@ func (s *Server) pruneVolumes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Unused volumes pruned",
 		"count":   count,
+	})
+}
+
+func (s *Server) listPorts(c *gin.Context) {
+	ports, err := s.networksManager.ListPorts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ports": ports,
+	})
+}
+
+func (s *Server) killProcess(c *gin.Context) {
+	pidStr := c.Param("pid")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid PID",
+		})
+		return
+	}
+
+	if err := s.networksManager.KillProcess(pid); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Process killed",
+		"pid":     pid,
 	})
 }
 
