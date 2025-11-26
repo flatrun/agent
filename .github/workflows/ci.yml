@@ -20,11 +20,27 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Build
-        run: go build -v ./...
+      - name: Build binaries
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o flatrun-linux-amd64 ./cmd/agent
+          GOOS=linux GOARCH=arm64 go build -o flatrun-linux-arm64 ./cmd/agent
 
       - name: Test
         run: go test -v ./...
+
+      - name: Upload Linux AMD64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatrun-linux-amd64
+          path: flatrun-linux-amd64
+          retention-days: 30
+
+      - name: Upload Linux ARM64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatrun-linux-arm64
+          path: flatrun-linux-arm64
+          retention-days: 30
 
   lint:
     runs-on: ubuntu-latest

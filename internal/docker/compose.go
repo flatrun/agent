@@ -39,7 +39,7 @@ func (c *ComposeExecutor) Stop(deploymentPath string) (string, error) {
 
 func (c *ComposeExecutor) Restart(deploymentPath string) (string, error) {
 	// Stop then start to handle both existing and new containers
-	c.runCompose(deploymentPath, "stop")
+	_, _ = c.runCompose(deploymentPath, "stop")
 	return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
 }
 
