@@ -612,7 +612,7 @@ func (m *Manager) ListPorts() ([]Port, error) {
 
 		portStr := addressParts[len(addressParts)-1]
 		port := 0
-		fmt.Sscanf(portStr, "%d", &port)
+		_, _ = fmt.Sscanf(portStr, "%d", &port)
 		if port == 0 {
 			continue
 		}
@@ -631,7 +631,7 @@ func (m *Manager) ListPorts() ([]Port, error) {
 				parts := strings.Split(processInfo, ",")
 				for _, part := range parts {
 					if strings.HasPrefix(part, "pid=") {
-						fmt.Sscanf(part, "pid=%d", &pid)
+						_, _ = fmt.Sscanf(part, "pid=%d", &pid)
 					}
 				}
 

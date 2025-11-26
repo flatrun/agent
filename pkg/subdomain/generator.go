@@ -58,7 +58,7 @@ func (g *Generator) generateWords() string {
 
 func (g *Generator) generateHex() string {
 	bytes := make([]byte, 4)
-	rand.Read(bytes)
+	_, _ = rand.Read(bytes)
 	return fmt.Sprintf("%x", bytes)
 }
 
