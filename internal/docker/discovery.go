@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,6 +16,16 @@ type Discovery struct {
 
 func NewDiscovery(basePath string) *Discovery {
 	return &Discovery{basePath: basePath}
+}
+
+type composeFile struct {
+	Services map[string]composeService `yaml:"services"`
+}
+
+type composeService struct {
+	Image    string        `yaml:"image"`
+	Ports    []interface{} `yaml:"ports"`
+	Networks []string      `yaml:"networks"`
 }
 
 func (d *Discovery) FindDeployments() ([]models.Deployment, error) {
@@ -55,6 +66,10 @@ func (d *Discovery) FindDeployments() ([]models.Deployment, error) {
 			deployment.Metadata = metadata
 		}
 
+		if services, err := d.parseComposeServices(composePath); err == nil {
+			deployment.Services = services
+		}
+
 		deployments = append(deployments, deployment)
 	}
 
@@ -91,6 +106,10 @@ func (d *Discovery) GetDeployment(name string) (*models.Deployment, error) {
 		deployment.Metadata = metadata
 	}
 
+	if services, err := d.parseComposeServices(composePath); err == nil {
+		deployment.Services = services
+	}
+
 	return deployment, nil
 }
 
@@ -109,6 +128,57 @@ func (d *Discovery) findComposeFile(dirPath string) string {
 		}
 	}
 
+	return ""
+}
+
+func (d *Discovery) parseComposeServices(composePath string) ([]models.Service, error) {
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var compose composeFile
+	if err := yaml.Unmarshal(data, &compose); err != nil {
+		return nil, err
+	}
+
+	var services []models.Service
+	for name, svc := range compose.Services {
+		service := models.Service{
+			Name:     name,
+			Image:    svc.Image,
+			Status:   "unknown",
+			Networks: svc.Networks,
+		}
+
+		for _, p := range svc.Ports {
+			portStr := d.parsePort(p)
+			if portStr != "" {
+				service.Ports = append(service.Ports, portStr)
+			}
+		}
+
+		services = append(services, service)
+	}
+
+	return services, nil
+}
+
+func (d *Discovery) parsePort(port interface{}) string {
+	switch v := port.(type) {
+	case string:
+		return v
+	case int:
+		return fmt.Sprintf("%d", v)
+	case map[string]interface{}:
+		target, hasTarget := v["target"]
+		published, hasPublished := v["published"]
+		if hasTarget && hasPublished {
+			return fmt.Sprintf("%v:%v", published, target)
+		} else if hasTarget {
+			return fmt.Sprintf("%v", target)
+		}
+	}
 	return ""
 }
 

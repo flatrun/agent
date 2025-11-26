@@ -16,15 +16,21 @@ func NewComposeExecutor(basePath string) *ComposeExecutor {
 }
 
 func (c *ComposeExecutor) Up(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "up", "-d")
+	return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
 }
 
 func (c *ComposeExecutor) Down(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "down")
+	return c.runCompose(deploymentPath, "down", "--remove-orphans")
 }
 
 func (c *ComposeExecutor) Start(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "start")
+	// Try start first for existing containers
+	output, err := c.runCompose(deploymentPath, "start")
+	if err != nil {
+		// Fall back to up if containers don't exist
+		return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
+	}
+	return output, nil
 }
 
 func (c *ComposeExecutor) Stop(deploymentPath string) (string, error) {
@@ -32,7 +38,9 @@ func (c *ComposeExecutor) Stop(deploymentPath string) (string, error) {
 }
 
 func (c *ComposeExecutor) Restart(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "restart")
+	// Stop then start to handle both existing and new containers
+	c.runCompose(deploymentPath, "stop")
+	return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
 }
 
 func (c *ComposeExecutor) Logs(deploymentPath string, tail int) (string, error) {
@@ -48,18 +56,29 @@ func (c *ComposeExecutor) Pull(deploymentPath string) (string, error) {
 	return c.runCompose(deploymentPath, "pull")
 }
 
+func (c *ComposeExecutor) getProjectName(deploymentPath string) string {
+	parts := strings.Split(strings.TrimSuffix(deploymentPath, "/"), "/")
+	if len(parts) > 0 {
+		return "flatrun-" + parts[len(parts)-1]
+	}
+	return "flatrun"
+}
+
 func (c *ComposeExecutor) runCompose(deploymentPath string, args ...string) (string, error) {
 	composeCmd := c.findComposeCommand()
 	if composeCmd == "" {
 		return "", fmt.Errorf("docker compose command not found")
 	}
 
+	projectName := c.getProjectName(deploymentPath)
+
 	var cmd *exec.Cmd
 
 	if composeCmd == "docker-compose" {
-		cmd = exec.Command(composeCmd, args...)
+		fullArgs := append([]string{"-p", projectName}, args...)
+		cmd = exec.Command(composeCmd, fullArgs...)
 	} else {
-		fullArgs := append([]string{"compose"}, args...)
+		fullArgs := append([]string{"compose", "-p", projectName}, args...)
 		cmd = exec.Command("docker", fullArgs...)
 	}
 
@@ -102,12 +121,26 @@ func (c *ComposeExecutor) GetStatus(deploymentPath string) (string, error) {
 		return "error", err
 	}
 
-	if strings.TrimSpace(output) == "" || strings.TrimSpace(output) == "[]" {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" || trimmed == "[]" {
 		return "stopped", nil
 	}
 
-	if strings.Contains(output, "running") {
+	// Check for running state in various formats from docker compose ps
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "\"state\":\"running\"") ||
+		strings.Contains(lower, "\"state\": \"running\"") ||
+		strings.Contains(lower, "running") ||
+		strings.Contains(lower, "\"status\":\"up") ||
+		strings.Contains(lower, "\"status\": \"up") {
 		return "running", nil
+	}
+
+	// Check for exited/stopped states
+	if strings.Contains(lower, "exited") ||
+		strings.Contains(lower, "\"state\":\"exited\"") ||
+		strings.Contains(lower, "\"state\": \"exited\"") {
+		return "stopped", nil
 	}
 
 	return "unknown", nil
