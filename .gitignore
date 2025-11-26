@@ -1,6 +1,7 @@
 # Binaries
 flatrun-agent
-agent
+/agent
+flatrun-linux-*
 *.exe
 *.exe~
 *.dll

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/docker"
+	"github.com/flatrun/agent/internal/files"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/pkg/config"
@@ -33,6 +35,7 @@ type Server struct {
 	pluginRegistry    *plugins.Registry
 	authMiddleware    *auth.Middleware
 	proxyOrchestrator *proxy.Orchestrator
+	filesManager      *files.Manager
 }
 
 func New(cfg *config.Config) *Server {
@@ -56,6 +59,7 @@ func New(cfg *config.Config) *Server {
 	_ = pluginRegistry.LoadFromDisk()
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
 	proxyOrchestrator := proxy.NewOrchestrator(cfg)
+	filesManager := files.NewManager(cfg.DeploymentsPath)
 
 	s := &Server{
 		config:            cfg,
@@ -66,6 +70,7 @@ func New(cfg *config.Config) *Server {
 		pluginRegistry:    pluginRegistry,
 		authMiddleware:    authMiddleware,
 		proxyOrchestrator: proxyOrchestrator,
+		filesManager:      filesManager,
 	}
 
 	s.setupRoutes()
@@ -88,11 +93,13 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name", s.getDeployment)
 			protected.POST("/deployments", s.createDeployment)
 			protected.PUT("/deployments/:name", s.updateDeployment)
+			protected.PUT("/deployments/:name/metadata", s.updateDeploymentMetadata)
 			protected.DELETE("/deployments/:name", s.deleteDeployment)
 			protected.POST("/deployments/:name/start", s.startDeployment)
 			protected.POST("/deployments/:name/stop", s.stopDeployment)
 			protected.POST("/deployments/:name/restart", s.restartDeployment)
 			protected.GET("/deployments/:name/logs", s.getDeploymentLogs)
+			protected.GET("/deployments/:name/compose", s.getDeploymentCompose)
 			protected.GET("/networks", s.listNetworks)
 			protected.POST("/networks", s.createNetwork)
 			protected.DELETE("/networks/:name", s.deleteNetwork)
@@ -131,6 +138,13 @@ func (s *Server) setupRoutes() {
 			protected.POST("/volumes/prune", s.pruneVolumes)
 			protected.GET("/ports", s.listPorts)
 			protected.POST("/ports/:pid/kill", s.killProcess)
+
+			protected.GET("/deployments/:name/files", s.listDeploymentFiles)
+			protected.GET("/deployments/:name/files/*path", s.getDeploymentFile)
+			protected.POST("/deployments/:name/files/*path", s.uploadDeploymentFile)
+			protected.DELETE("/deployments/:name/files/*path", s.deleteDeploymentFile)
+			protected.POST("/deployments/:name/mkdir/*path", s.createDeploymentDir)
+			protected.GET("/deployments/:name/files-info", s.getDeploymentFilesInfo)
 		}
 	}
 }
@@ -271,6 +285,46 @@ func (s *Server) updateDeployment(c *gin.Context) {
 	})
 }
 
+func (s *Server) updateDeploymentMetadata(c *gin.Context) {
+	name := c.Param("name")
+
+	var metadata models.ServiceMetadata
+	if err := c.ShouldBindJSON(&metadata); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found",
+		})
+		return
+	}
+
+	if err := s.manager.SaveMetadata(name, &metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var proxyResult *proxy.SetupResult
+	if metadata.Networking.Expose {
+		proxyResult, _ = s.proxyOrchestrator.SetupDeployment(deployment)
+	} else {
+		_ = s.proxyOrchestrator.TeardownDeployment(name)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Metadata updated",
+		"name":         name,
+		"proxy_result": proxyResult,
+	})
+}
+
 func (s *Server) deleteDeployment(c *gin.Context) {
 	name := c.Param("name")
 
@@ -364,6 +418,23 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"name": name,
 		"logs": logs,
+	})
+}
+
+func (s *Server) getDeploymentCompose(c *gin.Context) {
+	name := c.Param("name")
+
+	content, err := s.manager.GetComposeFile(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"name":    name,
+		"content": content,
 	})
 }
 
@@ -1173,4 +1244,172 @@ func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func (s *Server) listDeploymentFiles(c *gin.Context) {
+	name := c.Param("name")
+	path := c.DefaultQuery("path", "/")
+	root := c.Query("root") == "true"
+
+	var filesList []files.FileInfo
+	var err error
+
+	if root {
+		filesList, err = s.filesManager.ListAllFiles(name, path)
+	} else {
+		filesList, err = s.filesManager.ListFiles(name, path)
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"files": filesList,
+		"path":  path,
+		"root":  root,
+	})
+}
+
+func (s *Server) getDeploymentFile(c *gin.Context) {
+	name := c.Param("name")
+	path := c.Param("path")
+	root := c.Query("root") == "true"
+
+	if c.Query("info") == "true" {
+		info, err := s.filesManager.GetFileInfo(name, path)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, info)
+		return
+	}
+
+	if c.Query("list") == "true" {
+		var filesList []files.FileInfo
+		var err error
+		if root {
+			filesList, err = s.filesManager.ListAllFiles(name, path)
+		} else {
+			filesList, err = s.filesManager.ListFiles(name, path)
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"files": filesList,
+			"path":  path,
+			"root":  root,
+		})
+		return
+	}
+
+	var file io.ReadCloser
+	var info *files.FileInfo
+	var err error
+
+	if root {
+		file, info, err = s.filesManager.ReadAllFile(name, path)
+	} else {
+		file, info, err = s.filesManager.ReadFile(name, path)
+	}
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+	defer file.Close()
+
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", info.Name))
+	c.Header("Content-Length", fmt.Sprintf("%d", info.Size))
+	c.DataFromReader(http.StatusOK, info.Size, "application/octet-stream", file, nil)
+}
+
+func (s *Server) uploadDeploymentFile(c *gin.Context) {
+	name := c.Param("name")
+	path := c.Param("path")
+
+	file, _, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "No file provided",
+		})
+		return
+	}
+	defer file.Close()
+
+	if err := s.filesManager.WriteFile(name, path, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	info, _ := s.filesManager.GetFileInfo(name, path)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "File uploaded successfully",
+		"file":    info,
+	})
+}
+
+func (s *Server) deleteDeploymentFile(c *gin.Context) {
+	name := c.Param("name")
+	path := c.Param("path")
+
+	if err := s.filesManager.DeleteFile(name, path); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Deleted successfully",
+	})
+}
+
+func (s *Server) createDeploymentDir(c *gin.Context) {
+	name := c.Param("name")
+	path := c.Param("path")
+
+	if err := s.filesManager.CreateDirectory(name, path); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	info, _ := s.filesManager.GetFileInfo(name, path)
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Directory created",
+		"directory": info,
+	})
+}
+
+func (s *Server) getDeploymentFilesInfo(c *gin.Context) {
+	name := c.Param("name")
+
+	usage, err := s.filesManager.GetDiskUsage(name)
+	if err != nil {
+		usage = 0
+	}
+
+	mountPath, _ := s.filesManager.GetMountPath(name, "/")
+
+	c.JSON(http.StatusOK, gin.H{
+		"deployment": name,
+		"disk_usage": usage,
+		"mount_path": mountPath,
+	})
 }
