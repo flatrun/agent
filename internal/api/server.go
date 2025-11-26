@@ -14,21 +14,25 @@ import (
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/networks"
+	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/pkg/config"
+	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/plugins"
+	"github.com/flatrun/agent/pkg/subdomain"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
 
 type Server struct {
-	config          *config.Config
-	router          *gin.Engine
-	server          *http.Server
-	manager         *docker.Manager
-	certsDiscovery  *certs.Discovery
-	networksManager *networks.Manager
-	pluginRegistry  *plugins.Registry
-	authMiddleware  *auth.Middleware
+	config            *config.Config
+	router            *gin.Engine
+	server            *http.Server
+	manager           *docker.Manager
+	certsDiscovery    *certs.Discovery
+	networksManager   *networks.Manager
+	pluginRegistry    *plugins.Registry
+	authMiddleware    *auth.Middleware
+	proxyOrchestrator *proxy.Orchestrator
 }
 
 func New(cfg *config.Config) *Server {
@@ -49,17 +53,19 @@ func New(cfg *config.Config) *Server {
 	networksManager := networks.NewManager()
 	pluginsDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins")
 	pluginRegistry := plugins.NewRegistry(pluginsDir)
-	pluginRegistry.LoadFromDisk()
+	_ = pluginRegistry.LoadFromDisk()
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
+	proxyOrchestrator := proxy.NewOrchestrator(cfg)
 
 	s := &Server{
-		config:          cfg,
-		router:          router,
-		manager:         manager,
-		certsDiscovery:  certsDiscovery,
-		networksManager: networksManager,
-		pluginRegistry:  pluginRegistry,
-		authMiddleware:  authMiddleware,
+		config:            cfg,
+		router:            router,
+		manager:           manager,
+		certsDiscovery:    certsDiscovery,
+		networksManager:   networksManager,
+		pluginRegistry:    pluginRegistry,
+		authMiddleware:    authMiddleware,
+		proxyOrchestrator: proxyOrchestrator,
 	}
 
 	s.setupRoutes()
@@ -93,8 +99,18 @@ func (s *Server) setupRoutes() {
 			protected.POST("/networks/:name/connect", s.connectContainer)
 			protected.POST("/networks/:name/disconnect", s.disconnectContainer)
 			protected.GET("/certificates", s.listCertificates)
+			protected.POST("/certificates", s.requestCertificate)
+			protected.POST("/certificates/renew", s.renewCertificates)
+			protected.DELETE("/certificates/:domain", s.deleteCertificate)
+
+			protected.GET("/proxy/status/:name", s.getProxyStatus)
+			protected.POST("/proxy/setup/:name", s.setupProxy)
+			protected.DELETE("/proxy/:name", s.teardownProxy)
+			protected.GET("/proxy/vhosts", s.listVirtualHosts)
+
 			protected.GET("/settings", s.getSettings)
 			protected.PUT("/settings", s.updateSettings)
+			protected.GET("/subdomain/generate", s.generateSubdomain)
 			protected.GET("/plugins", s.listPlugins)
 			protected.GET("/plugins/:name", s.getPlugin)
 			protected.POST("/plugins/:name/deployments", s.createPluginDeployment)
@@ -113,6 +129,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/volumes", s.createVolume)
 			protected.DELETE("/volumes/:name", s.removeVolume)
 			protected.POST("/volumes/prune", s.pruneVolumes)
+			protected.GET("/ports", s.listPorts)
+			protected.POST("/ports/:pid/kill", s.killProcess)
 		}
 	}
 }
@@ -172,17 +190,20 @@ func (s *Server) getDeployment(c *gin.Context) {
 	}
 
 	composeContent, _ := s.manager.GetComposeFile(name)
+	proxyStatus := s.proxyOrchestrator.GetDeploymentProxyStatus(deployment)
 
 	c.JSON(http.StatusOK, gin.H{
 		"deployment":      deployment,
 		"compose_content": composeContent,
+		"proxy_status":    proxyStatus,
 	})
 }
 
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
-		Name           string `json:"name" binding:"required"`
-		ComposeContent string `json:"compose_content" binding:"required"`
+		Name           string                  `json:"name" binding:"required"`
+		ComposeContent string                  `json:"compose_content" binding:"required"`
+		Metadata       *models.ServiceMetadata `json:"metadata,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -199,9 +220,27 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 
+	if req.Metadata != nil {
+		if err := s.manager.SaveMetadata(req.Name, req.Metadata); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Deployment created but failed to save metadata: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	var proxyResult *proxy.SetupResult
+	if req.Metadata != nil && req.Metadata.Networking.Expose {
+		deployment, err := s.manager.GetDeployment(req.Name)
+		if err == nil {
+			proxyResult, _ = s.proxyOrchestrator.SetupDeployment(deployment)
+		}
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "Deployment created",
-		"name":    req.Name,
+		"message":      "Deployment created",
+		"name":         req.Name,
+		"proxy_result": proxyResult,
 	})
 }
 
@@ -452,13 +491,67 @@ func (s *Server) getSettings(c *gin.Context) {
 			"api_port":         s.config.API.Port,
 			"enable_cors":      s.config.API.EnableCORS,
 			"allowed_origins":  s.config.API.AllowedOrigins,
+			"domain": gin.H{
+				"default_domain":  s.config.Domain.DefaultDomain,
+				"auto_subdomain":  s.config.Domain.AutoSubdomain,
+				"auto_ssl":        s.config.Domain.AutoSSL,
+				"subdomain_style": s.config.Domain.SubdomainStyle,
+			},
 		},
 	})
 }
 
 func (s *Server) updateSettings(c *gin.Context) {
+	var req struct {
+		Domain *struct {
+			DefaultDomain  string `json:"default_domain"`
+			AutoSubdomain  bool   `json:"auto_subdomain"`
+			AutoSSL        bool   `json:"auto_ssl"`
+			SubdomainStyle string `json:"subdomain_style"`
+		} `json:"domain,omitempty"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Domain != nil {
+		s.config.Domain.DefaultDomain = req.Domain.DefaultDomain
+		s.config.Domain.AutoSubdomain = req.Domain.AutoSubdomain
+		s.config.Domain.AutoSSL = req.Domain.AutoSSL
+		if req.Domain.SubdomainStyle != "" {
+			s.config.Domain.SubdomainStyle = req.Domain.SubdomainStyle
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Settings update requires agent restart",
+		"message": "Settings updated",
+		"settings": gin.H{
+			"domain": gin.H{
+				"default_domain":  s.config.Domain.DefaultDomain,
+				"auto_subdomain":  s.config.Domain.AutoSubdomain,
+				"auto_ssl":        s.config.Domain.AutoSSL,
+				"subdomain_style": s.config.Domain.SubdomainStyle,
+			},
+		},
+	})
+}
+
+func (s *Server) generateSubdomain(c *gin.Context) {
+	gen := subdomain.NewGenerator(s.config.Domain.SubdomainStyle)
+
+	subdomainName := gen.Generate()
+	fullDomain := ""
+	if s.config.Domain.DefaultDomain != "" {
+		fullDomain = gen.GenerateForDomain(s.config.Domain.DefaultDomain)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"subdomain":      subdomainName,
+		"full_domain":    fullDomain,
+		"default_domain": s.config.Domain.DefaultDomain,
+		"auto_ssl":       s.config.Domain.AutoSSL,
 	})
 }
 
@@ -586,11 +679,11 @@ func (s *Server) listTemplates(c *gin.Context) {
 		var metadata TemplateMetadata
 		metadataContent, err := os.ReadFile(metadataPath)
 		if err == nil {
-			yaml.Unmarshal(metadataContent, &metadata)
+			_ = yaml.Unmarshal(metadataContent, &metadata)
 		}
 
 		if metadata.Name == "" {
-			metadata.Name = strings.Title(strings.ReplaceAll(templateID, "-", " "))
+			metadata.Name = toTitleCase(strings.ReplaceAll(templateID, "-", " "))
 		}
 		if metadata.Icon == "" {
 			metadata.Icon = "pi pi-box"
@@ -615,7 +708,7 @@ func (s *Server) listTemplates(c *gin.Context) {
 }
 
 func (s *Server) listCertificates(c *gin.Context) {
-	certificates, err := s.certsDiscovery.FindCertificates()
+	certificates, err := s.proxyOrchestrator.ListCertificates()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -625,6 +718,136 @@ func (s *Server) listCertificates(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"certificates": certificates,
+	})
+}
+
+func (s *Server) requestCertificate(c *gin.Context) {
+	var req struct {
+		Domain string `json:"domain" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	result, err := s.proxyOrchestrator.RequestCertificate(req.Domain)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Certificate requested",
+		"result":  result,
+	})
+}
+
+func (s *Server) renewCertificates(c *gin.Context) {
+	result, err := s.proxyOrchestrator.RenewCertificates()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Renewal completed",
+		"result":  result,
+	})
+}
+
+func (s *Server) deleteCertificate(c *gin.Context) {
+	domain := c.Param("domain")
+
+	if err := s.proxyOrchestrator.SSLManager().DeleteCertificate(domain); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Certificate deleted",
+		"domain":  domain,
+	})
+}
+
+func (s *Server) getProxyStatus(c *gin.Context) {
+	name := c.Param("name")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found",
+		})
+		return
+	}
+
+	status := s.proxyOrchestrator.GetDeploymentProxyStatus(deployment)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": status,
+	})
+}
+
+func (s *Server) setupProxy(c *gin.Context) {
+	name := c.Param("name")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found",
+		})
+		return
+	}
+
+	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Proxy setup completed",
+		"result":  result,
+	})
+}
+
+func (s *Server) teardownProxy(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Proxy removed",
+		"name":    name,
+	})
+}
+
+func (s *Server) listVirtualHosts(c *gin.Context) {
+	vhosts, err := s.proxyOrchestrator.ListVirtualHosts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"virtual_hosts": vhosts,
 	})
 }
 
@@ -879,6 +1102,53 @@ func (s *Server) pruneVolumes(c *gin.Context) {
 		"message": "Unused volumes pruned",
 		"count":   count,
 	})
+}
+
+func (s *Server) listPorts(c *gin.Context) {
+	ports, err := s.networksManager.ListPorts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ports": ports,
+	})
+}
+
+func (s *Server) killProcess(c *gin.Context) {
+	pidStr := c.Param("pid")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid PID",
+		})
+		return
+	}
+
+	if err := s.networksManager.KillProcess(pid); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Process killed",
+		"pid":     pid,
+	})
+}
+
+func toTitleCase(s string) string {
+	words := strings.Fields(s)
+	for i, word := range words {
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(string(word[0])) + strings.ToLower(word[1:])
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {

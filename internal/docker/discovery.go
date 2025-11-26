@@ -168,8 +168,31 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 
 	backup := composePath + ".bak." + time.Now().Format("20060102150405")
 	if data, err := os.ReadFile(composePath); err == nil {
-		os.WriteFile(backup, data, 0644)
+		_ = os.WriteFile(backup, data, 0644)
 	}
 
 	return os.WriteFile(composePath, []byte(content), 0644)
+}
+
+func (d *Discovery) SaveMetadata(name string, metadata *models.ServiceMetadata) error {
+	dirPath := filepath.Join(d.basePath, name)
+	metadataPath := filepath.Join(dirPath, "service.yml")
+
+	data, err := yaml.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(metadataPath, data, 0644)
+}
+
+func (d *Discovery) DeleteMetadata(name string) error {
+	dirPath := filepath.Join(d.basePath, name)
+	metadataPath := filepath.Join(dirPath, "service.yml")
+
+	if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
+		return nil
+	}
+
+	return os.Remove(metadataPath)
 }

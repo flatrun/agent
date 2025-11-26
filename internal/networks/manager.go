@@ -16,14 +16,14 @@ func NewManager() *Manager {
 }
 
 type dockerNetwork struct {
-	ID         string            `json:"Id"`
-	Name       string            `json:"Name"`
-	Driver     string            `json:"Driver"`
-	Scope      string            `json:"Scope"`
-	IPAM       dockerIPAM        `json:"IPAM"`
+	ID         string                     `json:"Id"`
+	Name       string                     `json:"Name"`
+	Driver     string                     `json:"Driver"`
+	Scope      string                     `json:"Scope"`
+	IPAM       dockerIPAM                 `json:"IPAM"`
 	Containers map[string]dockerContainer `json:"Containers"`
-	Labels     map[string]string `json:"Labels"`
-	Created    string            `json:"Created"`
+	Labels     map[string]string          `json:"Labels"`
+	Created    string                     `json:"Created"`
 }
 
 type dockerIPAM struct {
@@ -88,13 +88,10 @@ func (m *Manager) inspectNetwork(id string) (*models.Network, error) {
 
 	var containers []models.NetworkContainer
 	for _, c := range dn.Containers {
-		name := c.Name
-		if strings.HasPrefix(name, "/") {
-			name = name[1:]
-		}
+		name := strings.TrimPrefix(c.Name, "/")
 		containers = append(containers, models.NetworkContainer{
-			Name:      name,
-			IPv4:      c.IPv4Address,
+			Name:       name,
+			IPv4:       c.IPv4Address,
 			MacAddress: c.MacAddress,
 		})
 	}
@@ -441,7 +438,7 @@ func parseSize(sizeStr string) int64 {
 	}
 
 	var size float64
-	fmt.Sscanf(strings.TrimSpace(sizeStr), "%f", &size)
+	_, _ = fmt.Sscanf(strings.TrimSpace(sizeStr), "%f", &size)
 	return int64(size * float64(multiplier))
 }
 
@@ -573,4 +570,98 @@ func (m *Manager) PruneVolumes() (int, error) {
 	}
 
 	return count, nil
+}
+
+type Port struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	Process  string `json:"process"`
+	PID      int    `json:"pid"`
+	Address  string `json:"address"`
+	State    string `json:"state"`
+}
+
+func (m *Manager) ListPorts() ([]Port, error) {
+	cmd := exec.Command("ss", "-tulpn", "state", "listening")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list ports: %w", err)
+	}
+
+	lines := strings.Split(string(output), "\n")
+	var ports []Port
+
+	for i, line := range lines {
+		if i == 0 || strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+
+		protocol := strings.ToUpper(fields[0])
+		state := "LISTEN"
+		localAddr := fields[3]
+
+		addressParts := strings.Split(localAddr, ":")
+		if len(addressParts) < 2 {
+			continue
+		}
+
+		portStr := addressParts[len(addressParts)-1]
+		port := 0
+		_, _ = fmt.Sscanf(portStr, "%d", &port)
+		if port == 0 {
+			continue
+		}
+
+		address := strings.Join(addressParts[:len(addressParts)-1], ":")
+		if address == "" || address == "*" {
+			address = "0.0.0.0"
+		}
+
+		process := ""
+		pid := 0
+
+		if len(fields) >= 6 {
+			processInfo := fields[5]
+			if strings.Contains(processInfo, "pid=") {
+				parts := strings.Split(processInfo, ",")
+				for _, part := range parts {
+					if strings.HasPrefix(part, "pid=") {
+						_, _ = fmt.Sscanf(part, "pid=%d", &pid)
+					}
+				}
+
+				if pid > 0 {
+					procCmd := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "comm=")
+					if procOutput, err := procCmd.Output(); err == nil {
+						process = strings.TrimSpace(string(procOutput))
+					}
+				}
+			}
+		}
+
+		ports = append(ports, Port{
+			Port:     port,
+			Protocol: protocol,
+			Process:  process,
+			PID:      pid,
+			Address:  address,
+			State:    state,
+		})
+	}
+
+	return ports, nil
+}
+
+func (m *Manager) KillProcess(pid int) error {
+	cmd := exec.Command("kill", "-9", fmt.Sprintf("%d", pid))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to kill process: %s", string(output))
+	}
+	return nil
 }

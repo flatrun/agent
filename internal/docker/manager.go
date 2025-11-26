@@ -74,7 +74,7 @@ func (m *Manager) DeleteDeployment(name string) error {
 		return err
 	}
 
-	m.executor.Down(deployment.Path)
+	_, _ = m.executor.Down(deployment.Path)
 
 	return m.discovery.DeleteDeployment(name)
 }
@@ -139,6 +139,13 @@ func (m *Manager) GetComposeFile(name string) (string, error) {
 	defer m.mu.RUnlock()
 
 	return m.discovery.GetComposeFile(name)
+}
+
+func (m *Manager) SaveMetadata(name string, metadata *models.ServiceMetadata) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.discovery.SaveMetadata(name, metadata)
 }
 
 type DeploymentStats struct {

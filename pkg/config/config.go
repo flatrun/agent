@@ -12,10 +12,18 @@ type Config struct {
 	DockerSocket    string        `yaml:"docker_socket"`
 	API             APIConfig     `yaml:"api"`
 	Auth            AuthConfig    `yaml:"auth"`
+	Domain          DomainConfig  `yaml:"domain"`
 	Nginx           NginxConfig   `yaml:"nginx"`
 	Certbot         CertbotConfig `yaml:"certbot"`
 	Logging         LoggingConfig `yaml:"logging"`
 	Health          HealthConfig  `yaml:"health"`
+}
+
+type DomainConfig struct {
+	DefaultDomain  string `yaml:"default_domain"`
+	AutoSubdomain  bool   `yaml:"auto_subdomain"`
+	AutoSSL        bool   `yaml:"auto_ssl"`
+	SubdomainStyle string `yaml:"subdomain_style"`
 }
 
 type APIConfig struct {
@@ -26,9 +34,9 @@ type APIConfig struct {
 }
 
 type AuthConfig struct {
-	Enabled  bool     `yaml:"enabled"`
-	APIKeys  []string `yaml:"api_keys"`
-	JWTSecret string  `yaml:"jwt_secret"`
+	Enabled   bool     `yaml:"enabled"`
+	APIKeys   []string `yaml:"api_keys"`
+	JWTSecret string   `yaml:"jwt_secret"`
 }
 
 type NginxConfig struct {
@@ -95,5 +103,8 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Auth.JWTSecret == "" {
 		cfg.Auth.JWTSecret = "default-secret-change-me"
+	}
+	if cfg.Domain.SubdomainStyle == "" {
+		cfg.Domain.SubdomainStyle = "words"
 	}
 }
