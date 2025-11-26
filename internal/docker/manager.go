@@ -141,6 +141,13 @@ func (m *Manager) GetComposeFile(name string) (string, error) {
 	return m.discovery.GetComposeFile(name)
 }
 
+func (m *Manager) SaveMetadata(name string, metadata *models.ServiceMetadata) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.discovery.SaveMetadata(name, metadata)
+}
+
 type DeploymentStats struct {
 	TotalDeployments int       `json:"total_deployments"`
 	Running          int       `json:"running"`
