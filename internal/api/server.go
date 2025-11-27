@@ -13,10 +13,12 @@ import (
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/certs"
+	"github.com/flatrun/agent/internal/database"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/files"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/proxy"
+	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/plugins"
@@ -36,6 +38,8 @@ type Server struct {
 	authMiddleware    *auth.Middleware
 	proxyOrchestrator *proxy.Orchestrator
 	filesManager      *files.Manager
+	servicesManager   *system.ServicesManager
+	databaseManager   *database.Manager
 }
 
 func New(cfg *config.Config) *Server {
@@ -60,6 +64,8 @@ func New(cfg *config.Config) *Server {
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
 	proxyOrchestrator := proxy.NewOrchestrator(cfg)
 	filesManager := files.NewManager(cfg.DeploymentsPath)
+	servicesManager := system.NewServicesManager()
+	databaseManager := database.NewManager()
 
 	s := &Server{
 		config:            cfg,
@@ -71,6 +77,8 @@ func New(cfg *config.Config) *Server {
 		authMiddleware:    authMiddleware,
 		proxyOrchestrator: proxyOrchestrator,
 		filesManager:      filesManager,
+		servicesManager:   servicesManager,
+		databaseManager:   databaseManager,
 	}
 
 	s.setupRoutes()
@@ -139,12 +147,25 @@ func (s *Server) setupRoutes() {
 			protected.GET("/ports", s.listPorts)
 			protected.POST("/ports/:pid/kill", s.killProcess)
 
+			protected.GET("/system/services", s.listSystemServices)
+			protected.POST("/system/services/:name/start", s.startSystemService)
+			protected.POST("/system/services/:name/stop", s.stopSystemService)
+			protected.POST("/system/services/:name/restart", s.restartSystemService)
+
 			protected.GET("/deployments/:name/files", s.listDeploymentFiles)
 			protected.GET("/deployments/:name/files/*path", s.getDeploymentFile)
 			protected.POST("/deployments/:name/files/*path", s.uploadDeploymentFile)
 			protected.DELETE("/deployments/:name/files/*path", s.deleteDeploymentFile)
 			protected.POST("/deployments/:name/mkdir/*path", s.createDeploymentDir)
 			protected.GET("/deployments/:name/files-info", s.getDeploymentFilesInfo)
+
+			protected.POST("/databases/test", s.testDatabaseConnection)
+			protected.POST("/databases/list", s.listDatabasesInServer)
+			protected.POST("/databases/tables", s.listDatabaseTables)
+			protected.POST("/databases/users", s.listDatabaseUsers)
+			protected.POST("/databases/create", s.createDatabaseInServer)
+			protected.POST("/databases/users/create", s.createDatabaseUser)
+			protected.POST("/databases/privileges/grant", s.grantDatabasePrivileges)
 		}
 	}
 }
@@ -1411,5 +1432,239 @@ func (s *Server) getDeploymentFilesInfo(c *gin.Context) {
 		"deployment": name,
 		"disk_usage": usage,
 		"mount_path": mountPath,
+	})
+}
+
+func (s *Server) listSystemServices(c *gin.Context) {
+	services, err := s.servicesManager.ListServices()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"services": services,
+	})
+}
+
+func (s *Server) startSystemService(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.servicesManager.StartService(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Service started",
+		"name":    name,
+	})
+}
+
+func (s *Server) stopSystemService(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.servicesManager.StopService(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Service stopped",
+		"name":    name,
+	})
+}
+
+func (s *Server) restartSystemService(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.servicesManager.RestartService(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Service restarted",
+		"name":    name,
+	})
+}
+
+func (s *Server) testDatabaseConnection(c *gin.Context) {
+	var cfg database.ConnectionConfig
+	if err := c.ShouldBindJSON(&cfg); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.databaseManager.TestConnection(&cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   err.Error(),
+			"success": false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Connection successful",
+	})
+}
+
+func (s *Server) listDatabasesInServer(c *gin.Context) {
+	var cfg database.ConnectionConfig
+	if err := c.ShouldBindJSON(&cfg); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	databases, err := s.databaseManager.ListDatabases(&cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"databases": databases,
+	})
+}
+
+func (s *Server) listDatabaseTables(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Database string `json:"database" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	tables, err := s.databaseManager.ListTables(&req.ConnectionConfig, req.Database)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"tables": tables,
+	})
+}
+
+func (s *Server) listDatabaseUsers(c *gin.Context) {
+	var cfg database.ConnectionConfig
+	if err := c.ShouldBindJSON(&cfg); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	users, err := s.databaseManager.ListUsers(&cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"users": users,
+	})
+}
+
+func (s *Server) createDatabaseInServer(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		DbName string `json:"db_name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.databaseManager.CreateDatabase(&req.ConnectionConfig, req.DbName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Database created",
+		"name":    req.DbName,
+	})
+}
+
+func (s *Server) createDatabaseUser(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Username string `json:"username" binding:"required"`
+		Password string `json:"user_password" binding:"required"`
+		Host     string `json:"user_host"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.databaseManager.CreateUser(&req.ConnectionConfig, req.Username, req.Password, req.Host); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":  "User created",
+		"username": req.Username,
+	})
+}
+
+func (s *Server) grantDatabasePrivileges(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Username string `json:"username" binding:"required"`
+		Database string `json:"database" binding:"required"`
+		Host     string `json:"user_host"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.databaseManager.GrantPrivileges(&req.ConnectionConfig, req.Username, req.Database, req.Host); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Privileges granted",
+		"username": req.Username,
+		"database": req.Database,
 	})
 }
