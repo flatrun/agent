@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1270,17 +1269,8 @@ func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {
 func (s *Server) listDeploymentFiles(c *gin.Context) {
 	name := c.Param("name")
 	path := c.DefaultQuery("path", "/")
-	root := c.Query("root") == "true"
 
-	var filesList []files.FileInfo
-	var err error
-
-	if root {
-		filesList, err = s.filesManager.ListAllFiles(name, path)
-	} else {
-		filesList, err = s.filesManager.ListFiles(name, path)
-	}
-
+	filesList, err := s.filesManager.ListFiles(name, path)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -1291,14 +1281,12 @@ func (s *Server) listDeploymentFiles(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"files": filesList,
 		"path":  path,
-		"root":  root,
 	})
 }
 
 func (s *Server) getDeploymentFile(c *gin.Context) {
 	name := c.Param("name")
 	path := c.Param("path")
-	root := c.Query("root") == "true"
 
 	if c.Query("info") == "true" {
 		info, err := s.filesManager.GetFileInfo(name, path)
@@ -1313,13 +1301,7 @@ func (s *Server) getDeploymentFile(c *gin.Context) {
 	}
 
 	if c.Query("list") == "true" {
-		var filesList []files.FileInfo
-		var err error
-		if root {
-			filesList, err = s.filesManager.ListAllFiles(name, path)
-		} else {
-			filesList, err = s.filesManager.ListFiles(name, path)
-		}
+		filesList, err := s.filesManager.ListFiles(name, path)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": err.Error(),
@@ -1329,21 +1311,11 @@ func (s *Server) getDeploymentFile(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"files": filesList,
 			"path":  path,
-			"root":  root,
 		})
 		return
 	}
 
-	var file io.ReadCloser
-	var info *files.FileInfo
-	var err error
-
-	if root {
-		file, info, err = s.filesManager.ReadAllFile(name, path)
-	} else {
-		file, info, err = s.filesManager.ReadFile(name, path)
-	}
-
+	file, info, err := s.filesManager.ReadFile(name, path)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": err.Error(),

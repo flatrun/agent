@@ -3,8 +3,11 @@ package docker
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type ComposeExecutor struct {
@@ -58,10 +61,66 @@ func (c *ComposeExecutor) Pull(deploymentPath string) (string, error) {
 
 func (c *ComposeExecutor) getProjectName(deploymentPath string) string {
 	parts := strings.Split(strings.TrimSuffix(deploymentPath, "/"), "/")
-	if len(parts) > 0 {
-		return "flatrun-" + parts[len(parts)-1]
+	if len(parts) == 0 {
+		return "flatrun"
 	}
-	return "flatrun"
+	dirName := parts[len(parts)-1]
+
+	// First, try to read name from compose file
+	if name := c.readComposeProjectName(deploymentPath); name != "" {
+		return name
+	}
+
+	// Fallback: detect existing project from running containers
+	if name := c.detectExistingProject(dirName); name != "" {
+		return name
+	}
+
+	// Default to directory name for compatibility
+	return dirName
+}
+
+// readComposeProjectName reads the 'name:' attribute from the compose file
+func (c *ComposeExecutor) readComposeProjectName(deploymentPath string) string {
+	composeFiles := []string{
+		"docker-compose.yml",
+		"docker-compose.yaml",
+		"compose.yml",
+		"compose.yaml",
+	}
+
+	for _, filename := range composeFiles {
+		path := deploymentPath + "/" + filename
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		var compose struct {
+			Name string `yaml:"name"`
+		}
+		if err := yaml.Unmarshal(data, &compose); err == nil && compose.Name != "" {
+			return compose.Name
+		}
+	}
+	return ""
+}
+
+// detectExistingProject checks if containers exist with common project name patterns
+func (c *ComposeExecutor) detectExistingProject(dirName string) string {
+	candidates := []string{
+		dirName,
+		"flatrun-" + dirName,
+	}
+
+	for _, candidate := range candidates {
+		cmd := exec.Command("docker", "compose", "-p", candidate, "ps", "-q")
+		output, err := cmd.Output()
+		if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func (c *ComposeExecutor) runCompose(deploymentPath string, args ...string) (string, error) {

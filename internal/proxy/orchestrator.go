@@ -131,7 +131,16 @@ func (o *Orchestrator) RequestCertificate(domain string) (*ssl.CertificateResult
 		return nil, err
 	}
 
-	return o.ssl.RequestCertificate(domain)
+	result, err := o.ssl.RequestCertificate(domain)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := o.nginx.Reload(); err != nil {
+		log.Printf("warning: failed to reload nginx after certificate request: %v", err)
+	}
+
+	return result, nil
 }
 
 func (o *Orchestrator) RenewCertificates() (*ssl.RenewalResult, error) {

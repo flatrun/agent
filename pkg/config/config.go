@@ -49,6 +49,8 @@ type CertbotConfig struct {
 	ContainerName string `yaml:"container_name"`
 	Email         string `yaml:"email"`
 	Staging       bool   `yaml:"staging"`
+	CertsPath     string `yaml:"certs_path"`
+	WebrootPath   string `yaml:"webroot_path"`
 }
 
 type LoggingConfig struct {
