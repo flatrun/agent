@@ -23,10 +23,20 @@ type Manager struct {
 }
 
 func NewManager(cfg *config.CertbotConfig, deploymentsPath string) *Manager {
+	certsPath := cfg.CertsPath
+	if certsPath == "" {
+		certsPath = filepath.Join(deploymentsPath, "nginx", "certs", "live")
+	}
+
+	webRoot := cfg.WebrootPath
+	if webRoot == "" {
+		webRoot = filepath.Join(deploymentsPath, "nginx", "html")
+	}
+
 	return &Manager{
 		config:    cfg,
-		certsPath: filepath.Join(deploymentsPath, "nginx", "certs", "live"),
-		webRoot:   filepath.Join(deploymentsPath, "nginx", "certbot"),
+		certsPath: certsPath,
+		webRoot:   webRoot,
 	}
 }
 

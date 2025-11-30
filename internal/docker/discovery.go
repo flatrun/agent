@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/flatrun/agent/pkg/models"
@@ -102,9 +104,14 @@ func (d *Discovery) GetDeployment(name string) (*models.Deployment, error) {
 	}
 
 	metadataPath := filepath.Join(dirPath, "service.yml")
-	if metadata, err := d.loadMetadata(metadataPath); err == nil {
-		deployment.Metadata = metadata
+	metadata, err := d.loadMetadata(metadataPath)
+	if err != nil {
+		metadata = d.generateMetadataFromCompose(composePath, name)
+		if metadata != nil {
+			_ = d.SaveMetadata(name, metadata)
+		}
 	}
+	deployment.Metadata = metadata
 
 	if services, err := d.parseComposeServices(composePath); err == nil {
 		deployment.Services = services
@@ -203,8 +210,36 @@ func (d *Discovery) CreateDeployment(name string, composeContent string) error {
 		return err
 	}
 
+	// Ensure compose file has a name attribute for project identification
+	composeContent = d.ensureComposeName(name, composeContent)
+
 	composePath := filepath.Join(dirPath, "docker-compose.yml")
 	return os.WriteFile(composePath, []byte(composeContent), 0644)
+}
+
+// ensureComposeName adds or updates the name attribute in a compose file
+func (d *Discovery) ensureComposeName(name string, content string) string {
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		// If parsing fails, prepend name manually
+		return fmt.Sprintf("name: %s\n%s", name, content)
+	}
+
+	// Check if name already exists
+	if _, exists := compose["name"]; exists {
+		return content
+	}
+
+	// Add name attribute
+	compose["name"] = name
+
+	// Re-marshal with name included
+	data, err := yaml.Marshal(compose)
+	if err != nil {
+		return fmt.Sprintf("name: %s\n%s", name, content)
+	}
+
+	return string(data)
 }
 
 func (d *Discovery) DeleteDeployment(name string) error {
@@ -265,4 +300,69 @@ func (d *Discovery) DeleteMetadata(name string) error {
 	}
 
 	return os.Remove(metadataPath)
+}
+
+func (d *Discovery) generateMetadataFromCompose(composePath, name string) *models.ServiceMetadata {
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return nil
+	}
+
+	var compose composeFile
+	if err := yaml.Unmarshal(data, &compose); err != nil {
+		return nil
+	}
+
+	metadata := &models.ServiceMetadata{
+		Name: name,
+		Type: "",
+		Networking: models.NetworkingConfig{
+			Expose:    false,
+			Protocol:  "http",
+			ProxyType: "http",
+		},
+		SSL: models.SSLConfig{
+			Enabled:  false,
+			AutoCert: false,
+		},
+		HealthCheck: models.HealthCheckConfig{
+			Path:     "/",
+			Interval: "30s",
+		},
+	}
+
+	for _, svc := range compose.Services {
+		if len(svc.Ports) > 0 {
+			portStr := d.parsePort(svc.Ports[0])
+			if portStr != "" {
+				port := d.extractContainerPort(portStr)
+				if port > 0 {
+					metadata.Networking.ContainerPort = port
+				}
+			}
+			break
+		}
+	}
+
+	return metadata
+}
+
+func (d *Discovery) extractContainerPort(portStr string) int {
+	parts := strings.Split(portStr, ":")
+	var portPart string
+	if len(parts) == 2 {
+		portPart = parts[1]
+	} else if len(parts) == 1 {
+		portPart = parts[0]
+	} else {
+		return 0
+	}
+
+	portPart = strings.Split(portPart, "/")[0]
+
+	port, err := strconv.Atoi(portPart)
+	if err != nil {
+		return 0
+	}
+	return port
 }
