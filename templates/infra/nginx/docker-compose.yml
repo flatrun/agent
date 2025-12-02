@@ -1,15 +1,18 @@
 name: ${NAME}
 services:
-  app:
+  nginx:
     image: nginx:alpine
     container_name: ${NAME}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
     volumes:
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./certs:/etc/nginx/certs:ro
       - ./html:/usr/share/nginx/html:ro
-    expose:
-      - "80"
     networks:
       - proxy
-    restart: unless-stopped
 
 networks:
   proxy:

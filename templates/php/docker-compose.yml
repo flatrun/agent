@@ -8,11 +8,11 @@ services:
     expose:
       - "80"
     networks:
-      - web
+      - proxy
     restart: unless-stopped
     env_file:
       - .env.flatrun
 
 networks:
-  web:
+  proxy:
     external: true

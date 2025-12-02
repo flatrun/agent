@@ -15,12 +15,12 @@ services:
     expose:
       - "2368"
     networks:
-      - web
+      - proxy
     restart: unless-stopped
 
 volumes:
   ghost_content:
 
 networks:
-  web:
+  proxy:
     external: true

@@ -1,0 +1,21 @@
+name: ${NAME}
+services:
+  mysql:
+    image: mysql:8
+    container_name: ${NAME}
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - proxy
+
+volumes:
+  mysql_data:
+
+networks:
+  proxy:
+    external: true

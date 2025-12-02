@@ -27,10 +27,10 @@ type DatabaseInfo struct {
 }
 
 type TableInfo struct {
-	Name    string `json:"name"`
-	Rows    int64  `json:"rows,omitempty"`
-	Size    string `json:"size,omitempty"`
-	Engine  string `json:"engine,omitempty"`
+	Name   string `json:"name"`
+	Rows   int64  `json:"rows,omitempty"`
+	Size   string `json:"size,omitempty"`
+	Engine string `json:"engine,omitempty"`
 }
 
 type UserInfo struct {
@@ -45,18 +45,32 @@ func NewManager() *Manager {
 }
 
 func (m *Manager) resolveContainerConnection(cfg *ConnectionConfig) (string, int, error) {
-	if cfg.Container == "" {
+	containerName := cfg.Container
+	if containerName == "" {
+		containerName = cfg.Host
+	}
+	if containerName == "" {
+		return "localhost", cfg.Port, nil
+	}
+
+	// Skip resolution for IP addresses and localhost
+	if containerName == "localhost" || containerName == "127.0.0.1" ||
+		strings.HasPrefix(containerName, "192.168.") ||
+		strings.HasPrefix(containerName, "10.") ||
+		strings.HasPrefix(containerName, "172.") {
+		return containerName, cfg.Port, nil
+	}
+
+	// Try to resolve as Docker container
+	cmd := exec.Command("docker", "inspect", "--format", "{{(index .NetworkSettings.Networks (index (keys .NetworkSettings.Networks) 0)).IPAddress}}", containerName)
+	output, err := cmd.Output()
+	if err != nil {
+		// Not a container, return as-is (might be a hostname)
 		host := cfg.Host
 		if host == "" {
 			host = "localhost"
 		}
 		return host, cfg.Port, nil
-	}
-
-	cmd := exec.Command("docker", "inspect", "--format", "{{(index .NetworkSettings.Networks (index (keys .NetworkSettings.Networks) 0)).IPAddress}}", cfg.Container)
-	output, err := cmd.Output()
-	if err != nil {
-		return cfg.Host, cfg.Port, nil
 	}
 
 	ip := strings.TrimSpace(string(output))
@@ -65,7 +79,7 @@ func (m *Manager) resolveContainerConnection(cfg *ConnectionConfig) (string, int
 	}
 
 	port := cfg.Port
-	portCmd := exec.Command("docker", "inspect", "--format", "{{range $p, $conf := .Config.ExposedPorts}}{{$p}} {{end}}", cfg.Container)
+	portCmd := exec.Command("docker", "inspect", "--format", "{{range $p, $conf := .Config.ExposedPorts}}{{$p}} {{end}}", containerName)
 	portOutput, err := portCmd.Output()
 	if err == nil {
 		ports := strings.Fields(string(portOutput))
@@ -202,7 +216,7 @@ func (m *Manager) ListDatabases(cfg *ConnectionConfig) ([]DatabaseInfo, error) {
 			continue
 		}
 		if name == "information_schema" || name == "performance_schema" ||
-		   name == "mysql" || name == "sys" {
+			name == "mysql" || name == "sys" {
 			continue
 		}
 		databases = append(databases, DatabaseInfo{Name: name})

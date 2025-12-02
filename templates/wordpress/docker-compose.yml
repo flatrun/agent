@@ -13,12 +13,12 @@ services:
     expose:
       - "80"
     networks:
-      - web
+      - proxy
     restart: unless-stopped
 
 volumes:
   wordpress_data:
 
 networks:
-  web:
+  proxy:
     external: true

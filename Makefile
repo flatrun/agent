@@ -57,7 +57,8 @@ test-e2e-setup:
 	@mkdir -p $(E2E_DEPLOYMENTS_PATH)/nginx/conf.d
 	@mkdir -p $(E2E_DEPLOYMENTS_PATH)/nginx/certs
 	@chmod -R 777 $(E2E_DEPLOYMENTS_PATH) 2>/dev/null || true
-	@docker network create web 2>/dev/null || true
+	@docker network create proxy 2>/dev/null || true
+	@docker network create database 2>/dev/null || true
 	cd test/e2e && docker compose -f docker-compose.test.yml up -d --build
 	@echo "Waiting for services to be healthy..."
 	@timeout 120 bash -c 'until docker exec flatrun-e2e-agent wget -q -O /dev/null http://127.0.0.1:8090/api/health 2>/dev/null; do sleep 2; done' || (echo "Agent failed to start" && exit 1)
@@ -81,7 +82,8 @@ test-e2e-short:
 test-e2e-cleanup:
 	@echo "Cleaning up E2E test environment..."
 	cd test/e2e && docker compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
-	@docker network rm web 2>/dev/null || true
+	@docker network rm proxy 2>/dev/null || true
+	@docker network rm database 2>/dev/null || true
 	@rm -rf $(E2E_DEPLOYMENTS_PATH)/* 2>/dev/null || true
 	@echo "Cleanup complete"
 

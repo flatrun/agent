@@ -10,11 +10,11 @@ services:
       - "3000"
     command: sh -c "npm install && npm run build && npm start"
     networks:
-      - web
+      - proxy
     restart: unless-stopped
     env_file:
       - .env.flatrun
 
 networks:
-  web:
+  proxy:
     external: true

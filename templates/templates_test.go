@@ -113,7 +113,7 @@ func TestGetCompose(t *testing.T) {
 				"nginx:alpine",
 				"expose:",
 				"networks:",
-				"web:",
+				"proxy:",
 			},
 			wantNotContain: []string{
 				"ports:",

@@ -183,3 +183,20 @@ func (m *Manager) GetStats() (*DeploymentStats, error) {
 
 	return stats, nil
 }
+
+func (m *Manager) ListInfrastructure() ([]models.Deployment, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	deployments, err := m.discovery.FindInfrastructure()
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range deployments {
+		status, _ := m.executor.GetStatus(deployments[i].Path)
+		deployments[i].Status = status
+	}
+
+	return deployments, nil
+}

@@ -1,0 +1,21 @@
+name: ${NAME}
+services:
+  postgres:
+    image: postgres:16
+    container_name: ${NAME}
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - proxy
+
+volumes:
+  postgres_data:
+
+networks:
+  proxy:
+    external: true

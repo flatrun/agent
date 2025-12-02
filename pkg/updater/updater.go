@@ -37,8 +37,8 @@ type Asset struct {
 }
 
 type UpdateResult struct {
-	CurrentVersion string
-	LatestVersion  string
+	CurrentVersion  string
+	LatestVersion   string
 	UpdateAvailable bool
 	Downloaded      bool
 	Installed       bool

@@ -7,10 +7,28 @@ import (
 )
 
 //go:embed */metadata.yml */docker-compose.yml
+//go:embed infra/*/metadata.yml infra/*/docker-compose.yml
 var FS embed.FS
+
+var Categories = []Category{
+	{ID: "application", Name: "Applications", Icon: "pi pi-desktop", Priority: 100},
+	{ID: "framework", Name: "Frameworks", Icon: "pi pi-code", Priority: 90},
+	{ID: "runtime", Name: "Runtimes", Icon: "pi pi-cog", Priority: 80},
+	{ID: "infrastructure", Name: "Infrastructure", Icon: "pi pi-server", Priority: 70},
+	{ID: "database", Name: "Databases", Icon: "pi pi-database", Priority: 60},
+	{ID: "basic", Name: "Basic", Icon: "pi pi-file", Priority: 50},
+}
+
+type Category struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Icon     string `json:"icon"`
+	Priority int    `json:"priority"`
+}
 
 func List() ([]string, error) {
 	var templates []string
+
 	entries, err := fs.ReadDir(FS, ".")
 	if err != nil {
 		return nil, err
@@ -18,7 +36,29 @@ func List() ([]string, error) {
 
 	for _, entry := range entries {
 		if entry.IsDir() {
-			templates = append(templates, entry.Name())
+			if entry.Name() == "infra" {
+				infraTemplates, err := listInfraTemplates()
+				if err == nil {
+					templates = append(templates, infraTemplates...)
+				}
+			} else {
+				templates = append(templates, entry.Name())
+			}
+		}
+	}
+	return templates, nil
+}
+
+func listInfraTemplates() ([]string, error) {
+	var templates []string
+	entries, err := fs.ReadDir(FS, "infra")
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			templates = append(templates, "infra/"+entry.Name())
 		}
 	}
 	return templates, nil
@@ -30,4 +70,8 @@ func GetMetadata(name string) ([]byte, error) {
 
 func GetCompose(name string) ([]byte, error) {
 	return FS.ReadFile(filepath.Join(name, "docker-compose.yml"))
+}
+
+func GetCategories() []Category {
+	return Categories
 }

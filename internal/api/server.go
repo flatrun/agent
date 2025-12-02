@@ -17,6 +17,7 @@ import (
 	"github.com/flatrun/agent/internal/database"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/files"
+	"github.com/flatrun/agent/internal/infra"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/system"
@@ -32,6 +33,7 @@ import (
 
 type Server struct {
 	config            *config.Config
+	configPath        string
 	router            *gin.Engine
 	server            *http.Server
 	manager           *docker.Manager
@@ -43,9 +45,10 @@ type Server struct {
 	filesManager      *files.Manager
 	servicesManager   *system.ServicesManager
 	databaseManager   *database.Manager
+	infraManager      *infra.Manager
 }
 
-func New(cfg *config.Config) *Server {
+func New(cfg *config.Config, configPath string) *Server {
 	if cfg.Logging.Level == "debug" {
 		gin.SetMode(gin.DebugMode)
 	} else {
@@ -69,9 +72,11 @@ func New(cfg *config.Config) *Server {
 	filesManager := files.NewManager(cfg.DeploymentsPath)
 	servicesManager := system.NewServicesManager()
 	databaseManager := database.NewManager()
+	infraManager := infra.NewManager(cfg)
 
 	s := &Server{
 		config:            cfg,
+		configPath:        configPath,
 		router:            router,
 		manager:           manager,
 		certsDiscovery:    certsDiscovery,
@@ -82,6 +87,7 @@ func New(cfg *config.Config) *Server {
 		filesManager:      filesManager,
 		servicesManager:   servicesManager,
 		databaseManager:   databaseManager,
+		infraManager:      infraManager,
 	}
 
 	s.setupRoutes()
@@ -133,6 +139,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/plugins/:name", s.getPlugin)
 			protected.POST("/plugins/:name/deployments", s.createPluginDeployment)
 			protected.GET("/templates", s.listTemplates)
+			protected.GET("/templates/categories", s.getTemplateCategories)
 			protected.POST("/templates/refresh", s.refreshTemplates)
 			protected.GET("/stats", s.getSystemStats)
 			protected.GET("/containers", s.listContainers)
@@ -170,6 +177,15 @@ func (s *Server) setupRoutes() {
 			protected.POST("/databases/create", s.createDatabaseInServer)
 			protected.POST("/databases/users/create", s.createDatabaseUser)
 			protected.POST("/databases/privileges/grant", s.grantDatabasePrivileges)
+
+			protected.GET("/infrastructure", s.listInfrastructure)
+			protected.GET("/infrastructure/stats", s.getInfraStats)
+			protected.GET("/infrastructure/:name", s.getInfraService)
+			protected.POST("/infrastructure/:name/start", s.startInfraService)
+			protected.POST("/infrastructure/:name/stop", s.stopInfraService)
+			protected.POST("/infrastructure/:name/restart", s.restartInfraService)
+			protected.GET("/infrastructure/:name/logs", s.getInfraServiceLogs)
+			protected.POST("/infrastructure/migrate/:name", s.migrateToInfrastructure)
 		}
 	}
 }
@@ -257,7 +273,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 
-	networkName := s.config.Infrastructure.NetworkName
+	networkName := s.config.Infrastructure.DefaultProxyNetwork
 	if err := s.networksManager.EnsureNetwork(networkName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to ensure network exists: " + err.Error(),
@@ -736,8 +752,26 @@ func (s *Server) getSettings(c *gin.Context) {
 				"auto_ssl":        s.config.Domain.AutoSSL,
 				"subdomain_style": s.config.Domain.SubdomainStyle,
 			},
+			"nginx": gin.H{
+				"enabled":        s.config.Nginx.Enabled,
+				"image":          s.config.Nginx.Image,
+				"container_name": s.config.Nginx.ContainerName,
+				"config_path":    s.config.Nginx.ConfigPath,
+				"reload_command": s.config.Nginx.ReloadCommand,
+				"external":       s.config.Nginx.External,
+			},
+			"certbot": gin.H{
+				"enabled":      s.config.Certbot.Enabled,
+				"image":        s.config.Certbot.Image,
+				"email":        s.config.Certbot.Email,
+				"staging":      s.config.Certbot.Staging,
+				"certs_path":   s.config.Certbot.CertsPath,
+				"webroot_path": s.config.Certbot.WebrootPath,
+				"dns_provider": s.config.Certbot.DNSProvider,
+			},
 			"infrastructure": gin.H{
-				"network_name": s.config.Infrastructure.NetworkName,
+				"default_proxy_network":    s.config.Infrastructure.DefaultProxyNetwork,
+				"default_database_network": s.config.Infrastructure.DefaultDatabaseNetwork,
 				"database": gin.H{
 					"enabled":   s.config.Infrastructure.Database.Enabled,
 					"type":      s.config.Infrastructure.Database.Type,
@@ -764,9 +798,27 @@ func (s *Server) updateSettings(c *gin.Context) {
 			AutoSSL        bool   `json:"auto_ssl"`
 			SubdomainStyle string `json:"subdomain_style"`
 		} `json:"domain,omitempty"`
+		Nginx *struct {
+			Enabled       bool   `json:"enabled"`
+			Image         string `json:"image"`
+			ContainerName string `json:"container_name"`
+			ConfigPath    string `json:"config_path"`
+			ReloadCommand string `json:"reload_command"`
+			External      bool   `json:"external"`
+		} `json:"nginx,omitempty"`
+		Certbot *struct {
+			Enabled     bool   `json:"enabled"`
+			Image       string `json:"image"`
+			Email       string `json:"email"`
+			Staging     bool   `json:"staging"`
+			CertsPath   string `json:"certs_path"`
+			WebrootPath string `json:"webroot_path"`
+			DNSProvider string `json:"dns_provider"`
+		} `json:"certbot,omitempty"`
 		Infrastructure *struct {
-			NetworkName string `json:"network_name"`
-			Database    *struct {
+			DefaultProxyNetwork    string `json:"default_proxy_network"`
+			DefaultDatabaseNetwork string `json:"default_database_network"`
+			Database               *struct {
 				Enabled      bool   `json:"enabled"`
 				Type         string `json:"type"`
 				Container    string `json:"container"`
@@ -799,9 +851,49 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 	}
 
+	if req.Nginx != nil {
+		s.config.Nginx.Enabled = req.Nginx.Enabled
+		s.config.Nginx.External = req.Nginx.External
+		if req.Nginx.Image != "" {
+			s.config.Nginx.Image = req.Nginx.Image
+		}
+		if req.Nginx.ContainerName != "" {
+			s.config.Nginx.ContainerName = req.Nginx.ContainerName
+		}
+		if req.Nginx.ConfigPath != "" {
+			s.config.Nginx.ConfigPath = req.Nginx.ConfigPath
+		}
+		if req.Nginx.ReloadCommand != "" {
+			s.config.Nginx.ReloadCommand = req.Nginx.ReloadCommand
+		}
+	}
+
+	if req.Certbot != nil {
+		s.config.Certbot.Enabled = req.Certbot.Enabled
+		s.config.Certbot.Staging = req.Certbot.Staging
+		if req.Certbot.Image != "" {
+			s.config.Certbot.Image = req.Certbot.Image
+		}
+		if req.Certbot.Email != "" {
+			s.config.Certbot.Email = req.Certbot.Email
+		}
+		if req.Certbot.CertsPath != "" {
+			s.config.Certbot.CertsPath = req.Certbot.CertsPath
+		}
+		if req.Certbot.WebrootPath != "" {
+			s.config.Certbot.WebrootPath = req.Certbot.WebrootPath
+		}
+		if req.Certbot.DNSProvider != "" {
+			s.config.Certbot.DNSProvider = req.Certbot.DNSProvider
+		}
+	}
+
 	if req.Infrastructure != nil {
-		if req.Infrastructure.NetworkName != "" {
-			s.config.Infrastructure.NetworkName = req.Infrastructure.NetworkName
+		if req.Infrastructure.DefaultProxyNetwork != "" {
+			s.config.Infrastructure.DefaultProxyNetwork = req.Infrastructure.DefaultProxyNetwork
+		}
+		if req.Infrastructure.DefaultDatabaseNetwork != "" {
+			s.config.Infrastructure.DefaultDatabaseNetwork = req.Infrastructure.DefaultDatabaseNetwork
 		}
 		if req.Infrastructure.Database != nil {
 			s.config.Infrastructure.Database.Enabled = req.Infrastructure.Database.Enabled
@@ -831,6 +923,14 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 	}
 
+	s.infraManager.UpdateConfig(s.config)
+
+	if s.configPath != "" {
+		if err := config.Save(s.config, s.configPath); err != nil {
+			log.Printf("Warning: failed to persist config: %v", err)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Settings updated",
 		"settings": gin.H{
@@ -840,8 +940,26 @@ func (s *Server) updateSettings(c *gin.Context) {
 				"auto_ssl":        s.config.Domain.AutoSSL,
 				"subdomain_style": s.config.Domain.SubdomainStyle,
 			},
+			"nginx": gin.H{
+				"enabled":        s.config.Nginx.Enabled,
+				"image":          s.config.Nginx.Image,
+				"container_name": s.config.Nginx.ContainerName,
+				"config_path":    s.config.Nginx.ConfigPath,
+				"reload_command": s.config.Nginx.ReloadCommand,
+				"external":       s.config.Nginx.External,
+			},
+			"certbot": gin.H{
+				"enabled":      s.config.Certbot.Enabled,
+				"image":        s.config.Certbot.Image,
+				"email":        s.config.Certbot.Email,
+				"staging":      s.config.Certbot.Staging,
+				"certs_path":   s.config.Certbot.CertsPath,
+				"webroot_path": s.config.Certbot.WebrootPath,
+				"dns_provider": s.config.Certbot.DNSProvider,
+			},
 			"infrastructure": gin.H{
-				"network_name": s.config.Infrastructure.NetworkName,
+				"default_proxy_network":    s.config.Infrastructure.DefaultProxyNetwork,
+				"default_database_network": s.config.Infrastructure.DefaultDatabaseNetwork,
 				"database": gin.H{
 					"enabled":   s.config.Infrastructure.Database.Enabled,
 					"type":      s.config.Infrastructure.Database.Type,
@@ -1077,8 +1195,14 @@ func (s *Server) refreshTemplates(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "Templates refreshed",
-		"count":    len(builtinList),
+		"message": "Templates refreshed",
+		"count":   len(builtinList),
+	})
+}
+
+func (s *Server) getTemplateCategories(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"categories": templates.GetCategories(),
 	})
 }
 
@@ -1986,5 +2110,176 @@ func (s *Server) grantDatabasePrivileges(c *gin.Context) {
 		"message":  "Privileges granted",
 		"username": req.Username,
 		"database": req.Database,
+	})
+}
+
+func (s *Server) listInfrastructure(c *gin.Context) {
+	services, err := s.infraManager.ListServices()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	infraDeployments, err := s.manager.ListInfrastructure()
+	if err == nil {
+		existingNames := make(map[string]bool)
+		for _, svc := range services {
+			existingNames[svc.Name] = true
+		}
+
+		for _, dep := range infraDeployments {
+			if existingNames[dep.Name] {
+				continue
+			}
+			depType := "infrastructure"
+			if dep.Metadata != nil && dep.Metadata.Type != "" {
+				depType = dep.Metadata.Type
+			}
+			services = append(services, models.InfraService{
+				Name:    dep.Name,
+				Type:    depType,
+				Status:  dep.Status,
+				Managed: true,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"services": services,
+	})
+}
+
+func (s *Server) getInfraService(c *gin.Context) {
+	name := c.Param("name")
+
+	service, err := s.infraManager.GetService(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"service": service,
+	})
+}
+
+func (s *Server) startInfraService(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.infraManager.StartService(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Service started",
+		"name":    name,
+	})
+}
+
+func (s *Server) stopInfraService(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.infraManager.StopService(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Service stopped",
+		"name":    name,
+	})
+}
+
+func (s *Server) restartInfraService(c *gin.Context) {
+	name := c.Param("name")
+
+	if err := s.infraManager.RestartService(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Service restarted",
+		"name":    name,
+	})
+}
+
+func (s *Server) getInfraServiceLogs(c *gin.Context) {
+	name := c.Param("name")
+
+	tailStr := c.DefaultQuery("tail", "100")
+	tail, err := strconv.Atoi(tailStr)
+	if err != nil {
+		tail = 100
+	}
+
+	logs, err := s.infraManager.GetServiceLogs(name, tail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"name": name,
+		"logs": logs,
+	})
+}
+
+func (s *Server) getInfraStats(c *gin.Context) {
+	stats, err := s.infraManager.GetStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"stats": stats,
+	})
+}
+
+func (s *Server) migrateToInfrastructure(c *gin.Context) {
+	name := c.Param("name")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found",
+		})
+		return
+	}
+
+	metadata := deployment.Metadata
+	if metadata == nil {
+		metadata = &models.ServiceMetadata{
+			Name: name,
+		}
+	}
+	metadata.Type = "infrastructure"
+
+	if err := s.manager.SaveMetadata(name, metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Deployment marked as infrastructure",
+		"name":    name,
 	})
 }

@@ -87,10 +87,10 @@ type CreateDeploymentRequest struct {
 }
 
 type ServiceMetadata struct {
-	Name        string           `json:"name"`
-	Type        string           `json:"type"`
-	Networking  NetworkingConfig `json:"networking"`
-	SSL         SSLConfig        `json:"ssl"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type"`
+	Networking  NetworkingConfig  `json:"networking"`
+	SSL         SSLConfig         `json:"ssl"`
 	HealthCheck HealthCheckConfig `json:"healthcheck,omitempty"`
 }
 

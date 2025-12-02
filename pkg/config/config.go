@@ -41,17 +41,23 @@ type AuthConfig struct {
 }
 
 type NginxConfig struct {
-	ContainerName string `yaml:"container_name"`
-	ConfigPath    string `yaml:"config_path"`
-	ReloadCommand string `yaml:"reload_command"`
+	Enabled       bool   `yaml:"enabled" json:"enabled"`
+	Image         string `yaml:"image" json:"image"`
+	ContainerName string `yaml:"container_name" json:"container_name"`
+	ConfigPath    string `yaml:"config_path" json:"config_path"`
+	ReloadCommand string `yaml:"reload_command" json:"reload_command"`
+	External      bool   `yaml:"external" json:"external"`
 }
 
 type CertbotConfig struct {
-	ContainerName string `yaml:"container_name"`
-	Email         string `yaml:"email"`
-	Staging       bool   `yaml:"staging"`
-	CertsPath     string `yaml:"certs_path"`
-	WebrootPath   string `yaml:"webroot_path"`
+	Enabled       bool   `yaml:"enabled" json:"enabled"`
+	Image         string `yaml:"image" json:"image"`
+	ContainerName string `yaml:"container_name" json:"container_name"`
+	Email         string `yaml:"email" json:"email"`
+	Staging       bool   `yaml:"staging" json:"staging"`
+	CertsPath     string `yaml:"certs_path" json:"certs_path"`
+	WebrootPath   string `yaml:"webroot_path" json:"webroot_path"`
+	DNSProvider   string `yaml:"dns_provider" json:"dns_provider"`
 }
 
 type LoggingConfig struct {
@@ -65,9 +71,10 @@ type HealthConfig struct {
 }
 
 type InfrastructureConfig struct {
-	NetworkName string                `yaml:"network_name" json:"network_name"`
-	Database    SharedDatabaseConfig  `yaml:"database" json:"database"`
-	Redis       SharedRedisConfig     `yaml:"redis" json:"redis"`
+	DefaultProxyNetwork    string               `yaml:"default_proxy_network" json:"default_proxy_network"`
+	DefaultDatabaseNetwork string               `yaml:"default_database_network" json:"default_database_network"`
+	Database               SharedDatabaseConfig `yaml:"database" json:"database"`
+	Redis                  SharedRedisConfig    `yaml:"redis" json:"redis"`
 }
 
 type SharedDatabaseConfig struct {
@@ -134,8 +141,11 @@ func setDefaults(cfg *Config) {
 	if cfg.Domain.SubdomainStyle == "" {
 		cfg.Domain.SubdomainStyle = "words"
 	}
-	if cfg.Infrastructure.NetworkName == "" {
-		cfg.Infrastructure.NetworkName = "web"
+	if cfg.Infrastructure.DefaultProxyNetwork == "" {
+		cfg.Infrastructure.DefaultProxyNetwork = "proxy"
+	}
+	if cfg.Infrastructure.DefaultDatabaseNetwork == "" {
+		cfg.Infrastructure.DefaultDatabaseNetwork = "database"
 	}
 	if cfg.Infrastructure.Database.Port == 0 && cfg.Infrastructure.Database.Enabled {
 		switch cfg.Infrastructure.Database.Type {
@@ -153,4 +163,21 @@ func setDefaults(cfg *Config) {
 	if cfg.Infrastructure.Redis.Port == 0 && cfg.Infrastructure.Redis.Enabled {
 		cfg.Infrastructure.Redis.Port = 6379
 	}
+	if cfg.Nginx.Image == "" {
+		cfg.Nginx.Image = "nginx:alpine"
+	}
+	if cfg.Nginx.ContainerName == "" {
+		cfg.Nginx.ContainerName = "nginx"
+	}
+	if cfg.Certbot.Image == "" {
+		cfg.Certbot.Image = "certbot/certbot"
+	}
+}
+
+func Save(cfg *Config, path string) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }

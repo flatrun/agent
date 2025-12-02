@@ -1,0 +1,7 @@
+name: Redis
+description: In-memory data structure store
+icon: pi pi-bolt
+logo: https://redis.io/images/redis-white.png
+category: infrastructure
+type: infrastructure
+priority: 75

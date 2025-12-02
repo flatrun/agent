@@ -30,7 +30,7 @@ func NewManager(cfg *config.CertbotConfig, deploymentsPath string) *Manager {
 
 	webRoot := cfg.WebrootPath
 	if webRoot == "" {
-		webRoot = filepath.Join(deploymentsPath, "nginx", "html")
+		webRoot = filepath.Join(deploymentsPath, "nginx", "webroot")
 	}
 
 	return &Manager{
@@ -64,7 +64,7 @@ func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) 
 		"exec", m.config.ContainerName,
 		"certbot", "certonly",
 		"--webroot",
-		"--webroot-path=/var/www/certbot",
+		"--webroot-path=" + m.webRoot,
 		"--email", m.config.Email,
 		"--agree-tos",
 		"--no-eff-email",
@@ -284,7 +284,7 @@ type CertificateResult struct {
 }
 
 type RenewalResult struct {
-	Success       bool     `json:"success"`
-	Message       string   `json:"message"`
+	Success        bool     `json:"success"`
+	Message        string   `json:"message"`
 	RenewedDomains []string `json:"renewed_domains,omitempty"`
 }

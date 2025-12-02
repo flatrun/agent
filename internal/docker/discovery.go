@@ -31,6 +31,14 @@ type composeService struct {
 }
 
 func (d *Discovery) FindDeployments() ([]models.Deployment, error) {
+	return d.findDeploymentsWithFilter(false)
+}
+
+func (d *Discovery) FindInfrastructure() ([]models.Deployment, error) {
+	return d.findDeploymentsWithFilter(true)
+}
+
+func (d *Discovery) findDeploymentsWithFilter(infraOnly bool) ([]models.Deployment, error) {
 	var deployments []models.Deployment
 
 	entries, err := os.ReadDir(d.basePath)
@@ -66,6 +74,14 @@ func (d *Discovery) FindDeployments() ([]models.Deployment, error) {
 		metadataPath := filepath.Join(dirPath, "service.yml")
 		if metadata, err := d.loadMetadata(metadataPath); err == nil {
 			deployment.Metadata = metadata
+		}
+
+		isInfra := deployment.Metadata != nil && deployment.Metadata.Type == "infrastructure"
+		if infraOnly && !isInfra {
+			continue
+		}
+		if !infraOnly && isInfra {
+			continue
 		}
 
 		if services, err := d.parseComposeServices(composePath); err == nil {
