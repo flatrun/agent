@@ -1,0 +1,6 @@
+name: Next.js
+description: React framework for production
+icon: pi pi-globe
+logo: https://assets.vercel.com/image/upload/v1662130559/nextjs/Icon_dark_background.png
+category: framework
+priority: 60

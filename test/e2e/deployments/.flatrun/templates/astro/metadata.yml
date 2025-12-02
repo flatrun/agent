@@ -1,0 +1,6 @@
+name: Astro
+description: The web framework for content-driven websites
+icon: pi pi-star
+logo: https://astro.build/assets/press/astro-icon-light-gradient.svg
+category: framework
+priority: 50

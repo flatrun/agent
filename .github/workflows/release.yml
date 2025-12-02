@@ -19,11 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read version from file
+        id: version
+        run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: whilesmart/workflows/go/release@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           binary_name: flatrun-agent
           build_path: ./cmd/agent
-          version: ${{ github.event.inputs.version }}
+          version: ${{ github.event.inputs.version || steps.version.outputs.version }}
           platforms: '["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]'
+          ldflags: "-X github.com/flatrun/agent/pkg/version.Version=${{ github.event.inputs.version || steps.version.outputs.version }} -X github.com/flatrun/agent/pkg/version.BuildTime=$(date -u +%Y-%m-%d_%H:%M:%S) -X github.com/flatrun/agent/pkg/version.GitCommit=${{ github.sha }}"

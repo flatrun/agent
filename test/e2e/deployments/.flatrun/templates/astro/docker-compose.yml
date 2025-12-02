@@ -1,0 +1,20 @@
+name: ${NAME}
+services:
+  app:
+    image: node:20-alpine
+    container_name: ${NAME}
+    working_dir: /app
+    volumes:
+      - ./app:/app
+    expose:
+      - "4321"
+    command: sh -c "npm install && npm run build && npm run preview -- --host"
+    networks:
+      - web
+    restart: unless-stopped
+    env_file:
+      - .env.flatrun
+
+networks:
+  web:
+    external: true

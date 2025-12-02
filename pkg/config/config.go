@@ -8,15 +8,16 @@ import (
 )
 
 type Config struct {
-	DeploymentsPath string        `yaml:"deployments_path"`
-	DockerSocket    string        `yaml:"docker_socket"`
-	API             APIConfig     `yaml:"api"`
-	Auth            AuthConfig    `yaml:"auth"`
-	Domain          DomainConfig  `yaml:"domain"`
-	Nginx           NginxConfig   `yaml:"nginx"`
-	Certbot         CertbotConfig `yaml:"certbot"`
-	Logging         LoggingConfig `yaml:"logging"`
-	Health          HealthConfig  `yaml:"health"`
+	DeploymentsPath string               `yaml:"deployments_path"`
+	DockerSocket    string               `yaml:"docker_socket"`
+	API             APIConfig            `yaml:"api"`
+	Auth            AuthConfig           `yaml:"auth"`
+	Domain          DomainConfig         `yaml:"domain"`
+	Nginx           NginxConfig          `yaml:"nginx"`
+	Certbot         CertbotConfig        `yaml:"certbot"`
+	Logging         LoggingConfig        `yaml:"logging"`
+	Health          HealthConfig         `yaml:"health"`
+	Infrastructure  InfrastructureConfig `yaml:"infrastructure"`
 }
 
 type DomainConfig struct {
@@ -61,6 +62,30 @@ type LoggingConfig struct {
 type HealthConfig struct {
 	CheckInterval    time.Duration `yaml:"check_interval"`
 	MetricsRetention time.Duration `yaml:"metrics_retention"`
+}
+
+type InfrastructureConfig struct {
+	NetworkName string                `yaml:"network_name" json:"network_name"`
+	Database    SharedDatabaseConfig  `yaml:"database" json:"database"`
+	Redis       SharedRedisConfig     `yaml:"redis" json:"redis"`
+}
+
+type SharedDatabaseConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`
+	Type         string `yaml:"type" json:"type"`
+	Container    string `yaml:"container" json:"container"`
+	Host         string `yaml:"host" json:"host"`
+	Port         int    `yaml:"port" json:"port"`
+	RootUser     string `yaml:"root_user" json:"root_user"`
+	RootPassword string `yaml:"root_password" json:"root_password"`
+}
+
+type SharedRedisConfig struct {
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	Container string `yaml:"container" json:"container"`
+	Host      string `yaml:"host" json:"host"`
+	Port      int    `yaml:"port" json:"port"`
+	Password  string `yaml:"password" json:"password"`
 }
 
 func Load(path string) (*Config, error) {
@@ -108,5 +133,24 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Domain.SubdomainStyle == "" {
 		cfg.Domain.SubdomainStyle = "words"
+	}
+	if cfg.Infrastructure.NetworkName == "" {
+		cfg.Infrastructure.NetworkName = "web"
+	}
+	if cfg.Infrastructure.Database.Port == 0 && cfg.Infrastructure.Database.Enabled {
+		switch cfg.Infrastructure.Database.Type {
+		case "mysql", "mariadb":
+			cfg.Infrastructure.Database.Port = 3306
+		case "postgres":
+			cfg.Infrastructure.Database.Port = 5432
+		default:
+			cfg.Infrastructure.Database.Port = 3306
+		}
+	}
+	if cfg.Infrastructure.Database.RootUser == "" && cfg.Infrastructure.Database.Enabled {
+		cfg.Infrastructure.Database.RootUser = "root"
+	}
+	if cfg.Infrastructure.Redis.Port == 0 && cfg.Infrastructure.Redis.Enabled {
+		cfg.Infrastructure.Redis.Port = 6379
 	}
 }

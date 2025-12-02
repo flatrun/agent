@@ -232,16 +232,13 @@ type templateData struct {
 	HealthPath     string
 }
 
-const httpTemplate = `upstream {{.DeploymentName}}_upstream {
-    server {{.DeploymentName}}:{{.ContainerPort}};
-}
-
-server {
+const httpTemplate = `server {
     listen 80;
     server_name {{.Domain}};
 
     location / {
-        proxy_pass {{.Protocol}}://{{.DeploymentName}}_upstream;
+        set $upstream {{.DeploymentName}}:{{.ContainerPort}};
+        proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -255,7 +252,8 @@ server {
     }
 {{if .HealthPath}}
     location {{.HealthPath}} {
-        proxy_pass {{.Protocol}}://{{.DeploymentName}}_upstream{{.HealthPath}};
+        set $upstream {{.DeploymentName}}:{{.ContainerPort}};
+        proxy_pass {{.Protocol}}://$upstream{{.HealthPath}};
         proxy_set_header Host $host;
     }
 {{end}}
@@ -265,11 +263,7 @@ server {
 }
 `
 
-const sslTemplate = `upstream {{.DeploymentName}}_upstream {
-    server {{.DeploymentName}}:{{.ContainerPort}};
-}
-
-server {
+const sslTemplate = `server {
     listen 80;
     server_name {{.Domain}};
 
@@ -283,7 +277,8 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name {{.Domain}};
 
     ssl_certificate /etc/nginx/certs/live/{{.Domain}}/fullchain.pem;
@@ -300,7 +295,8 @@ server {
     add_header Strict-Transport-Security "max-age=63072000" always;
 
     location / {
-        proxy_pass {{.Protocol}}://{{.DeploymentName}}_upstream;
+        set $upstream {{.DeploymentName}}:{{.ContainerPort}};
+        proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -314,7 +310,8 @@ server {
     }
 {{if .HealthPath}}
     location {{.HealthPath}} {
-        proxy_pass {{.Protocol}}://{{.DeploymentName}}_upstream{{.HealthPath}};
+        set $upstream {{.DeploymentName}}:{{.ContainerPort}};
+        proxy_pass {{.Protocol}}://$upstream{{.HealthPath}};
         proxy_set_header Host $host;
     }
 {{end}}

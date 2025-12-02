@@ -1,0 +1,6 @@
+name: Ghost
+description: Professional publishing platform
+icon: pi pi-book
+logo: https://ghost.org/images/logos/ghost-logo-orb.png
+category: application
+priority: 70

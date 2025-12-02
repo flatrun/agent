@@ -1,0 +1,14 @@
+name: test-proxy-manual
+type: web
+networking:
+    expose: true
+    domain: test-proxy-manual.localhost
+    container_port: 80
+    protocol: http
+    proxy_type: ""
+ssl:
+    enabled: false
+    auto_cert: false
+healthcheck:
+    path: ""
+    interval: ""

@@ -11,24 +11,20 @@ import (
 	"github.com/flatrun/agent/internal/api"
 	"github.com/flatrun/agent/internal/watcher"
 	"github.com/flatrun/agent/pkg/config"
-)
-
-var (
-	Version   = "dev"
-	BuildTime = "unknown"
-	GitCommit = "unknown"
+	"github.com/flatrun/agent/pkg/version"
 )
 
 func main() {
 	configPath := flag.String("config", "config.yml", "Path to configuration file")
-	version := flag.Bool("version", false, "Print version information")
+	showVersion := flag.Bool("version", false, "Print version information")
 	flag.Parse()
 
-	if *version {
+	if *showVersion {
+		info := version.Get()
 		fmt.Printf("Flatrun Agent\n")
-		fmt.Printf("Version:    %s\n", Version)
-		fmt.Printf("Build Time: %s\n", BuildTime)
-		fmt.Printf("Git Commit: %s\n", GitCommit)
+		fmt.Printf("Version:    %s\n", info.Version)
+		fmt.Printf("Build Time: %s\n", info.BuildTime)
+		fmt.Printf("Git Commit: %s\n", info.GitCommit)
 		os.Exit(0)
 	}
 
@@ -37,7 +33,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	log.Printf("Starting Flatrun Agent v%s", Version)
+	log.Printf("Starting Flatrun Agent v%s", version.Version)
 	log.Printf("Deployments path: %s", cfg.DeploymentsPath)
 	log.Printf("API listening on: %s:%d", cfg.API.Host, cfg.API.Port)
 
