@@ -1,0 +1,70 @@
+name: flatrun-e2e-test
+
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: test/e2e/Dockerfile.test
+    container_name: flatrun-e2e-agent
+    ports:
+      - "18090:8090"
+    volumes:
+      - /tmp/flatrun-e2e-deployments:/tmp/flatrun-e2e-deployments
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - web
+    depends_on:
+      nginx:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/api/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  nginx:
+    image: nginx:alpine
+    container_name: flatrun-e2e-nginx
+    ports:
+      - "18080:80"
+      - "18443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - /tmp/flatrun-e2e-deployments/nginx/conf.d:/tmp/flatrun-e2e-deployments/nginx/conf.d:ro
+      - /tmp/flatrun-e2e-deployments/nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  mysql:
+    image: mysql:8.0
+    container_name: flatrun-e2e-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: flatrun_root_password
+      MYSQL_DATABASE: flatrun_test
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - default
+      - web
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pflatrun_root_password", "--connect-timeout=2"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  mysql_data:
+
+networks:
+  web:
+    external: true

@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,8 @@ import (
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/plugins"
 	"github.com/flatrun/agent/pkg/subdomain"
+	"github.com/flatrun/agent/pkg/version"
+	"github.com/flatrun/agent/templates"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
@@ -129,6 +133,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/plugins/:name", s.getPlugin)
 			protected.POST("/plugins/:name/deployments", s.createPluginDeployment)
 			protected.GET("/templates", s.listTemplates)
+			protected.POST("/templates/refresh", s.refreshTemplates)
 			protected.GET("/stats", s.getSystemStats)
 			protected.GET("/containers", s.listContainers)
 			protected.POST("/containers/:id/start", s.startContainer)
@@ -192,6 +197,7 @@ func (s *Server) healthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":           "healthy",
 		"agent":            "flatrun",
+		"version":          version.Get(),
 		"deployments_path": s.config.DeploymentsPath,
 		"stats":            stats,
 	})
@@ -235,9 +241,13 @@ func (s *Server) getDeployment(c *gin.Context) {
 
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
-		Name           string                  `json:"name" binding:"required"`
-		ComposeContent string                  `json:"compose_content" binding:"required"`
-		Metadata       *models.ServiceMetadata `json:"metadata,omitempty"`
+		Name              string                  `json:"name" binding:"required"`
+		ComposeContent    string                  `json:"compose_content" binding:"required"`
+		TemplateID        string                  `json:"template_id,omitempty"`
+		Metadata          *models.ServiceMetadata `json:"metadata,omitempty"`
+		EnvVars           []EnvVar                `json:"env_vars,omitempty"`
+		AutoStart         bool                    `json:"auto_start"`
+		UseSharedDatabase bool                    `json:"use_shared_database"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -247,11 +257,51 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 
+	networkName := s.config.Infrastructure.NetworkName
+	if err := s.networksManager.EnsureNetwork(networkName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to ensure network exists: " + err.Error(),
+		})
+		return
+	}
+
+	if req.Metadata != nil && req.Metadata.Networking.Expose {
+		if err := s.networksManager.EnsureContainerOnNetwork(networkName, s.config.Nginx.ContainerName); err != nil {
+			log.Printf("Warning: failed to ensure nginx on network %s: %v", networkName, err)
+		}
+	}
+
 	if err := s.manager.CreateDeployment(req.Name, req.ComposeContent); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
 		return
+	}
+
+	if req.TemplateID != "" {
+		s.processTemplateFiles(req.Name, req.TemplateID)
+	}
+
+	var dbEnvVars []EnvVar
+	if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
+		dbResult, err := s.createDatabaseForDeployment(req.Name)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Deployment created but failed to create database: " + err.Error(),
+			})
+			return
+		}
+		dbEnvVars = dbResult
+	}
+
+	allEnvVars := append(req.EnvVars, dbEnvVars...)
+	if len(allEnvVars) > 0 {
+		if err := s.writeEnvFile(req.Name, allEnvVars); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Deployment created but failed to write .env file: " + err.Error(),
+			})
+			return
+		}
 	}
 
 	if req.Metadata != nil {
@@ -266,8 +316,23 @@ func (s *Server) createDeployment(c *gin.Context) {
 	var proxyResult *proxy.SetupResult
 	if req.Metadata != nil && req.Metadata.Networking.Expose {
 		deployment, err := s.manager.GetDeployment(req.Name)
-		if err == nil {
-			proxyResult, _ = s.proxyOrchestrator.SetupDeployment(deployment)
+		if err != nil {
+			log.Printf("Warning: failed to get deployment for proxy setup: %v", err)
+		} else {
+			proxyResult, err = s.proxyOrchestrator.SetupDeployment(deployment)
+			if err != nil {
+				log.Printf("Warning: failed to setup proxy for deployment: %v", err)
+			}
+		}
+	}
+
+	var startOutput string
+	var startError string
+	if req.AutoStart {
+		output, err := s.manager.StartDeployment(req.Name)
+		startOutput = output
+		if err != nil {
+			startError = err.Error()
 		}
 	}
 
@@ -275,7 +340,90 @@ func (s *Server) createDeployment(c *gin.Context) {
 		"message":      "Deployment created",
 		"name":         req.Name,
 		"proxy_result": proxyResult,
+		"auto_started": req.AutoStart,
+		"start_output": startOutput,
+		"start_error":  startError,
 	})
+}
+
+type EnvVar struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+func (s *Server) createDatabaseForDeployment(deploymentName string) ([]EnvVar, error) {
+	dbConfig := s.config.Infrastructure.Database
+	dbName := strings.ReplaceAll(deploymentName, "-", "_") + "_db"
+	dbUser := strings.ReplaceAll(deploymentName, "-", "_") + "_user"
+	dbPassword := generateRandomPassword(16)
+
+	connConfig := &database.ConnectionConfig{
+		Type:     dbConfig.Type,
+		Host:     dbConfig.Host,
+		Port:     dbConfig.Port,
+		Username: dbConfig.RootUser,
+		Password: dbConfig.RootPassword,
+	}
+
+	if err := s.databaseManager.CreateDatabase(connConfig, dbName); err != nil {
+		return nil, fmt.Errorf("failed to create database: %w", err)
+	}
+
+	if err := s.databaseManager.CreateUser(connConfig, dbUser, dbPassword, "%"); err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	if err := s.databaseManager.GrantPrivileges(connConfig, dbUser, dbName, "%"); err != nil {
+		return nil, fmt.Errorf("failed to grant privileges: %w", err)
+	}
+
+	dbHost := dbConfig.Host
+	if dbHost == "" {
+		dbHost = dbConfig.Container
+	}
+
+	envVars := []EnvVar{
+		{Key: "DB_HOST", Value: dbHost},
+		{Key: "DB_PORT", Value: fmt.Sprintf("%d", dbConfig.Port)},
+		{Key: "DB_DATABASE", Value: dbName},
+		{Key: "DB_USERNAME", Value: dbUser},
+		{Key: "DB_PASSWORD", Value: dbPassword},
+	}
+
+	var databaseURL string
+	switch dbConfig.Type {
+	case "mysql", "mariadb":
+		databaseURL = fmt.Sprintf("mysql://%s:%s@%s:%d/%s", dbUser, dbPassword, dbHost, dbConfig.Port, dbName)
+	case "postgres":
+		databaseURL = fmt.Sprintf("postgres://%s:%s@%s:%d/%s", dbUser, dbPassword, dbHost, dbConfig.Port, dbName)
+	}
+	envVars = append(envVars, EnvVar{Key: "DATABASE_URL", Value: databaseURL})
+
+	return envVars, nil
+}
+
+func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
+	deploymentPath := filepath.Join(s.config.DeploymentsPath, deploymentName)
+	envFilePath := filepath.Join(deploymentPath, ".env.flatrun")
+
+	var content strings.Builder
+	for _, env := range envVars {
+		if env.Key != "" {
+			content.WriteString(fmt.Sprintf("%s=%s\n", env.Key, env.Value))
+		}
+	}
+
+	return os.WriteFile(envFilePath, []byte(content.String()), 0600)
+}
+
+func generateRandomPassword(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+		time.Sleep(time.Nanosecond)
+	}
+	return string(b)
 }
 
 func (s *Server) updateDeployment(c *gin.Context) {
@@ -588,6 +736,22 @@ func (s *Server) getSettings(c *gin.Context) {
 				"auto_ssl":        s.config.Domain.AutoSSL,
 				"subdomain_style": s.config.Domain.SubdomainStyle,
 			},
+			"infrastructure": gin.H{
+				"network_name": s.config.Infrastructure.NetworkName,
+				"database": gin.H{
+					"enabled":   s.config.Infrastructure.Database.Enabled,
+					"type":      s.config.Infrastructure.Database.Type,
+					"container": s.config.Infrastructure.Database.Container,
+					"host":      s.config.Infrastructure.Database.Host,
+					"port":      s.config.Infrastructure.Database.Port,
+				},
+				"redis": gin.H{
+					"enabled":   s.config.Infrastructure.Redis.Enabled,
+					"container": s.config.Infrastructure.Redis.Container,
+					"host":      s.config.Infrastructure.Redis.Host,
+					"port":      s.config.Infrastructure.Redis.Port,
+				},
+			},
 		},
 	})
 }
@@ -600,6 +764,25 @@ func (s *Server) updateSettings(c *gin.Context) {
 			AutoSSL        bool   `json:"auto_ssl"`
 			SubdomainStyle string `json:"subdomain_style"`
 		} `json:"domain,omitempty"`
+		Infrastructure *struct {
+			NetworkName string `json:"network_name"`
+			Database    *struct {
+				Enabled      bool   `json:"enabled"`
+				Type         string `json:"type"`
+				Container    string `json:"container"`
+				Host         string `json:"host"`
+				Port         int    `json:"port"`
+				RootUser     string `json:"root_user"`
+				RootPassword string `json:"root_password"`
+			} `json:"database,omitempty"`
+			Redis *struct {
+				Enabled   bool   `json:"enabled"`
+				Container string `json:"container"`
+				Host      string `json:"host"`
+				Port      int    `json:"port"`
+				Password  string `json:"password"`
+			} `json:"redis,omitempty"`
+		} `json:"infrastructure,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -616,6 +799,38 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 	}
 
+	if req.Infrastructure != nil {
+		if req.Infrastructure.NetworkName != "" {
+			s.config.Infrastructure.NetworkName = req.Infrastructure.NetworkName
+		}
+		if req.Infrastructure.Database != nil {
+			s.config.Infrastructure.Database.Enabled = req.Infrastructure.Database.Enabled
+			s.config.Infrastructure.Database.Type = req.Infrastructure.Database.Type
+			s.config.Infrastructure.Database.Container = req.Infrastructure.Database.Container
+			s.config.Infrastructure.Database.Host = req.Infrastructure.Database.Host
+			if req.Infrastructure.Database.Port > 0 {
+				s.config.Infrastructure.Database.Port = req.Infrastructure.Database.Port
+			}
+			if req.Infrastructure.Database.RootUser != "" {
+				s.config.Infrastructure.Database.RootUser = req.Infrastructure.Database.RootUser
+			}
+			if req.Infrastructure.Database.RootPassword != "" {
+				s.config.Infrastructure.Database.RootPassword = req.Infrastructure.Database.RootPassword
+			}
+		}
+		if req.Infrastructure.Redis != nil {
+			s.config.Infrastructure.Redis.Enabled = req.Infrastructure.Redis.Enabled
+			s.config.Infrastructure.Redis.Container = req.Infrastructure.Redis.Container
+			s.config.Infrastructure.Redis.Host = req.Infrastructure.Redis.Host
+			if req.Infrastructure.Redis.Port > 0 {
+				s.config.Infrastructure.Redis.Port = req.Infrastructure.Redis.Port
+			}
+			if req.Infrastructure.Redis.Password != "" {
+				s.config.Infrastructure.Redis.Password = req.Infrastructure.Redis.Password
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Settings updated",
 		"settings": gin.H{
@@ -624,6 +839,22 @@ func (s *Server) updateSettings(c *gin.Context) {
 				"auto_subdomain":  s.config.Domain.AutoSubdomain,
 				"auto_ssl":        s.config.Domain.AutoSSL,
 				"subdomain_style": s.config.Domain.SubdomainStyle,
+			},
+			"infrastructure": gin.H{
+				"network_name": s.config.Infrastructure.NetworkName,
+				"database": gin.H{
+					"enabled":   s.config.Infrastructure.Database.Enabled,
+					"type":      s.config.Infrastructure.Database.Type,
+					"container": s.config.Infrastructure.Database.Container,
+					"host":      s.config.Infrastructure.Database.Host,
+					"port":      s.config.Infrastructure.Database.Port,
+				},
+				"redis": gin.H{
+					"enabled":   s.config.Infrastructure.Redis.Enabled,
+					"container": s.config.Infrastructure.Redis.Container,
+					"host":      s.config.Infrastructure.Redis.Host,
+					"port":      s.config.Infrastructure.Redis.Port,
+				},
 			},
 		},
 	})
@@ -715,11 +946,19 @@ func (s *Server) createPluginDeployment(c *gin.Context) {
 	})
 }
 
+type TemplateFile struct {
+	Path    string `yaml:"path"`
+	Content string `yaml:"content"`
+}
+
 type TemplateMetadata struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	Icon        string `yaml:"icon"`
-	Category    string `yaml:"category"`
+	Name        string         `yaml:"name"`
+	Description string         `yaml:"description"`
+	Icon        string         `yaml:"icon"`
+	Logo        string         `yaml:"logo"`
+	Category    string         `yaml:"category"`
+	Priority    int            `yaml:"priority"`
+	Files       []TemplateFile `yaml:"files"`
 }
 
 type Template struct {
@@ -727,7 +966,9 @@ type Template struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Icon        string `json:"icon"`
+	Logo        string `json:"logo"`
 	Category    string `json:"category"`
+	Priority    int    `json:"priority"`
 	Content     string `json:"content"`
 }
 
@@ -741,12 +982,14 @@ func (s *Server) listTemplates(c *gin.Context) {
 		return
 	}
 
-	var templates []Template
+	s.ensureBuiltinTemplates(templatesDir)
+
+	var templateList []Template
 
 	entries, err := os.ReadDir(templatesDir)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"templates": templates,
+			"templates": templateList,
 		})
 		return
 	}
@@ -783,19 +1026,124 @@ func (s *Server) listTemplates(c *gin.Context) {
 			metadata.Category = "general"
 		}
 
-		templates = append(templates, Template{
+		templateList = append(templateList, Template{
 			ID:          templateID,
 			Name:        metadata.Name,
 			Description: metadata.Description,
 			Icon:        metadata.Icon,
+			Logo:        metadata.Logo,
 			Category:    metadata.Category,
+			Priority:    metadata.Priority,
 			Content:     string(composeContent),
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"templates": templates,
+	sort.Slice(templateList, func(i, j int) bool {
+		return templateList[i].Priority > templateList[j].Priority
 	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"templates": templateList,
+	})
+}
+
+func (s *Server) refreshTemplates(c *gin.Context) {
+	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+
+	builtinList, err := templates.List()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to list builtin templates",
+		})
+		return
+	}
+
+	for _, tmplID := range builtinList {
+		templatePath := filepath.Join(templatesDir, tmplID)
+
+		if err := os.MkdirAll(templatePath, 0755); err != nil {
+			continue
+		}
+
+		metadataContent, err := templates.GetMetadata(tmplID)
+		if err == nil {
+			_ = os.WriteFile(filepath.Join(templatePath, "metadata.yml"), metadataContent, 0644)
+		}
+
+		composeContent, err := templates.GetCompose(tmplID)
+		if err == nil {
+			_ = os.WriteFile(filepath.Join(templatePath, "docker-compose.yml"), composeContent, 0644)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Templates refreshed",
+		"count":    len(builtinList),
+	})
+}
+
+func (s *Server) ensureBuiltinTemplates(templatesDir string) {
+	builtinList, err := templates.List()
+	if err != nil {
+		return
+	}
+
+	for _, tmplID := range builtinList {
+		templatePath := filepath.Join(templatesDir, tmplID)
+		composePath := filepath.Join(templatePath, "docker-compose.yml")
+
+		if _, err := os.Stat(composePath); err == nil {
+			continue
+		}
+
+		if err := os.MkdirAll(templatePath, 0755); err != nil {
+			continue
+		}
+
+		metadataContent, err := templates.GetMetadata(tmplID)
+		if err == nil {
+			_ = os.WriteFile(filepath.Join(templatePath, "metadata.yml"), metadataContent, 0644)
+		}
+
+		composeContent, err := templates.GetCompose(tmplID)
+		if err == nil {
+			_ = os.WriteFile(composePath, composeContent, 0644)
+		}
+	}
+}
+
+func (s *Server) processTemplateFiles(deploymentName, templateID string) {
+	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
+
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return
+	}
+
+	var metadata TemplateMetadata
+	if err := yaml.Unmarshal(metadataContent, &metadata); err != nil {
+		return
+	}
+
+	if len(metadata.Files) == 0 {
+		return
+	}
+
+	deploymentDir := filepath.Join(s.config.DeploymentsPath, deploymentName)
+
+	for _, file := range metadata.Files {
+		content := strings.ReplaceAll(file.Content, "${NAME}", deploymentName)
+
+		filePath := filepath.Join(deploymentDir, file.Path)
+		fileDir := filepath.Dir(filePath)
+
+		if err := os.MkdirAll(fileDir, 0755); err != nil {
+			continue
+		}
+
+		_ = os.WriteFile(filePath, []byte(content), 0644)
+	}
 }
 
 func (s *Server) listCertificates(c *gin.Context) {

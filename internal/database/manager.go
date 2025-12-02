@@ -45,16 +45,15 @@ func NewManager() *Manager {
 }
 
 func (m *Manager) resolveContainerConnection(cfg *ConnectionConfig) (string, int, error) {
-	containerName := cfg.Container
-	if containerName == "" {
-		containerName = cfg.Host
+	if cfg.Container == "" {
+		host := cfg.Host
+		if host == "" {
+			host = "localhost"
+		}
+		return host, cfg.Port, nil
 	}
 
-	if containerName == "" || containerName == "localhost" || containerName == "127.0.0.1" {
-		return cfg.Host, cfg.Port, nil
-	}
-
-	cmd := exec.Command("docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerName)
+	cmd := exec.Command("docker", "inspect", "--format", "{{(index .NetworkSettings.Networks (index (keys .NetworkSettings.Networks) 0)).IPAddress}}", cfg.Container)
 	output, err := cmd.Output()
 	if err != nil {
 		return cfg.Host, cfg.Port, nil
@@ -66,7 +65,7 @@ func (m *Manager) resolveContainerConnection(cfg *ConnectionConfig) (string, int
 	}
 
 	port := cfg.Port
-	portCmd := exec.Command("docker", "inspect", "--format", "{{range $p, $conf := .Config.ExposedPorts}}{{$p}} {{end}}", containerName)
+	portCmd := exec.Command("docker", "inspect", "--format", "{{range $p, $conf := .Config.ExposedPorts}}{{$p}} {{end}}", cfg.Container)
 	portOutput, err := portCmd.Output()
 	if err == nil {
 		ports := strings.Fields(string(portOutput))

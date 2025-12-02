@@ -1,0 +1,14 @@
+name: test-debug-1
+type: web
+networking:
+    expose: true
+    domain: test-debug-1.localhost
+    container_port: 80
+    protocol: http
+    proxy_type: ""
+ssl:
+    enabled: false
+    auto_cert: false
+healthcheck:
+    path: ""
+    interval: ""

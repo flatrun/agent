@@ -1,0 +1,41 @@
+deployments_path: /tmp/flatrun-e2e-deployments
+docker_socket: unix:///var/run/docker.sock
+
+infrastructure:
+  network_name: web
+  database:
+    enabled: true
+    type: mysql
+    host: flatrun-e2e-mysql
+    port: 3306
+    root_user: root
+    root_password: flatrun_root_password
+
+api:
+  host: 0.0.0.0
+  port: 8090
+  enable_cors: true
+  allowed_origins:
+    - "*"
+
+auth:
+  enabled: false
+
+nginx:
+  container_name: flatrun-e2e-nginx
+  config_path: /tmp/flatrun-e2e-deployments/nginx/conf.d
+  reload_command: nginx -s reload
+
+certbot:
+  container_name: flatrun-e2e-certbot
+  email: test@example.com
+  staging: true
+  certs_path: /tmp/flatrun-e2e-deployments/nginx/certs
+
+logging:
+  level: debug
+  format: text
+
+health:
+  check_interval: 30s
+  metrics_retention: 24h

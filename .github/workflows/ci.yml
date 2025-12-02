@@ -25,8 +25,8 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -o flatrun-linux-amd64 ./cmd/agent
           GOOS=linux GOARCH=arm64 go build -o flatrun-linux-arm64 ./cmd/agent
 
-      - name: Test
-        run: go test -v ./...
+      - name: Unit Tests
+        run: make test-unit
 
       - name: Upload Linux AMD64 binary
         uses: actions/upload-artifact@v4
@@ -56,3 +56,27 @@ jobs:
         uses: golangci/golangci-lint-action@v4
         with:
           version: latest
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start E2E environment
+        run: make test-e2e-setup
+
+      - name: Run E2E tests
+        run: make test-e2e-run
+
+      - name: Cleanup E2E environment
+        if: always()
+        run: make test-e2e-cleanup

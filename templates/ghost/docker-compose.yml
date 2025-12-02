@@ -1,0 +1,26 @@
+name: ${NAME}
+services:
+  ghost:
+    image: ghost:5-alpine
+    container_name: ${NAME}
+    environment:
+      url: https://${DOMAIN:-localhost}
+      database__client: mysql
+      database__connection__host: ${DB_HOST:-db}
+      database__connection__user: ${DB_USER:-ghost}
+      database__connection__password: ${DB_PASSWORD:-changeme}
+      database__connection__database: ${DB_NAME:-ghost}
+    volumes:
+      - ghost_content:/var/lib/ghost/content
+    expose:
+      - "2368"
+    networks:
+      - web
+    restart: unless-stopped
+
+volumes:
+  ghost_content:
+
+networks:
+  web:
+    external: true

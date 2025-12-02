@@ -165,6 +165,32 @@ func (m *Manager) DisconnectContainer(networkName, containerName string) error {
 	return nil
 }
 
+func (m *Manager) IsContainerOnNetwork(networkName, containerName string) bool {
+	cmd := exec.Command("docker", "network", "inspect", networkName,
+		"--format", "{{range .Containers}}{{.Name}} {{end}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	containers := strings.Fields(string(output))
+	for _, c := range containers {
+		if c == containerName {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) EnsureContainerOnNetwork(networkName, containerName string) error {
+	if containerName == "" {
+		return nil
+	}
+	if m.IsContainerOnNetwork(networkName, containerName) {
+		return nil
+	}
+	return m.ConnectContainer(networkName, containerName)
+}
+
 type ContainerInfo struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
@@ -664,4 +690,16 @@ func (m *Manager) KillProcess(pid int) error {
 		return fmt.Errorf("failed to kill process: %s", string(output))
 	}
 	return nil
+}
+
+func (m *Manager) EnsureNetwork(name string) error {
+	if m.NetworkExists(name) {
+		return nil
+	}
+	return m.CreateNetwork(name, "bridge", nil)
+}
+
+func (m *Manager) NetworkExists(name string) bool {
+	cmd := exec.Command("docker", "network", "inspect", name)
+	return cmd.Run() == nil
 }

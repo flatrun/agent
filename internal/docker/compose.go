@@ -131,13 +131,22 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, args ...string) (str
 
 	projectName := c.getProjectName(deploymentPath)
 
+	var baseArgs []string
+	baseArgs = append(baseArgs, "-p", projectName)
+
+	envFile := deploymentPath + "/.env.flatrun"
+	if _, err := os.Stat(envFile); err == nil {
+		baseArgs = append(baseArgs, "--env-file", ".env.flatrun")
+	}
+
 	var cmd *exec.Cmd
 
 	if composeCmd == "docker-compose" {
-		fullArgs := append([]string{"-p", projectName}, args...)
+		fullArgs := append(baseArgs, args...)
 		cmd = exec.Command(composeCmd, fullArgs...)
 	} else {
-		fullArgs := append([]string{"compose", "-p", projectName}, args...)
+		fullArgs := append([]string{"compose"}, baseArgs...)
+		fullArgs = append(fullArgs, args...)
 		cmd = exec.Command("docker", fullArgs...)
 	}
 

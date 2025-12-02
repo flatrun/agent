@@ -8,9 +8,6 @@ flatrun-linux-*
 *.so
 *.dylib
 
-# Test binary
-*.test
-
 # Output of the go coverage tool
 *.out
 

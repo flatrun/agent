@@ -1,0 +1,10 @@
+FROM alpine:3.19
+
+RUN apk add --no-cache openssl
+
+COPY scripts/generate-test-certs.sh /usr/local/bin/generate-cert
+RUN chmod +x /usr/local/bin/generate-cert
+
+WORKDIR /certs
+
+CMD ["tail", "-f", "/dev/null"]

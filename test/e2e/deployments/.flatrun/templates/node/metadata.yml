@@ -1,0 +1,6 @@
+name: Node.js
+description: JavaScript runtime for web applications
+icon: pi pi-code
+logo: https://nodejs.org/static/logos/nodejsLight.svg
+category: runtime
+priority: 40

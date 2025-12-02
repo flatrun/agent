@@ -1,0 +1,18 @@
+name: ${NAME}
+services:
+  app:
+    image: bitnami/laravel:latest
+    container_name: ${NAME}
+    volumes:
+      - ./app:/app
+    expose:
+      - "8000"
+    networks:
+      - web
+    restart: unless-stopped
+    env_file:
+      - .env.flatrun
+
+networks:
+  web:
+    external: true

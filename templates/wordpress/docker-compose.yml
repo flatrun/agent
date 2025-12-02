@@ -1,0 +1,24 @@
+name: ${NAME}
+services:
+  wordpress:
+    image: wordpress:latest
+    container_name: ${NAME}
+    environment:
+      WORDPRESS_DB_HOST: ${DB_HOST:-db}
+      WORDPRESS_DB_USER: ${DB_USERNAME:-wordpress}
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      WORDPRESS_DB_NAME: ${DB_DATABASE:-wordpress}
+    volumes:
+      - wordpress_data:/var/www/html
+    expose:
+      - "80"
+    networks:
+      - web
+    restart: unless-stopped
+
+volumes:
+  wordpress_data:
+
+networks:
+  web:
+    external: true

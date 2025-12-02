@@ -1,0 +1,16 @@
+name: test-curl-123
+services:
+  app:
+    image: nginx:alpine
+    container_name: test-curl-123
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+    expose:
+      - "80"
+    networks:
+      - web
+    restart: unless-stopped
+
+networks:
+  web:
+    external: true
