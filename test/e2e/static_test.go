@@ -348,12 +348,12 @@ func TestStaticDeploymentComposeContent(t *testing.T) {
 		}
 	})
 
-	t.Run("Compose has web network", func(t *testing.T) {
+	t.Run("Compose has proxy network", func(t *testing.T) {
 		if !strings.Contains(composeStr, "networks:") {
 			t.Error("Compose file missing networks section")
 		}
-		if !strings.Contains(composeStr, "web:") {
-			t.Error("Compose file missing web network")
+		if !strings.Contains(composeStr, "proxy:") {
+			t.Error("Compose file missing proxy network")
 		}
 	})
 }

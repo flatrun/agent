@@ -122,7 +122,7 @@ func TestWordPressDeployment(t *testing.T) {
 			{"has DB host env", "WORDPRESS_DB_HOST", "missing WORDPRESS_DB_HOST"},
 			{"has expose", "expose:", "should use expose"},
 			{"has networks", "networks:", "missing networks"},
-			{"has web network", "web:", "missing web network"},
+			{"has proxy network", "proxy:", "missing proxy network"},
 		}
 
 		for _, c := range checks {

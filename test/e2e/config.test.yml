@@ -2,7 +2,8 @@ deployments_path: /tmp/flatrun-e2e-deployments
 docker_socket: unix:///var/run/docker.sock
 
 infrastructure:
-  network_name: web
+  default_proxy_network: proxy
+  default_database_network: database
   database:
     enabled: true
     type: mysql

@@ -15,22 +15,28 @@ import (
 )
 
 type Manager struct {
-	config     *config.NginxConfig
-	basePath   string
-	configPath string
-	mu         sync.RWMutex
+	config      *config.NginxConfig
+	basePath    string
+	configPath  string
+	webrootPath string
+	mu          sync.RWMutex
 }
 
-func NewManager(cfg *config.NginxConfig, deploymentsPath string) *Manager {
+func NewManager(cfg *config.NginxConfig, deploymentsPath string, webrootPath string) *Manager {
 	configPath := cfg.ConfigPath
 	if configPath == "" {
 		configPath = filepath.Join(deploymentsPath, "nginx", "conf.d")
 	}
 
+	if webrootPath == "" {
+		webrootPath = filepath.Join(deploymentsPath, "nginx", "webroot")
+	}
+
 	return &Manager{
-		config:     cfg,
-		basePath:   deploymentsPath,
-		configPath: configPath,
+		config:      cfg,
+		basePath:    deploymentsPath,
+		configPath:  configPath,
+		webrootPath: webrootPath,
 	}
 }
 
@@ -183,6 +189,7 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 		ProxyType:      net.ProxyType,
 		SSLEnabled:     ssl.Enabled,
 		HealthPath:     deployment.Metadata.HealthCheck.Path,
+		WebrootPath:    m.webrootPath,
 	}
 
 	if data.ContainerPort == 0 {
@@ -230,6 +237,7 @@ type templateData struct {
 	ProxyType      string
 	SSLEnabled     bool
 	HealthPath     string
+	WebrootPath    string
 }
 
 const httpTemplate = `server {
@@ -258,7 +266,7 @@ const httpTemplate = `server {
     }
 {{end}}
     location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
+        root {{.WebrootPath}};
     }
 }
 `
@@ -268,7 +276,7 @@ const sslTemplate = `server {
     server_name {{.Domain}};
 
     location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
+        root {{.WebrootPath}};
     }
 
     location / {

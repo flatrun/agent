@@ -10,11 +10,11 @@ services:
       - "3000"
     command: npm start
     networks:
-      - web
+      - proxy
     restart: unless-stopped
     env_file:
       - .env.flatrun
 
 networks:
-  web:
+  proxy:
     external: true

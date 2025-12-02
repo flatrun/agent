@@ -1,0 +1,7 @@
+name: Nginx
+description: High-performance HTTP server and reverse proxy
+icon: pi pi-server
+logo: https://nginx.org/nginx.png
+category: infrastructure
+type: infrastructure
+priority: 100

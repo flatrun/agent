@@ -10,11 +10,11 @@ services:
       - "4321"
     command: sh -c "npm install && npm run build && npm run preview -- --host"
     networks:
-      - web
+      - proxy
     restart: unless-stopped
     env_file:
       - .env.flatrun
 
 networks:
-  web:
+  proxy:
     external: true

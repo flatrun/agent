@@ -53,7 +53,7 @@ func main() {
 
 	go fileWatcher.Start()
 
-	apiServer := api.New(cfg)
+	apiServer := api.New(cfg, *configPath)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			log.Fatalf("Failed to start API server: %v", err)

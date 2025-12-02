@@ -1,0 +1,21 @@
+name: ${NAME}
+services:
+  mariadb:
+    image: mariadb:11
+    container_name: ${NAME}
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-changeme}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - proxy
+
+volumes:
+  mariadb_data:
+
+networks:
+  proxy:
+    external: true

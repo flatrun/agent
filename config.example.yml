@@ -1,38 +1,58 @@
 deployments_path: /home/nfebe/work/deployments
 docker_socket: unix:///var/run/docker.sock
-
 api:
-  host: 0.0.0.0
-  port: 8090
-  enable_cors: true
-  allowed_origins:
-    - http://localhost:5173
-    - http://localhost:3000
-    - http://127.0.0.1:5173
-
+    host: 0.0.0.0
+    port: 8090
+    enable_cors: true
+    allowed_origins:
+        - http://localhost:5173
+        - http://localhost:3000
+        - http://127.0.0.1:5173
 auth:
-  enabled: true
-  api_keys:
-    - "your-api-key-here"
-  jwt_secret: "generate-a-secure-random-string-here"
-
+    enabled: true
+    api_keys:
+        - your-api-key-here
+    jwt_secret: generate-a-secure-random-string-here
+domain:
+    default_domain: ""
+    auto_subdomain: false
+    auto_ssl: false
+    subdomain_style: words
 nginx:
-  container_name: nginx
-  config_path: /deployments/nginx/conf.d
-  reload_command: nginx -s reload
-
+    enabled: false
+    image: nginx:alpine
+    container_name: nginx
+    config_path: /deployments/nginx/conf.d
+    reload_command: nginx -s reload
+    external: false
 certbot:
-  container_name: certbot
-  email: your-email@example.com
-  staging: true
-  # Optional: Override default paths (relative to deployments_path)
-  # certs_path: /deployments/nginx/certs/live
-  # webroot_path: /deployments/nginx/html
-
+    enabled: true
+    image: certbot/certbot
+    email: engineering@whilesmart.com
+    staging: true
+    certs_path: ""
+    webroot_path: ""
+    dns_provider: ""
 logging:
-  level: info
-  format: json
-
+    level: info
+    format: json
 health:
-  check_interval: 30s
-  metrics_retention: 24h
+    check_interval: 30s
+    metrics_retention: 24h0m0s
+infrastructure:
+    default_proxy_network: proxy
+    default_database_network: database
+    database:
+        enabled: false
+        type: mysql
+        container: ""
+        host: ""
+        port: 3306
+        root_user: root
+        root_password: ""
+    redis:
+        enabled: false
+        container: ""
+        host: ""
+        port: 6379
+        password: ""

@@ -17,7 +17,7 @@ type Orchestrator struct {
 
 func NewOrchestrator(cfg *config.Config) *Orchestrator {
 	return &Orchestrator{
-		nginx: nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath),
+		nginx: nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath),
 		ssl:   ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath),
 	}
 }
@@ -211,11 +211,11 @@ type SetupResult struct {
 }
 
 type ProxyStatus struct {
-	DeploymentName    string             `json:"deployment_name"`
-	Exposed           bool               `json:"exposed"`
-	Domain            string             `json:"domain,omitempty"`
-	VirtualHostExists bool               `json:"virtual_host_exists"`
-	SSLEnabled        bool               `json:"ssl_enabled"`
-	CertificateExists bool               `json:"certificate_exists"`
+	DeploymentName    string              `json:"deployment_name"`
+	Exposed           bool                `json:"exposed"`
+	Domain            string              `json:"domain,omitempty"`
+	VirtualHostExists bool                `json:"virtual_host_exists"`
+	SSLEnabled        bool                `json:"ssl_enabled"`
+	CertificateExists bool                `json:"certificate_exists"`
 	Certificate       *models.Certificate `json:"certificate,omitempty"`
 }

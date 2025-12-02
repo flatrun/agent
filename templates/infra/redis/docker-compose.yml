@@ -1,0 +1,20 @@
+name: ${NAME}
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ${NAME}
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - proxy
+
+volumes:
+  redis_data:
+
+networks:
+  proxy:
+    external: true
