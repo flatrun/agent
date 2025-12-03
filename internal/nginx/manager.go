@@ -29,7 +29,7 @@ func NewManager(cfg *config.NginxConfig, deploymentsPath string, webrootPath str
 	}
 
 	if webrootPath == "" {
-		webrootPath = filepath.Join(deploymentsPath, "nginx", "webroot")
+		webrootPath = filepath.Join(deploymentsPath, "nginx", "html")
 	}
 
 	return &Manager{
@@ -57,7 +57,7 @@ func (m *Manager) UpdateConfig(cfg *config.NginxConfig, deploymentsPath string, 
 	m.configPath = configPath
 
 	if webrootPath == "" {
-		webrootPath = filepath.Join(deploymentsPath, "nginx", "webroot")
+		webrootPath = filepath.Join(deploymentsPath, "nginx", "html")
 	}
 	m.webrootPath = webrootPath
 	m.basePath = deploymentsPath
