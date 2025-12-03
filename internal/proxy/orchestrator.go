@@ -52,6 +52,13 @@ func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupRes
 
 	result.Domain = domain
 
+	wantsSSL := deployment.Metadata.SSL.Enabled && deployment.Metadata.SSL.AutoCert
+	certExists := o.ssl.CertificateExists(domain)
+
+	if wantsSSL && !certExists {
+		deployment.Metadata.SSL.Enabled = false
+	}
+
 	if err := o.nginx.CreateVirtualHost(deployment); err != nil {
 		return nil, fmt.Errorf("failed to create virtual host: %w", err)
 	}
@@ -68,8 +75,10 @@ func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupRes
 		result.NginxReloaded = true
 	}
 
-	if deployment.Metadata.SSL.Enabled && deployment.Metadata.SSL.AutoCert {
-		if !o.ssl.CertificateExists(domain) {
+	if wantsSSL {
+		if certExists {
+			result.CertificateExists = true
+		} else {
 			certResult, err := o.ssl.RequestCertificate(domain)
 			if err != nil {
 				log.Printf("warning: failed to request certificate for %s: %v", domain, err)
@@ -78,14 +87,17 @@ func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupRes
 				result.CertificateRequested = true
 				result.SSLMessage = certResult.Message
 			}
-		} else {
-			result.CertificateExists = true
 		}
 
 		if result.CertificateRequested || result.CertificateExists {
 			deployment.Metadata.SSL.Enabled = true
 			if err := o.nginx.UpdateVirtualHost(deployment); err != nil {
 				log.Printf("warning: failed to update virtual host with SSL: %v", err)
+			}
+			if err := o.nginx.TestConfig(); err != nil {
+				log.Printf("warning: SSL config test failed, reverting to HTTP: %v", err)
+				deployment.Metadata.SSL.Enabled = false
+				_ = o.nginx.UpdateVirtualHost(deployment)
 			}
 			if err := o.nginx.Reload(); err != nil {
 				log.Printf("warning: failed to reload nginx after SSL: %v", err)
