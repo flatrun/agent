@@ -30,7 +30,7 @@ func NewManager(cfg *config.CertbotConfig, deploymentsPath string) *Manager {
 
 	webRoot := cfg.WebrootPath
 	if webRoot == "" {
-		webRoot = filepath.Join(deploymentsPath, "nginx", "webroot")
+		webRoot = filepath.Join(deploymentsPath, "nginx", "html")
 	}
 
 	return &Manager{
@@ -58,7 +58,7 @@ func (m *Manager) UpdateConfig(cfg *config.CertbotConfig, deploymentsPath string
 
 	webRoot := cfg.WebrootPath
 	if webRoot == "" {
-		webRoot = filepath.Join(deploymentsPath, "nginx", "webroot")
+		webRoot = filepath.Join(deploymentsPath, "nginx", "html")
 	}
 	m.webRoot = webRoot
 }
@@ -78,7 +78,7 @@ func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) 
 	certbotArgs := []string{
 		"certonly",
 		"--webroot",
-		"--webroot-path=/var/www/certbot",
+		"--webroot-path", m.webRoot,
 		"--email", m.config.Email,
 		"--agree-tos",
 		"--no-eff-email",
