@@ -540,6 +540,8 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 func (s *Server) deleteDeployment(c *gin.Context) {
 	name := c.Param("name")
 
+	_ = s.proxyOrchestrator.TeardownDeployment(name)
+
 	if err := s.manager.DeleteDeployment(name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

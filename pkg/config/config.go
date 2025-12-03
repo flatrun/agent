@@ -50,13 +50,14 @@ type NginxConfig struct {
 }
 
 type CertbotConfig struct {
-	Enabled     bool   `yaml:"enabled" json:"enabled"`
-	Image       string `yaml:"image" json:"image"`
-	Email       string `yaml:"email" json:"email"`
-	Staging     bool   `yaml:"staging" json:"staging"`
-	CertsPath   string `yaml:"certs_path" json:"certs_path"`
-	WebrootPath string `yaml:"webroot_path" json:"webroot_path"`
-	DNSProvider string `yaml:"dns_provider" json:"dns_provider"`
+	Enabled              bool   `yaml:"enabled" json:"enabled"`
+	Image                string `yaml:"image" json:"image"`
+	Email                string `yaml:"email" json:"email"`
+	Staging              bool   `yaml:"staging" json:"staging"`
+	CertsPath            string `yaml:"certs_path" json:"certs_path"`
+	WebrootPath          string `yaml:"webroot_path" json:"webroot_path"`
+	ContainerWebrootPath string `yaml:"container_webroot_path" json:"container_webroot_path"`
+	DNSProvider          string `yaml:"dns_provider" json:"dns_provider"`
 }
 
 type ServiceExecConfig struct {

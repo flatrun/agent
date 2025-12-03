@@ -16,10 +16,11 @@ import (
 )
 
 type Manager struct {
-	config    *config.CertbotConfig
-	certsPath string
-	webRoot   string
-	mu        sync.RWMutex
+	config           *config.CertbotConfig
+	certsPath        string
+	webRoot          string
+	containerWebRoot string
+	mu               sync.RWMutex
 }
 
 func NewManager(cfg *config.CertbotConfig, deploymentsPath string) *Manager {
@@ -33,10 +34,16 @@ func NewManager(cfg *config.CertbotConfig, deploymentsPath string) *Manager {
 		webRoot = filepath.Join(deploymentsPath, "nginx", "html")
 	}
 
+	containerWebRoot := cfg.ContainerWebrootPath
+	if containerWebRoot == "" {
+		containerWebRoot = "/var/www/certbot"
+	}
+
 	return &Manager{
-		config:    cfg,
-		certsPath: certsPath,
-		webRoot:   webRoot,
+		config:           cfg,
+		certsPath:        certsPath,
+		webRoot:          webRoot,
+		containerWebRoot: containerWebRoot,
 	}
 }
 
@@ -61,6 +68,12 @@ func (m *Manager) UpdateConfig(cfg *config.CertbotConfig, deploymentsPath string
 		webRoot = filepath.Join(deploymentsPath, "nginx", "html")
 	}
 	m.webRoot = webRoot
+
+	containerWebRoot := cfg.ContainerWebrootPath
+	if containerWebRoot == "" {
+		containerWebRoot = "/var/www/certbot"
+	}
+	m.containerWebRoot = containerWebRoot
 }
 
 func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) {
@@ -78,7 +91,7 @@ func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) 
 	certbotArgs := []string{
 		"certonly",
 		"--webroot",
-		"--webroot-path", m.webRoot,
+		"--webroot-path", m.containerWebRoot,
 		"--email", m.config.Email,
 		"--agree-tos",
 		"--no-eff-email",
@@ -115,7 +128,7 @@ func (m *Manager) getServiceExecConfig() *config.ServiceExecConfig {
 		RunOnRequest: true,
 		Volumes: []string{
 			certsDir + ":/etc/letsencrypt",
-			m.webRoot + ":/var/www/certbot",
+			m.webRoot + ":" + m.containerWebRoot,
 		},
 	}
 }

@@ -80,31 +80,68 @@ func TestUpdateConfig_WebrootPath(t *testing.T) {
 	}
 }
 
-func TestGetServiceExecConfig_WebrootVolume(t *testing.T) {
+func TestContainerWebrootPath(t *testing.T) {
 	tests := []struct {
-		name            string
-		webrootPath     string
-		deploymentsPath string
-		expectedVolume  string
+		name                     string
+		containerWebrootPath     string
+		expectedContainerWebroot string
 	}{
 		{
-			name:            "configured webroot in volume mount",
-			webrootPath:     "/custom/webroot",
-			deploymentsPath: "/deployments",
-			expectedVolume:  "/custom/webroot:/var/www/certbot",
+			name:                     "uses configured container webroot",
+			containerWebrootPath:     "/custom/container/path",
+			expectedContainerWebroot: "/custom/container/path",
 		},
 		{
-			name:            "default webroot in volume mount",
-			webrootPath:     "",
-			deploymentsPath: "/deployments",
-			expectedVolume:  "/deployments/nginx/html:/var/www/certbot",
+			name:                     "uses default when not configured",
+			containerWebrootPath:     "",
+			expectedContainerWebroot: "/var/www/certbot",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.CertbotConfig{
-				WebrootPath: tt.webrootPath,
+				ContainerWebrootPath: tt.containerWebrootPath,
+			}
+
+			m := NewManager(cfg, "/deployments")
+
+			if m.containerWebRoot != tt.expectedContainerWebroot {
+				t.Errorf("containerWebRoot = %q, want %q", m.containerWebRoot, tt.expectedContainerWebroot)
+			}
+		})
+	}
+}
+
+func TestGetServiceExecConfig_WebrootVolume(t *testing.T) {
+	tests := []struct {
+		name                 string
+		webrootPath          string
+		containerWebrootPath string
+		deploymentsPath      string
+		expectedVolume       string
+	}{
+		{
+			name:                 "configured paths",
+			webrootPath:          "/custom/webroot",
+			containerWebrootPath: "/custom/container",
+			deploymentsPath:      "/deployments",
+			expectedVolume:       "/custom/webroot:/custom/container",
+		},
+		{
+			name:                 "default paths",
+			webrootPath:          "",
+			containerWebrootPath: "",
+			deploymentsPath:      "/deployments",
+			expectedVolume:       "/deployments/nginx/html:/var/www/certbot",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.CertbotConfig{
+				WebrootPath:          tt.webrootPath,
+				ContainerWebrootPath: tt.containerWebrootPath,
 			}
 
 			m := NewManager(cfg, tt.deploymentsPath)
@@ -112,7 +149,7 @@ func TestGetServiceExecConfig_WebrootVolume(t *testing.T) {
 
 			found := false
 			for _, vol := range execCfg.Volumes {
-				if strings.Contains(vol, ":/var/www/certbot") {
+				if strings.Contains(vol, m.containerWebRoot) {
 					if vol != tt.expectedVolume {
 						t.Errorf("volume = %q, want %q", vol, tt.expectedVolume)
 					}
@@ -122,7 +159,7 @@ func TestGetServiceExecConfig_WebrootVolume(t *testing.T) {
 			}
 
 			if !found {
-				t.Error("webroot volume mount not found in exec config")
+				t.Errorf("webroot volume mount not found, expected %q", tt.expectedVolume)
 			}
 		})
 	}
