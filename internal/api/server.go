@@ -342,14 +342,26 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	var proxyResult *proxy.SetupResult
+	if req.Metadata != nil {
+		log.Printf("Deployment %s: metadata.networking.expose=%v, domain=%s",
+			req.Name, req.Metadata.Networking.Expose, req.Metadata.Networking.Domain)
+	} else {
+		log.Printf("Deployment %s: no metadata provided", req.Name)
+	}
+
 	if req.Metadata != nil && req.Metadata.Networking.Expose {
 		deployment, err := s.manager.GetDeployment(req.Name)
 		if err != nil {
 			log.Printf("Warning: failed to get deployment for proxy setup: %v", err)
 		} else {
+			log.Printf("Setting up proxy for deployment %s with domain %s",
+				deployment.Name, deployment.Metadata.Networking.Domain)
 			proxyResult, err = s.proxyOrchestrator.SetupDeployment(deployment)
 			if err != nil {
 				log.Printf("Warning: failed to setup proxy for deployment: %v", err)
+			} else {
+				log.Printf("Proxy setup result for %s: success=%v, virtual_host_created=%v, cert_requested=%v",
+					deployment.Name, proxyResult.Success, proxyResult.VirtualHostCreated, proxyResult.CertificateRequested)
 			}
 		}
 	}

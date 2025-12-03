@@ -36,6 +36,7 @@ files:
             font-size: 0.9rem;
             opacity: 0.7;
           }
+          .powered a { display: flex; }
           .powered img { height: 24px; }
         </style>
       </head>
@@ -45,7 +46,7 @@ files:
           <p>Your static site is ready!</p>
           <div class="powered">
             <span>Powered by</span>
-            <img src="https://flatrun.dev/flatrun-logo.svg" alt="FlatRun">
+            <a href="https://flatrun.dev" target="_blank" rel="noopener"><img src="https://flatrun.dev/flatrun-logo-white.svg" alt="FlatRun"></a>
           </div>
         </div>
       </body>

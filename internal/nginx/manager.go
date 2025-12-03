@@ -263,6 +263,8 @@ const httpTemplate = `server {
     listen 80;
     server_name {{.Domain}};
 
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
     location / {
         set $upstream {{.DeploymentName}}:{{.ContainerPort}};
         proxy_pass {{.Protocol}}://$upstream;
@@ -320,6 +322,8 @@ server {
     ssl_stapling_verify on;
 
     add_header Strict-Transport-Security "max-age=63072000" always;
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
 
     location / {
         set $upstream {{.DeploymentName}}:{{.ContainerPort}};
