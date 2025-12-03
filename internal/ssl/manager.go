@@ -5,12 +5,12 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 )
@@ -44,13 +44,28 @@ func (m *Manager) CertsPath() string {
 	return m.certsPath
 }
 
-func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) {
+func (m *Manager) UpdateConfig(cfg *config.CertbotConfig, deploymentsPath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.config.ContainerName == "" {
-		return nil, fmt.Errorf("certbot container name not configured")
+	m.config = cfg
+
+	certsPath := cfg.CertsPath
+	if certsPath == "" {
+		certsPath = filepath.Join(deploymentsPath, "nginx", "certs", "live")
 	}
+	m.certsPath = certsPath
+
+	webRoot := cfg.WebrootPath
+	if webRoot == "" {
+		webRoot = filepath.Join(deploymentsPath, "nginx", "webroot")
+	}
+	m.webRoot = webRoot
+}
+
+func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.config.Email == "" {
 		return nil, fmt.Errorf("certbot email not configured")
@@ -60,11 +75,10 @@ func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) 
 		return nil, fmt.Errorf("failed to create webroot: %w", err)
 	}
 
-	args := []string{
-		"exec", m.config.ContainerName,
-		"certbot", "certonly",
+	certbotArgs := []string{
+		"certonly",
 		"--webroot",
-		"--webroot-path=" + m.webRoot,
+		"--webroot-path=/var/www/certbot",
 		"--email", m.config.Email,
 		"--agree-tos",
 		"--no-eff-email",
@@ -72,11 +86,10 @@ func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) 
 	}
 
 	if m.config.Staging {
-		args = append(args, "--staging")
+		certbotArgs = append(certbotArgs, "--staging")
 	}
 
-	cmd := exec.Command("docker", args...)
-	output, err := cmd.CombinedOutput()
+	output, err := m.executeCertbot(certbotArgs)
 	if err != nil {
 		return nil, fmt.Errorf("certbot failed: %s - %w", string(output), err)
 	}
@@ -88,16 +101,35 @@ func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) 
 	}, nil
 }
 
+func (m *Manager) getServiceExecConfig() *config.ServiceExecConfig {
+	image := m.config.Image
+	if image == "" {
+		image = "certbot/certbot"
+	}
+
+	certsDir := filepath.Dir(m.certsPath)
+
+	return &config.ServiceExecConfig{
+		Image:        image,
+		KeepAlive:    false,
+		RunOnRequest: true,
+		Volumes: []string{
+			certsDir + ":/etc/letsencrypt",
+			m.webRoot + ":/var/www/certbot",
+		},
+	}
+}
+
+func (m *Manager) executeCertbot(args []string) ([]byte, error) {
+	cfg := m.getServiceExecConfig()
+	return docker.ExecuteService(cfg, args)
+}
+
 func (m *Manager) RenewCertificates() (*RenewalResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.config.ContainerName == "" {
-		return nil, fmt.Errorf("certbot container name not configured")
-	}
-
-	cmd := exec.Command("docker", "exec", m.config.ContainerName, "certbot", "renew")
-	output, err := cmd.CombinedOutput()
+	output, err := m.executeCertbot([]string{"renew"})
 	if err != nil {
 		return nil, fmt.Errorf("renewal failed: %s - %w", string(output), err)
 	}
@@ -112,15 +144,8 @@ func (m *Manager) RevokeCertificate(domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.config.ContainerName == "" {
-		return fmt.Errorf("certbot container name not configured")
-	}
-
 	certPath := fmt.Sprintf("/etc/letsencrypt/live/%s/cert.pem", domain)
-
-	cmd := exec.Command("docker", "exec", m.config.ContainerName,
-		"certbot", "revoke", "--cert-path", certPath, "--non-interactive")
-	output, err := cmd.CombinedOutput()
+	output, err := m.executeCertbot([]string{"revoke", "--cert-path", certPath, "--non-interactive"})
 	if err != nil {
 		return fmt.Errorf("revocation failed: %s - %w", string(output), err)
 	}
@@ -132,13 +157,7 @@ func (m *Manager) DeleteCertificate(domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.config.ContainerName == "" {
-		return fmt.Errorf("certbot container name not configured")
-	}
-
-	cmd := exec.Command("docker", "exec", m.config.ContainerName,
-		"certbot", "delete", "--cert-name", domain, "--non-interactive")
-	output, err := cmd.CombinedOutput()
+	output, err := m.executeCertbot([]string{"delete", "--cert-name", domain, "--non-interactive"})
 	if err != nil {
 		return fmt.Errorf("deletion failed: %s - %w", string(output), err)
 	}

@@ -44,6 +44,25 @@ func (m *Manager) ConfigPath() string {
 	return m.configPath
 }
 
+func (m *Manager) UpdateConfig(cfg *config.NginxConfig, deploymentsPath string, webrootPath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.config = cfg
+
+	configPath := cfg.ConfigPath
+	if configPath == "" {
+		configPath = filepath.Join(deploymentsPath, "nginx", "conf.d")
+	}
+	m.configPath = configPath
+
+	if webrootPath == "" {
+		webrootPath = filepath.Join(deploymentsPath, "nginx", "webroot")
+	}
+	m.webrootPath = webrootPath
+	m.basePath = deploymentsPath
+}
+
 func (m *Manager) CreateVirtualHost(deployment *models.Deployment) error {
 	if deployment.Metadata == nil {
 		return fmt.Errorf("deployment has no metadata")

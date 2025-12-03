@@ -27,7 +27,7 @@ func main() {
 		}
 	}
 
-	configPath := flag.String("config", "config.yml", "Path to configuration file")
+	configPath := flag.String("config", "", "Path to configuration file")
 	showVersion := flag.Bool("version", false, "Print version information")
 	flag.Parse()
 
@@ -36,12 +36,14 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load(*configPath)
+	resolvedConfigPath := config.FindConfigPath(*configPath)
+	cfg, err := config.Load(resolvedConfigPath)
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatalf("Failed to load config from %s: %v", resolvedConfigPath, err)
 	}
 
 	log.Printf("Starting Flatrun Agent v%s", version.Version)
+	log.Printf("Config loaded from: %s", resolvedConfigPath)
 	log.Printf("Deployments path: %s", cfg.DeploymentsPath)
 	log.Printf("API listening on: %s:%d", cfg.API.Host, cfg.API.Port)
 
@@ -53,7 +55,7 @@ func main() {
 
 	go fileWatcher.Start()
 
-	apiServer := api.New(cfg, *configPath)
+	apiServer := api.New(cfg, resolvedConfigPath)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			log.Fatalf("Failed to start API server: %v", err)

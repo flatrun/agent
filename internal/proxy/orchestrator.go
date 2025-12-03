@@ -30,6 +30,11 @@ func (o *Orchestrator) SSLManager() *ssl.Manager {
 	return o.ssl
 }
 
+func (o *Orchestrator) UpdateConfig(cfg *config.Config) {
+	o.nginx.UpdateConfig(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath)
+	o.ssl.UpdateConfig(&cfg.Certbot, cfg.DeploymentsPath)
+}
+
 func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupResult, error) {
 	result := &SetupResult{
 		DeploymentName: deployment.Name,

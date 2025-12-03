@@ -141,6 +141,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/templates", s.listTemplates)
 			protected.GET("/templates/categories", s.getTemplateCategories)
 			protected.POST("/templates/refresh", s.refreshTemplates)
+			protected.GET("/templates/:id/compose", s.getTemplateCompose)
 			protected.GET("/stats", s.getSystemStats)
 			protected.GET("/containers", s.listContainers)
 			protected.POST("/containers/:id/start", s.startContainer)
@@ -258,7 +259,7 @@ func (s *Server) getDeployment(c *gin.Context) {
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
 		Name              string                  `json:"name" binding:"required"`
-		ComposeContent    string                  `json:"compose_content" binding:"required"`
+		ComposeContent    string                  `json:"compose_content"`
 		TemplateID        string                  `json:"template_id,omitempty"`
 		Metadata          *models.ServiceMetadata `json:"metadata,omitempty"`
 		EnvVars           []EnvVar                `json:"env_vars,omitempty"`
@@ -271,6 +272,17 @@ func (s *Server) createDeployment(c *gin.Context) {
 			"error": err.Error(),
 		})
 		return
+	}
+
+	if req.ComposeContent == "" {
+		generated, err := s.generateComposeContent(req.Name, req.TemplateID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "compose_content is required when template cannot be resolved: " + err.Error(),
+			})
+			return
+		}
+		req.ComposeContent = generated
 	}
 
 	networkName := s.config.Infrastructure.DefaultProxyNetwork
@@ -924,6 +936,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 	}
 
 	s.infraManager.UpdateConfig(s.config)
+	s.proxyOrchestrator.UpdateConfig(s.config)
 
 	if s.configPath != "" {
 		if err := config.Save(s.config, s.configPath); err != nil {
@@ -1206,6 +1219,25 @@ func (s *Server) getTemplateCategories(c *gin.Context) {
 	})
 }
 
+func (s *Server) getTemplateCompose(c *gin.Context) {
+	templateID := c.Param("id")
+	name := c.DefaultQuery("name", "my-app")
+
+	content, err := s.generateComposeContent(name, templateID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"template_id": templateID,
+		"name":        name,
+		"content":     content,
+	})
+}
+
 func (s *Server) ensureBuiltinTemplates(templatesDir string) {
 	builtinList, err := templates.List()
 	if err != nil {
@@ -1234,6 +1266,82 @@ func (s *Server) ensureBuiltinTemplates(templatesDir string) {
 			_ = os.WriteFile(composePath, composeContent, 0644)
 		}
 	}
+}
+
+func (s *Server) generateComposeContent(name, templateID string) (string, error) {
+	if templateID == "" {
+		templateID = "static"
+	}
+
+	composeBytes, err := templates.GetCompose(templateID)
+	if err != nil {
+		templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+		composePath := filepath.Join(templatesDir, templateID, "docker-compose.yml")
+		composeBytes, err = os.ReadFile(composePath)
+		if err != nil {
+			return "", fmt.Errorf("template '%s' not found", templateID)
+		}
+	}
+
+	content := string(composeBytes)
+
+	content = strings.ReplaceAll(content, "${NAME}", name)
+
+	networkName := s.config.Infrastructure.DefaultProxyNetwork
+	content = strings.ReplaceAll(content, "${PROXY_NETWORK}", networkName)
+
+	content = replaceHardcodedNetwork(content, "proxy", networkName)
+
+	return content, nil
+}
+
+func replaceHardcodedNetwork(content, oldNetwork, newNetwork string) string {
+	if oldNetwork == newNetwork {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	var result []string
+	inNetworks := false
+	inServicesNetworks := false
+	indentLevel := 0
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		currentIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+
+		if trimmed == "networks:" {
+			if currentIndent == 0 {
+				inNetworks = true
+				indentLevel = currentIndent
+			} else {
+				inServicesNetworks = true
+				indentLevel = currentIndent
+			}
+			result = append(result, line)
+			continue
+		}
+
+		if inNetworks && currentIndent > indentLevel {
+			if strings.HasPrefix(trimmed, oldNetwork+":") {
+				line = strings.Replace(line, oldNetwork+":", newNetwork+":", 1)
+			}
+		} else if inNetworks && currentIndent <= indentLevel && trimmed != "" {
+			inNetworks = false
+		}
+
+		if inServicesNetworks && currentIndent > indentLevel {
+			if trimmed == "- "+oldNetwork {
+				line = strings.Replace(line, "- "+oldNetwork, "- "+newNetwork, 1)
+			}
+		} else if inServicesNetworks && currentIndent <= indentLevel && trimmed != "" {
+			inServicesNetworks = false
+		}
+
+		result = append(result, line)
+	}
+
+	return strings.Join(result, "\n")
 }
 
 func (s *Server) processTemplateFiles(deploymentName, templateID string) {
