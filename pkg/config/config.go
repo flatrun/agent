@@ -50,14 +50,26 @@ type NginxConfig struct {
 }
 
 type CertbotConfig struct {
-	Enabled       bool   `yaml:"enabled" json:"enabled"`
-	Image         string `yaml:"image" json:"image"`
-	ContainerName string `yaml:"container_name" json:"container_name"`
-	Email         string `yaml:"email" json:"email"`
-	Staging       bool   `yaml:"staging" json:"staging"`
-	CertsPath     string `yaml:"certs_path" json:"certs_path"`
-	WebrootPath   string `yaml:"webroot_path" json:"webroot_path"`
-	DNSProvider   string `yaml:"dns_provider" json:"dns_provider"`
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	Image       string `yaml:"image" json:"image"`
+	Email       string `yaml:"email" json:"email"`
+	Staging     bool   `yaml:"staging" json:"staging"`
+	CertsPath   string `yaml:"certs_path" json:"certs_path"`
+	WebrootPath string `yaml:"webroot_path" json:"webroot_path"`
+	DNSProvider string `yaml:"dns_provider" json:"dns_provider"`
+}
+
+type ServiceExecConfig struct {
+	Image        string   `yaml:"image" json:"image"`
+	Container    string   `yaml:"container" json:"container"`
+	KeepAlive    bool     `yaml:"keep_alive" json:"keep_alive"`
+	RunOnRequest bool     `yaml:"run_on_request" json:"run_on_request"`
+	Volumes      []string `yaml:"volumes" json:"volumes"`
+	Networks     []string `yaml:"networks" json:"networks"`
+}
+
+func (c *ServiceExecConfig) ShouldUseDockerRun() bool {
+	return !c.KeepAlive && c.RunOnRequest
 }
 
 type LoggingConfig struct {
@@ -95,8 +107,39 @@ type SharedRedisConfig struct {
 	Password  string `yaml:"password" json:"password"`
 }
 
+func FindConfigPath(providedPath string) string {
+	if providedPath != "" && providedPath != "config.yml" {
+		return providedPath
+	}
+
+	candidates := []string{
+		"/etc/flatrun/config.yml",
+		"/opt/flatrun/config.yml",
+		"./config.yml",
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		candidates = append([]string{
+			homeDir + "/.config/flatrun/config.yml",
+		}, candidates...)
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+
+	if providedPath != "" {
+		return providedPath
+	}
+	return "/etc/flatrun/config.yml"
+}
+
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	actualPath := FindConfigPath(path)
+	data, err := os.ReadFile(actualPath)
 	if err != nil {
 		return nil, err
 	}
