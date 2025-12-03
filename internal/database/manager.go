@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -9,6 +10,30 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 )
+
+type networkInfo struct {
+	IPAddress string `json:"IPAddress"`
+}
+
+// parseContainerIP extracts IP from docker network JSON, preferring "database" network
+func parseContainerIP(jsonOutput []byte) string {
+	var networks map[string]networkInfo
+	if err := json.Unmarshal(jsonOutput, &networks); err != nil {
+		return ""
+	}
+
+	if net, ok := networks["database"]; ok && net.IPAddress != "" {
+		return net.IPAddress
+	}
+
+	for _, net := range networks {
+		if net.IPAddress != "" {
+			return net.IPAddress
+		}
+	}
+
+	return ""
+}
 
 type ConnectionConfig struct {
 	Type      string `json:"type"`
@@ -61,11 +86,9 @@ func (m *Manager) resolveContainerConnection(cfg *ConnectionConfig) (string, int
 		return containerName, cfg.Port, nil
 	}
 
-	// Try to resolve as Docker container
-	cmd := exec.Command("docker", "inspect", "--format", "{{(index .NetworkSettings.Networks (index (keys .NetworkSettings.Networks) 0)).IPAddress}}", containerName)
+	cmd := exec.Command("docker", "inspect", "--format", "{{json .NetworkSettings.Networks}}", containerName)
 	output, err := cmd.Output()
 	if err != nil {
-		// Not a container, return as-is (might be a hostname)
 		host := cfg.Host
 		if host == "" {
 			host = "localhost"
@@ -73,7 +96,7 @@ func (m *Manager) resolveContainerConnection(cfg *ConnectionConfig) (string, int
 		return host, cfg.Port, nil
 	}
 
-	ip := strings.TrimSpace(string(output))
+	ip := parseContainerIP(output)
 	if ip == "" {
 		return cfg.Host, cfg.Port, nil
 	}

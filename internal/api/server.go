@@ -401,11 +401,12 @@ func (s *Server) createDatabaseForDeployment(deploymentName string) ([]EnvVar, e
 	dbPassword := generateRandomPassword(16)
 
 	connConfig := &database.ConnectionConfig{
-		Type:     dbConfig.Type,
-		Host:     dbConfig.Host,
-		Port:     dbConfig.Port,
-		Username: dbConfig.RootUser,
-		Password: dbConfig.RootPassword,
+		Type:      dbConfig.Type,
+		Host:      dbConfig.Host,
+		Port:      dbConfig.Port,
+		Username:  dbConfig.RootUser,
+		Password:  dbConfig.RootPassword,
+		Container: dbConfig.Container,
 	}
 
 	if err := s.databaseManager.CreateDatabase(connConfig, dbName); err != nil {
