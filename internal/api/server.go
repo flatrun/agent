@@ -149,6 +149,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/containers/:id/restart", s.restartContainer)
 			protected.DELETE("/containers/:id", s.removeContainer)
 			protected.GET("/containers/:id/logs", s.getContainerLogs)
+			protected.GET("/containers/:id/stats", s.getContainerStats)
+			protected.GET("/containers/stats", s.getAllContainerStats)
+			protected.GET("/deployments/:name/stats", s.getDeploymentContainerStats)
 			protected.GET("/images", s.listImages)
 			protected.DELETE("/images/:id", s.removeImage)
 			protected.POST("/images/pull", s.pullImage)
@@ -1547,11 +1550,14 @@ func (s *Server) getSystemStats(c *gin.Context) {
 	imageStats, _ := s.networksManager.GetImageStats()
 	volumeStats, _ := s.networksManager.GetVolumeStats()
 
+	systemStats, _ := system.GetSystemStats()
+
 	c.JSON(http.StatusOK, gin.H{
 		"deployments": stats,
 		"containers":  containerStats,
 		"images":      imageStats,
 		"volumes":     volumeStats,
+		"system":      systemStats,
 	})
 }
 
@@ -1653,6 +1659,72 @@ func (s *Server) getContainerLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"id":   id,
 		"logs": logs,
+	})
+}
+
+func (s *Server) getContainerStats(c *gin.Context) {
+	id := c.Param("id")
+
+	stats, err := docker.GetContainerStats(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"stats": stats,
+	})
+}
+
+func (s *Server) getAllContainerStats(c *gin.Context) {
+	stats, err := docker.GetAllContainerStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"stats": stats,
+	})
+}
+
+func (s *Server) getDeploymentContainerStats(c *gin.Context) {
+	name := c.Param("name")
+
+	if _, err := s.manager.GetDeployment(name); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "deployment not found",
+		})
+		return
+	}
+
+	stats, _ := docker.GetDeploymentStats(name)
+	if stats == nil {
+		stats = []docker.ContainerStats{}
+	}
+
+	var totalCPU, totalMemPercent float64
+	var totalMemUsage, totalMemLimit uint64
+	for _, s := range stats {
+		totalCPU += s.CPUPercent
+		totalMemPercent += s.MemoryPercent
+		totalMemUsage += s.MemoryUsage
+		totalMemLimit += s.MemoryLimit
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"deployment": name,
+		"services":   stats,
+		"summary": gin.H{
+			"cpu_percent":    totalCPU,
+			"memory_percent": totalMemPercent,
+			"memory_usage":   totalMemUsage,
+			"memory_limit":   totalMemLimit,
+		},
 	})
 }
 
