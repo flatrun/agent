@@ -4,3 +4,11 @@ icon: pi pi-code
 logo: https://nodejs.org/static/logos/nodejsLight.svg
 category: runtime
 priority: 40
+container_port: 3000
+mounts:
+  - id: app
+    name: Application
+    container_path: /app
+    description: Node.js application source code
+    type: file
+    required: true

@@ -4,3 +4,29 @@ icon: pi pi-globe
 logo: https://s.w.org/style/images/about/WordPress-logotype-wmark.png
 category: application
 priority: 100
+container_port: 80
+mounts:
+  - id: full
+    name: Full WordPress
+    container_path: /var/www/html
+    description: Entire WordPress installation
+    type: file
+    required: false
+  - id: wp_content
+    name: Content Directory
+    container_path: /var/www/html/wp-content
+    description: Themes, plugins, and uploads
+    type: file
+    required: false
+  - id: plugins
+    name: Plugins
+    container_path: /var/www/html/wp-content/plugins
+    description: WordPress plugins
+    type: file
+    required: false
+  - id: uploads
+    name: Uploads
+    container_path: /var/www/html/wp-content/uploads
+    description: Media uploads
+    type: volume
+    required: true

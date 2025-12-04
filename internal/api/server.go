@@ -142,6 +142,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/templates/categories", s.getTemplateCategories)
 			protected.POST("/templates/refresh", s.refreshTemplates)
 			protected.GET("/templates/:id/compose", s.getTemplateCompose)
+			protected.POST("/templates/:id/generate", s.generateTemplateCompose)
 			protected.GET("/stats", s.getSystemStats)
 			protected.GET("/containers", s.listContainers)
 			protected.POST("/containers/:id/start", s.startContainer)
@@ -286,6 +287,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 			return
 		}
 		req.ComposeContent = generated
+	}
+
+	if err := s.validateComposeContent(req.ComposeContent, req.Name); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid compose content: " + err.Error(),
+		})
+		return
 	}
 
 	networkName := s.config.Infrastructure.DefaultProxyNetwork
@@ -1101,24 +1109,37 @@ type TemplateFile struct {
 }
 
 type TemplateMetadata struct {
-	Name        string         `yaml:"name"`
-	Description string         `yaml:"description"`
-	Icon        string         `yaml:"icon"`
-	Logo        string         `yaml:"logo"`
-	Category    string         `yaml:"category"`
-	Priority    int            `yaml:"priority"`
-	Files       []TemplateFile `yaml:"files"`
+	Name          string          `yaml:"name"`
+	Description   string          `yaml:"description"`
+	Icon          string          `yaml:"icon"`
+	Logo          string          `yaml:"logo"`
+	Category      string          `yaml:"category"`
+	Priority      int             `yaml:"priority"`
+	ContainerPort int             `yaml:"container_port"`
+	Mounts        []TemplateMount `yaml:"mounts"`
+	Files         []TemplateFile  `yaml:"files"`
+}
+
+type TemplateMount struct {
+	ID            string `json:"id" yaml:"id"`
+	Name          string `json:"name" yaml:"name"`
+	ContainerPath string `json:"container_path" yaml:"container_path"`
+	Description   string `json:"description" yaml:"description"`
+	Type          string `json:"type" yaml:"type"`
+	Required      bool   `json:"required" yaml:"required"`
 }
 
 type Template struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Icon        string `json:"icon"`
-	Logo        string `json:"logo"`
-	Category    string `json:"category"`
-	Priority    int    `json:"priority"`
-	Content     string `json:"content"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name" yaml:"name"`
+	Description   string          `json:"description" yaml:"description"`
+	Icon          string          `json:"icon" yaml:"icon"`
+	Logo          string          `json:"logo" yaml:"logo"`
+	Category      string          `json:"category" yaml:"category"`
+	Priority      int             `json:"priority" yaml:"priority"`
+	ContainerPort int             `json:"container_port" yaml:"container_port"`
+	Mounts        []TemplateMount `json:"mounts" yaml:"mounts"`
+	Content       string          `json:"content"`
 }
 
 func (s *Server) listTemplates(c *gin.Context) {
@@ -1176,14 +1197,16 @@ func (s *Server) listTemplates(c *gin.Context) {
 		}
 
 		templateList = append(templateList, Template{
-			ID:          templateID,
-			Name:        metadata.Name,
-			Description: metadata.Description,
-			Icon:        metadata.Icon,
-			Logo:        metadata.Logo,
-			Category:    metadata.Category,
-			Priority:    metadata.Priority,
-			Content:     string(composeContent),
+			ID:            templateID,
+			Name:          metadata.Name,
+			Description:   metadata.Description,
+			Icon:          metadata.Icon,
+			Logo:          metadata.Logo,
+			Category:      metadata.Category,
+			Priority:      metadata.Priority,
+			ContainerPort: metadata.ContainerPort,
+			Mounts:        metadata.Mounts,
+			Content:       string(composeContent),
 		})
 	}
 
@@ -1254,6 +1277,260 @@ func (s *Server) getTemplateCompose(c *gin.Context) {
 		"name":        name,
 		"content":     content,
 	})
+}
+
+type MountSelection struct {
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
+	Type    string `json:"type"`
+}
+
+type ComposeGenerateRequest struct {
+	Name          string           `json:"name" binding:"required"`
+	ContainerPort int              `json:"container_port"`
+	MapPorts      bool             `json:"map_ports"`
+	HostPort      string           `json:"host_port"`
+	Mounts        []MountSelection `json:"mounts"`
+}
+
+func (s *Server) generateTemplateCompose(c *gin.Context) {
+	templateID := c.Param("id")
+
+	var req ComposeGenerateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	content, err := s.generateComposeWithOptions(templateID, &req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"template_id": templateID,
+		"name":        req.Name,
+		"content":     content,
+	})
+}
+
+func (s *Server) generateComposeWithOptions(templateID string, opts *ComposeGenerateRequest) (string, error) {
+	if templateID == "" || templateID == "custom" {
+		return s.generateCustomCompose(opts)
+	}
+
+	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+
+	var metadata TemplateMetadata
+	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err == nil {
+		_ = yaml.Unmarshal(metadataContent, &metadata)
+	}
+
+	networkName := s.config.Infrastructure.DefaultProxyNetwork
+
+	containerPort := opts.ContainerPort
+	if containerPort == 0 && metadata.ContainerPort > 0 {
+		containerPort = metadata.ContainerPort
+	}
+	if containerPort == 0 {
+		containerPort = 80
+	}
+
+	portConfig := fmt.Sprintf("expose:\n      - \"%d\"", containerPort)
+	if opts.MapPorts && opts.HostPort != "" {
+		portConfig = fmt.Sprintf("ports:\n      - \"%s:%d\"", opts.HostPort, containerPort)
+	}
+
+	mountSelections := make(map[string]MountSelection)
+	for _, m := range opts.Mounts {
+		mountSelections[m.ID] = m
+	}
+
+	var volumeLines []string
+	var topLevelVolumes []string
+
+	for _, mount := range metadata.Mounts {
+		selection, hasSelection := mountSelections[mount.ID]
+
+		if hasSelection && !selection.Enabled {
+			continue
+		}
+
+		if !hasSelection && !mount.Required {
+			continue
+		}
+
+		mountType := mount.Type
+		if hasSelection && selection.Type != "" {
+			mountType = selection.Type
+		}
+
+		if mountType == "volume" {
+			volumeName := opts.Name + "_" + mount.ID
+			volumeLines = append(volumeLines, fmt.Sprintf("      - %s:%s", volumeName, mount.ContainerPath))
+			topLevelVolumes = append(topLevelVolumes, volumeName)
+		} else {
+			volumeLines = append(volumeLines, fmt.Sprintf("      - ./%s:%s", mount.ID, mount.ContainerPath))
+		}
+	}
+
+	volumesSection := ""
+	if len(volumeLines) > 0 {
+		volumesSection = "volumes:\n" + strings.Join(volumeLines, "\n")
+	}
+
+	topLevelVolumesSection := ""
+	if len(topLevelVolumes) > 0 {
+		var volDefs []string
+		for _, v := range topLevelVolumes {
+			volDefs = append(volDefs, "  "+v+":")
+		}
+		topLevelVolumesSection = "\nvolumes:\n" + strings.Join(volDefs, "\n")
+	}
+
+	content := fmt.Sprintf(`name: %s
+services:
+  app:
+    image: ${IMAGE}
+    container_name: %s
+    %s
+    %s
+    networks:
+      - %s
+    restart: unless-stopped
+%s
+networks:
+  %s:
+    external: true
+`, opts.Name, opts.Name, portConfig, volumesSection, networkName, topLevelVolumesSection, networkName)
+
+	composeBytes, err := templates.GetCompose(templateID)
+	if err != nil {
+		composePath := filepath.Join(templatesDir, templateID, "docker-compose.yml")
+		composeBytes, err = os.ReadFile(composePath)
+		if err != nil {
+			return content, nil
+		}
+	}
+
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal(composeBytes, &compose); err == nil {
+		if services, ok := compose["services"].(map[string]interface{}); ok {
+			for _, svc := range services {
+				if svcMap, ok := svc.(map[string]interface{}); ok {
+					if image, ok := svcMap["image"].(string); ok {
+						content = strings.ReplaceAll(content, "${IMAGE}", image)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	content = strings.ReplaceAll(content, "${IMAGE}", "nginx:alpine")
+
+	return content, nil
+}
+
+func (s *Server) generateCustomCompose(opts *ComposeGenerateRequest) (string, error) {
+	networkName := s.config.Infrastructure.DefaultProxyNetwork
+
+	containerPort := opts.ContainerPort
+	if containerPort == 0 {
+		containerPort = 80
+	}
+
+	portConfig := fmt.Sprintf("expose:\n      - \"%d\"", containerPort)
+	if opts.MapPorts && opts.HostPort != "" {
+		portConfig = fmt.Sprintf("ports:\n      - \"%s:%d\"", opts.HostPort, containerPort)
+	}
+
+	content := fmt.Sprintf(`name: %s
+services:
+  app:
+    image: nginx:alpine
+    container_name: %s
+    %s
+    networks:
+      - %s
+    restart: unless-stopped
+
+networks:
+  %s:
+    external: true
+`, opts.Name, opts.Name, portConfig, networkName, networkName)
+
+	return content, nil
+}
+
+type composeFile struct {
+	Name     string                    `yaml:"name"`
+	Services map[string]composeService `yaml:"services"`
+	Networks map[string]composeNetwork `yaml:"networks"`
+	Volumes  map[string]interface{}    `yaml:"volumes"`
+}
+
+type composeService struct {
+	Image         string      `yaml:"image"`
+	ContainerName string      `yaml:"container_name"`
+	Ports         []string    `yaml:"ports"`
+	Expose        []string    `yaml:"expose"`
+	Networks      []string    `yaml:"networks"`
+	Volumes       []string    `yaml:"volumes"`
+	Environment   interface{} `yaml:"environment"`
+	EnvFile       interface{} `yaml:"env_file"`
+}
+
+type composeNetwork struct {
+	External bool   `yaml:"external"`
+	Name     string `yaml:"name"`
+}
+
+func (s *Server) validateComposeContent(content, deploymentName string) error {
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return fmt.Errorf("invalid YAML syntax: %w", err)
+	}
+
+	if len(compose.Services) == 0 {
+		return fmt.Errorf("compose file must define at least one service")
+	}
+
+	expectedNetwork := s.config.Infrastructure.DefaultProxyNetwork
+
+	for serviceName, service := range compose.Services {
+		if service.Image == "" {
+			return fmt.Errorf("service '%s' must have an image defined", serviceName)
+		}
+
+		hasExpectedNetwork := false
+		for _, net := range service.Networks {
+			if net == expectedNetwork {
+				hasExpectedNetwork = true
+				break
+			}
+		}
+		if !hasExpectedNetwork && len(service.Networks) > 0 {
+			log.Printf("Warning: service '%s' does not use the configured proxy network '%s'", serviceName, expectedNetwork)
+		}
+	}
+
+	if len(compose.Networks) > 0 {
+		if netConfig, ok := compose.Networks[expectedNetwork]; ok {
+			if !netConfig.External {
+				return fmt.Errorf("network '%s' must be marked as external", expectedNetwork)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *Server) ensureBuiltinTemplates(templatesDir string) {

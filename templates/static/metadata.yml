@@ -4,6 +4,14 @@ icon: pi pi-file
 logo: https://cdn-icons-png.flaticon.com/512/888/888859.png
 category: basic
 priority: 100
+container_port: 80
+mounts:
+  - id: html
+    name: Web Root
+    container_path: /usr/share/nginx/html
+    description: Static HTML, CSS, and JavaScript files
+    type: file
+    required: true
 files:
   - path: html/index.html
     content: |

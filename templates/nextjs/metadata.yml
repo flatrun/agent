@@ -4,3 +4,11 @@ icon: pi pi-globe
 logo: https://assets.vercel.com/image/upload/v1662130559/nextjs/Icon_dark_background.png
 category: framework
 priority: 60
+container_port: 3000
+mounts:
+  - id: app
+    name: Application
+    container_path: /app
+    description: Next.js application source code
+    type: file
+    required: true
