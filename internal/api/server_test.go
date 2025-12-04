@@ -1,6 +1,7 @@
 package api
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -133,4 +134,69 @@ networks:
 	if count != 1 {
 		t.Errorf("expected exactly 1 occurrence of '- database' in service networks, got %d:\n%s", count, result)
 	}
+}
+
+func TestProcessTemplateFilesWithEnvVars(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+	}
+	s := &Server{config: cfg}
+
+	templateDir := cfg.DeploymentsPath + "/.flatrun/templates/test-template"
+	if err := createDir(templateDir); err != nil {
+		t.Fatalf("failed to create template dir: %v", err)
+	}
+
+	metadata := `name: Test Template
+files:
+  - path: .env
+    content: |
+      APP_NAME=${NAME}
+      DB_HOST=${DB_HOST}
+      DB_PASSWORD=${DB_PASSWORD}
+`
+	if err := writeFile(templateDir+"/metadata.yml", metadata); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+
+	deploymentName := "my-app"
+	deploymentDir := cfg.DeploymentsPath + "/" + deploymentName
+	if err := createDir(deploymentDir); err != nil {
+		t.Fatalf("failed to create deployment dir: %v", err)
+	}
+
+	envVars := []EnvVar{
+		{Key: "DB_HOST", Value: "localhost"},
+		{Key: "DB_PASSWORD", Value: "secret123"},
+	}
+
+	s.processTemplateFiles(deploymentName, "test-template", envVars)
+
+	content, err := readFile(deploymentDir + "/.env")
+	if err != nil {
+		t.Fatalf("failed to read generated .env: %v", err)
+	}
+
+	if !strings.Contains(content, "APP_NAME=my-app") {
+		t.Errorf("expected APP_NAME=my-app, got:\n%s", content)
+	}
+	if !strings.Contains(content, "DB_HOST=localhost") {
+		t.Errorf("expected DB_HOST=localhost, got:\n%s", content)
+	}
+	if !strings.Contains(content, "DB_PASSWORD=secret123") {
+		t.Errorf("expected DB_PASSWORD=secret123, got:\n%s", content)
+	}
+}
+
+func createDir(path string) error {
+	return os.MkdirAll(path, 0755)
+}
+
+func writeFile(path, content string) error {
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func readFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	return string(data), err
 }

@@ -336,10 +336,6 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 
-	if req.TemplateID != "" {
-		s.processTemplateFiles(req.Name, req.TemplateID)
-	}
-
 	var dbEnvVars []EnvVar
 	if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
 		dbResult, err := s.createDatabaseForDeployment(req.Name)
@@ -360,6 +356,10 @@ func (s *Server) createDeployment(c *gin.Context) {
 			})
 			return
 		}
+	}
+
+	if req.TemplateID != "" {
+		s.processTemplateFiles(req.Name, req.TemplateID, allEnvVars)
 	}
 
 	if req.Metadata != nil {
@@ -1735,7 +1735,7 @@ func (s *Server) addDatabaseNetwork(content string) string {
 	return string(data)
 }
 
-func (s *Server) processTemplateFiles(deploymentName, templateID string) {
+func (s *Server) processTemplateFiles(deploymentName, templateID string, envVars []EnvVar) {
 	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
 	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
 
@@ -1757,6 +1757,11 @@ func (s *Server) processTemplateFiles(deploymentName, templateID string) {
 
 	for _, file := range metadata.Files {
 		content := strings.ReplaceAll(file.Content, "${NAME}", deploymentName)
+
+		for _, env := range envVars {
+			placeholder := "${" + env.Key + "}"
+			content = strings.ReplaceAll(content, placeholder, env.Value)
+		}
 
 		filePath := filepath.Join(deploymentDir, file.Path)
 		fileDir := filepath.Dir(filePath)
