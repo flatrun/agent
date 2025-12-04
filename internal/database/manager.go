@@ -443,3 +443,234 @@ func (m *Manager) GrantPrivileges(cfg *ConnectionConfig, username, database, hos
 	_, err = db.Exec(query)
 	return err
 }
+
+func (m *Manager) DeleteDatabase(cfg *ConnectionConfig, dbName string) error {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	dsn, err := m.buildDSN(cfg)
+	if err != nil {
+		return err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	dbName = strings.ReplaceAll(dbName, "`", "")
+	dbName = strings.ReplaceAll(dbName, "'", "")
+	dbName = strings.ReplaceAll(dbName, "\"", "")
+
+	var query string
+	switch cfg.Type {
+	case "mysql", "mariadb":
+		query = fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName)
+	case "postgresql":
+		query = fmt.Sprintf("DROP DATABASE IF EXISTS \"%s\"", dbName)
+	}
+
+	_, err = db.Exec(query)
+	return err
+}
+
+func (m *Manager) DeleteUser(cfg *ConnectionConfig, username, host string) error {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	dsn, err := m.buildDSN(cfg)
+	if err != nil {
+		return err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	var query string
+	switch cfg.Type {
+	case "mysql", "mariadb":
+		if host == "" {
+			host = "%"
+		}
+		query = fmt.Sprintf("DROP USER IF EXISTS '%s'@'%s'", username, host)
+	case "postgresql":
+		query = fmt.Sprintf("DROP USER IF EXISTS %s", username)
+	}
+
+	_, err = db.Exec(query)
+	return err
+}
+
+type QueryResult struct {
+	Columns []string        `json:"columns"`
+	Rows    [][]interface{} `json:"rows"`
+	Count   int             `json:"count"`
+}
+
+func (m *Manager) QueryTable(cfg *ConnectionConfig, database, table string, limit, offset int) (*QueryResult, error) {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	cfgCopy := *cfg
+	cfgCopy.Database = database
+
+	dsn, err := m.buildDSN(&cfgCopy)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// Sanitize table name
+	table = strings.ReplaceAll(table, "`", "")
+	table = strings.ReplaceAll(table, "'", "")
+	table = strings.ReplaceAll(table, "\"", "")
+	table = strings.ReplaceAll(table, ";", "")
+
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	var query string
+	switch cfg.Type {
+	case "mysql", "mariadb":
+		query = fmt.Sprintf("SELECT * FROM `%s` LIMIT %d OFFSET %d", table, limit, offset)
+	case "postgresql":
+		query = fmt.Sprintf("SELECT * FROM \"%s\" LIMIT %d OFFSET %d", table, limit, offset)
+	}
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	result := &QueryResult{
+		Columns: columns,
+		Rows:    [][]interface{}{},
+	}
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		row := make([]interface{}, len(columns))
+		for i, v := range values {
+			switch val := v.(type) {
+			case []byte:
+				row[i] = string(val)
+			case nil:
+				row[i] = nil
+			default:
+				row[i] = val
+			}
+		}
+		result.Rows = append(result.Rows, row)
+	}
+
+	result.Count = len(result.Rows)
+	return result, nil
+}
+
+func (m *Manager) ExecuteQuery(cfg *ConnectionConfig, database, query string) (*QueryResult, error) {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	cfgCopy := *cfg
+	cfgCopy.Database = database
+
+	dsn, err := m.buildDSN(&cfgCopy)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// Basic safety: only allow SELECT queries
+	trimmedQuery := strings.TrimSpace(strings.ToUpper(query))
+	if !strings.HasPrefix(trimmedQuery, "SELECT") &&
+		!strings.HasPrefix(trimmedQuery, "SHOW") &&
+		!strings.HasPrefix(trimmedQuery, "DESCRIBE") &&
+		!strings.HasPrefix(trimmedQuery, "EXPLAIN") {
+		return nil, fmt.Errorf("only SELECT, SHOW, DESCRIBE, and EXPLAIN queries are allowed")
+	}
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	result := &QueryResult{
+		Columns: columns,
+		Rows:    [][]interface{}{},
+	}
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		row := make([]interface{}, len(columns))
+		for i, v := range values {
+			switch val := v.(type) {
+			case []byte:
+				row[i] = string(val)
+			case nil:
+				row[i] = nil
+			default:
+				row[i] = val
+			}
+		}
+		result.Rows = append(result.Rows, row)
+	}
+
+	result.Count = len(result.Rows)
+	return result, nil
+}

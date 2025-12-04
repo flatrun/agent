@@ -91,10 +91,18 @@ func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupRes
 			} else {
 				result.CertificateRequested = true
 				result.SSLMessage = certResult.Message
+				// Verify certificate was actually created
+				if o.ssl.CertificateExists(domain) {
+					result.CertificateExists = true
+				} else {
+					log.Printf("warning: certificate request succeeded but cert not found for %s", domain)
+					result.CertificateRequested = false
+					result.SSLError = "certificate request succeeded but certificate file not found"
+				}
 			}
 		}
 
-		if result.CertificateRequested || result.CertificateExists {
+		if result.CertificateExists {
 			deployment.Metadata.SSL.Enabled = true
 			if err := o.nginx.UpdateVirtualHost(deployment); err != nil {
 				log.Printf("warning: failed to update virtual host with SSL: %v", err)

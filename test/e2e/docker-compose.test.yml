@@ -35,7 +35,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - /tmp/flatrun-e2e-deployments/nginx/conf.d:/tmp/flatrun-e2e-deployments/nginx/conf.d:ro
-      - /tmp/flatrun-e2e-deployments/nginx/certs:/etc/nginx/certs:ro
+      - /tmp/flatrun-e2e-deployments/nginx/certs:/etc/letsencrypt:ro
     networks:
       - proxy
     healthcheck:

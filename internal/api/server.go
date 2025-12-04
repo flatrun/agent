@@ -178,9 +178,13 @@ func (s *Server) setupRoutes() {
 			protected.POST("/databases/test", s.testDatabaseConnection)
 			protected.POST("/databases/list", s.listDatabasesInServer)
 			protected.POST("/databases/tables", s.listDatabaseTables)
+			protected.POST("/databases/tables/data", s.queryTableData)
+			protected.POST("/databases/query", s.executeDatabaseQuery)
 			protected.POST("/databases/users", s.listDatabaseUsers)
 			protected.POST("/databases/create", s.createDatabaseInServer)
+			protected.POST("/databases/delete", s.deleteDatabaseInServer)
 			protected.POST("/databases/users/create", s.createDatabaseUser)
+			protected.POST("/databases/users/delete", s.deleteDatabaseUser)
 			protected.POST("/databases/privileges/grant", s.grantDatabasePrivileges)
 
 			protected.GET("/infrastructure", s.listInfrastructure)
@@ -294,6 +298,21 @@ func (s *Server) createDeployment(c *gin.Context) {
 			"error": "Invalid compose content: " + err.Error(),
 		})
 		return
+	}
+
+	// Add database network to compose if using shared database
+	if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
+		dbNetworkName := s.config.Infrastructure.DefaultDatabaseNetwork
+		if dbNetworkName == "" {
+			dbNetworkName = "database"
+		}
+		if err := s.networksManager.EnsureNetwork(dbNetworkName); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to ensure database network exists: " + err.Error(),
+			})
+			return
+		}
+		req.ComposeContent = s.addDatabaseNetwork(req.ComposeContent)
 	}
 
 	networkName := s.config.Infrastructure.DefaultProxyNetwork
@@ -1639,6 +1658,83 @@ func replaceHardcodedNetwork(content, oldNetwork, newNetwork string) string {
 	return strings.Join(result, "\n")
 }
 
+// addDatabaseNetwork adds the database network to a compose file so containers
+// can communicate with the shared database infrastructure
+func (s *Server) addDatabaseNetwork(content string) string {
+	dbNetworkName := s.config.Infrastructure.DefaultDatabaseNetwork
+	if dbNetworkName == "" {
+		dbNetworkName = "database"
+	}
+
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return content
+	}
+
+	// Get or create top-level networks section
+	networks, ok := compose["networks"].(map[string]interface{})
+	if !ok {
+		networks = make(map[string]interface{})
+		compose["networks"] = networks
+	}
+
+	// Add database network as external if not already present
+	if _, exists := networks[dbNetworkName]; !exists {
+		networks[dbNetworkName] = map[string]interface{}{
+			"external": true,
+		}
+	}
+
+	// Add database network to each service
+	services, ok := compose["services"].(map[string]interface{})
+	if ok {
+		for serviceName, serviceData := range services {
+			service, ok := serviceData.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Get or create service networks
+			var serviceNetworks []interface{}
+			switch n := service["networks"].(type) {
+			case []interface{}:
+				serviceNetworks = n
+			case map[string]interface{}:
+				// Convert map format to list format
+				for netName := range n {
+					serviceNetworks = append(serviceNetworks, netName)
+				}
+			default:
+				serviceNetworks = []interface{}{}
+			}
+
+			// Check if database network already exists
+			hasDbNetwork := false
+			for _, net := range serviceNetworks {
+				if netStr, ok := net.(string); ok && netStr == dbNetworkName {
+					hasDbNetwork = true
+					break
+				}
+			}
+
+			// Add database network if not present
+			if !hasDbNetwork {
+				serviceNetworks = append(serviceNetworks, dbNetworkName)
+				service["networks"] = serviceNetworks
+				services[serviceName] = service
+			}
+		}
+	}
+
+	// Re-marshal
+	data, err := yaml.Marshal(compose)
+	if err != nil {
+		return content
+	}
+
+	return string(data)
+}
+
 func (s *Server) processTemplateFiles(deploymentName, templateID string) {
 	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
 	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
@@ -2583,6 +2679,107 @@ func (s *Server) grantDatabasePrivileges(c *gin.Context) {
 		"username": req.Username,
 		"database": req.Database,
 	})
+}
+
+func (s *Server) deleteDatabaseInServer(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		DbName string `json:"db_name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.databaseManager.DeleteDatabase(&req.ConnectionConfig, req.DbName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Database deleted",
+		"name":    req.DbName,
+	})
+}
+
+func (s *Server) deleteDatabaseUser(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Username string `json:"username" binding:"required"`
+		Host     string `json:"user_host"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.databaseManager.DeleteUser(&req.ConnectionConfig, req.Username, req.Host); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "User deleted",
+		"username": req.Username,
+	})
+}
+
+func (s *Server) queryTableData(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Database string `json:"database" binding:"required"`
+		Table    string `json:"table" binding:"required"`
+		Limit    int    `json:"limit"`
+		Offset   int    `json:"offset"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	result, err := s.databaseManager.QueryTable(&req.ConnectionConfig, req.Database, req.Table, req.Limit, req.Offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) executeDatabaseQuery(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Database string `json:"database" binding:"required"`
+		Query    string `json:"query" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	result, err := s.databaseManager.ExecuteQuery(&req.ConnectionConfig, req.Database, req.Query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 func (s *Server) listInfrastructure(c *gin.Context) {
