@@ -12,6 +12,12 @@ mounts:
     description: Entire WordPress installation
     type: file
     required: false
+  - id: wp_config
+    name: WordPress Config
+    container_path: /var/www/html/wp-config.php
+    description: WordPress configuration file with database credentials
+    type: file
+    required: true
   - id: wp_content
     name: Content Directory
     container_path: /var/www/html/wp-content
@@ -30,3 +36,32 @@ mounts:
     description: Media uploads
     type: volume
     required: true
+files:
+  - path: wp-config.php
+    content: |
+      <?php
+      define( 'DB_NAME', '${DB_DATABASE}' );
+      define( 'DB_USER', '${DB_USERNAME}' );
+      define( 'DB_PASSWORD', '${DB_PASSWORD}' );
+      define( 'DB_HOST', '${DB_HOST}' );
+      define( 'DB_CHARSET', 'utf8mb4' );
+      define( 'DB_COLLATE', '' );
+
+      $table_prefix = 'wp_';
+
+      define( 'AUTH_KEY',         'put your unique phrase here' );
+      define( 'SECURE_AUTH_KEY',  'put your unique phrase here' );
+      define( 'LOGGED_IN_KEY',    'put your unique phrase here' );
+      define( 'NONCE_KEY',        'put your unique phrase here' );
+      define( 'AUTH_SALT',        'put your unique phrase here' );
+      define( 'SECURE_AUTH_SALT', 'put your unique phrase here' );
+      define( 'LOGGED_IN_SALT',   'put your unique phrase here' );
+      define( 'NONCE_SALT',       'put your unique phrase here' );
+
+      define( 'WP_DEBUG', false );
+
+      if ( ! defined( 'ABSPATH' ) ) {
+        define( 'ABSPATH', __DIR__ . '/' );
+      }
+
+      require_once ABSPATH . 'wp-settings.php';
