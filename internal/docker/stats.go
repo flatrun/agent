@@ -22,14 +22,14 @@ type ContainerStats struct {
 }
 
 type dockerStatsJSON struct {
-	Container    string `json:"Container"`
-	Name         string `json:"Name"`
-	CPUPerc      string `json:"CPUPerc"`
-	MemUsage     string `json:"MemUsage"`
-	MemPerc      string `json:"MemPerc"`
-	NetIO        string `json:"NetIO"`
-	BlockIO      string `json:"BlockIO"`
-	PIDs         string `json:"PIDs"`
+	Container string `json:"Container"`
+	Name      string `json:"Name"`
+	CPUPerc   string `json:"CPUPerc"`
+	MemUsage  string `json:"MemUsage"`
+	MemPerc   string `json:"MemPerc"`
+	NetIO     string `json:"NetIO"`
+	BlockIO   string `json:"BlockIO"`
+	PIDs      string `json:"PIDs"`
 }
 
 func GetContainerStats(containerID string) (*ContainerStats, error) {

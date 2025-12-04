@@ -4,3 +4,11 @@ icon: pi pi-book
 logo: https://ghost.org/images/logos/ghost-logo-orb.png
 category: application
 priority: 70
+container_port: 2368
+mounts:
+  - id: content
+    name: Content
+    container_path: /var/lib/ghost/content
+    description: Ghost content, themes, and images
+    type: volume
+    required: true

@@ -15,11 +15,12 @@ import (
 )
 
 type Manager struct {
-	config      *config.NginxConfig
-	basePath    string
-	configPath  string
-	webrootPath string
-	mu          sync.RWMutex
+	config               *config.NginxConfig
+	basePath             string
+	configPath           string
+	webrootPath          string
+	containerWebrootPath string
+	mu                   sync.RWMutex
 }
 
 func NewManager(cfg *config.NginxConfig, deploymentsPath string, webrootPath string) *Manager {
@@ -32,11 +33,17 @@ func NewManager(cfg *config.NginxConfig, deploymentsPath string, webrootPath str
 		webrootPath = filepath.Join(deploymentsPath, "nginx", "html")
 	}
 
+	containerWebrootPath := cfg.ContainerWebrootPath
+	if containerWebrootPath == "" {
+		containerWebrootPath = "/usr/share/nginx/html"
+	}
+
 	return &Manager{
-		config:      cfg,
-		basePath:    deploymentsPath,
-		configPath:  configPath,
-		webrootPath: webrootPath,
+		config:               cfg,
+		basePath:             deploymentsPath,
+		configPath:           configPath,
+		webrootPath:          webrootPath,
+		containerWebrootPath: containerWebrootPath,
 	}
 }
 
@@ -60,6 +67,13 @@ func (m *Manager) UpdateConfig(cfg *config.NginxConfig, deploymentsPath string, 
 		webrootPath = filepath.Join(deploymentsPath, "nginx", "html")
 	}
 	m.webrootPath = webrootPath
+
+	containerWebrootPath := cfg.ContainerWebrootPath
+	if containerWebrootPath == "" {
+		containerWebrootPath = "/usr/share/nginx/html"
+	}
+	m.containerWebrootPath = containerWebrootPath
+
 	m.basePath = deploymentsPath
 }
 
@@ -201,14 +215,14 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 	ssl := deployment.Metadata.SSL
 
 	data := templateData{
-		DeploymentName: deployment.Name,
-		Domain:         net.Domain,
-		ContainerPort:  net.ContainerPort,
-		Protocol:       net.Protocol,
-		ProxyType:      net.ProxyType,
-		SSLEnabled:     ssl.Enabled,
-		HealthPath:     deployment.Metadata.HealthCheck.Path,
-		WebrootPath:    m.webrootPath,
+		DeploymentName:       deployment.Name,
+		Domain:               net.Domain,
+		ContainerPort:        net.ContainerPort,
+		Protocol:             net.Protocol,
+		ProxyType:            net.ProxyType,
+		SSLEnabled:           ssl.Enabled,
+		HealthPath:           deployment.Metadata.HealthCheck.Path,
+		ContainerWebrootPath: m.containerWebrootPath,
 	}
 
 	if data.ContainerPort == 0 {
@@ -249,14 +263,14 @@ type VirtualHostInfo struct {
 }
 
 type templateData struct {
-	DeploymentName string
-	Domain         string
-	ContainerPort  int
-	Protocol       string
-	ProxyType      string
-	SSLEnabled     bool
-	HealthPath     string
-	WebrootPath    string
+	DeploymentName       string
+	Domain               string
+	ContainerPort        int
+	Protocol             string
+	ProxyType            string
+	SSLEnabled           bool
+	HealthPath           string
+	ContainerWebrootPath string
 }
 
 const httpTemplate = `server {
@@ -287,7 +301,7 @@ const httpTemplate = `server {
     }
 {{end}}
     location /.well-known/acme-challenge/ {
-        root {{.WebrootPath}};
+        root {{.ContainerWebrootPath}};
     }
 }
 `
@@ -297,7 +311,7 @@ const sslTemplate = `server {
     server_name {{.Domain}};
 
     location /.well-known/acme-challenge/ {
-        root {{.WebrootPath}};
+        root {{.ContainerWebrootPath}};
     }
 
     location / {

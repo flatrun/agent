@@ -10,11 +10,11 @@ import (
 )
 
 type SystemStats struct {
-	CPU     CPUStats     `json:"cpu"`
-	Memory  MemoryStats  `json:"memory"`
-	Disk    DiskStats    `json:"disk"`
-	Uptime  int64        `json:"uptime"`
-	LoadAvg LoadAverage  `json:"load_avg"`
+	CPU     CPUStats    `json:"cpu"`
+	Memory  MemoryStats `json:"memory"`
+	Disk    DiskStats   `json:"disk"`
+	Uptime  int64       `json:"uptime"`
+	LoadAvg LoadAverage `json:"load_avg"`
 }
 
 type CPUStats struct {

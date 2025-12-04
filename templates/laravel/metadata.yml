@@ -4,3 +4,17 @@ icon: pi pi-code
 logo: https://laravel.com/img/logomark.min.svg
 category: framework
 priority: 80
+container_port: 8000
+mounts:
+  - id: app
+    name: Application
+    container_path: /app
+    description: Laravel application source code
+    type: file
+    required: true
+  - id: storage
+    name: Storage
+    container_path: /app/storage
+    description: Logs, cache, and file uploads
+    type: volume
+    required: false

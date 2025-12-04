@@ -60,11 +60,11 @@ func (m *mockNginxManager) Reload() error {
 }
 
 type mockSSLManager struct {
-	validateDomainErr         error
-	certificateExistsReturns  map[string]bool
-	requestCertificateCalls   []string
-	requestCertificateErr     error
-	requestCertificateResult  *ssl.CertificateResult
+	validateDomainErr        error
+	certificateExistsReturns map[string]bool
+	requestCertificateCalls  []string
+	requestCertificateErr    error
+	requestCertificateResult *ssl.CertificateResult
 }
 
 func (m *mockSSLManager) ValidateDomain(domain string) error {
