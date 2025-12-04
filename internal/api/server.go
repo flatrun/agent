@@ -178,6 +178,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/databases/test", s.testDatabaseConnection)
 			protected.POST("/databases/list", s.listDatabasesInServer)
 			protected.POST("/databases/tables", s.listDatabaseTables)
+			protected.POST("/databases/tables/data", s.queryTableData)
+			protected.POST("/databases/query", s.executeDatabaseQuery)
 			protected.POST("/databases/users", s.listDatabaseUsers)
 			protected.POST("/databases/create", s.createDatabaseInServer)
 			protected.POST("/databases/delete", s.deleteDatabaseInServer)
@@ -2636,6 +2638,56 @@ func (s *Server) deleteDatabaseUser(c *gin.Context) {
 		"message":  "User deleted",
 		"username": req.Username,
 	})
+}
+
+func (s *Server) queryTableData(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Database string `json:"database" binding:"required"`
+		Table    string `json:"table" binding:"required"`
+		Limit    int    `json:"limit"`
+		Offset   int    `json:"offset"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	result, err := s.databaseManager.QueryTable(&req.ConnectionConfig, req.Database, req.Table, req.Limit, req.Offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) executeDatabaseQuery(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Database string `json:"database" binding:"required"`
+		Query    string `json:"query" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	result, err := s.databaseManager.ExecuteQuery(&req.ConnectionConfig, req.Database, req.Query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 func (s *Server) listInfrastructure(c *gin.Context) {
