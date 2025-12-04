@@ -300,6 +300,21 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 
+	// Add database network to compose if using shared database
+	if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
+		dbNetworkName := s.config.Infrastructure.DefaultDatabaseNetwork
+		if dbNetworkName == "" {
+			dbNetworkName = "database"
+		}
+		if err := s.networksManager.EnsureNetwork(dbNetworkName); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to ensure database network exists: " + err.Error(),
+			})
+			return
+		}
+		req.ComposeContent = s.addDatabaseNetwork(req.ComposeContent)
+	}
+
 	networkName := s.config.Infrastructure.DefaultProxyNetwork
 	if err := s.networksManager.EnsureNetwork(networkName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -1641,6 +1656,83 @@ func replaceHardcodedNetwork(content, oldNetwork, newNetwork string) string {
 	}
 
 	return strings.Join(result, "\n")
+}
+
+// addDatabaseNetwork adds the database network to a compose file so containers
+// can communicate with the shared database infrastructure
+func (s *Server) addDatabaseNetwork(content string) string {
+	dbNetworkName := s.config.Infrastructure.DefaultDatabaseNetwork
+	if dbNetworkName == "" {
+		dbNetworkName = "database"
+	}
+
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return content
+	}
+
+	// Get or create top-level networks section
+	networks, ok := compose["networks"].(map[string]interface{})
+	if !ok {
+		networks = make(map[string]interface{})
+		compose["networks"] = networks
+	}
+
+	// Add database network as external if not already present
+	if _, exists := networks[dbNetworkName]; !exists {
+		networks[dbNetworkName] = map[string]interface{}{
+			"external": true,
+		}
+	}
+
+	// Add database network to each service
+	services, ok := compose["services"].(map[string]interface{})
+	if ok {
+		for serviceName, serviceData := range services {
+			service, ok := serviceData.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Get or create service networks
+			var serviceNetworks []interface{}
+			switch n := service["networks"].(type) {
+			case []interface{}:
+				serviceNetworks = n
+			case map[string]interface{}:
+				// Convert map format to list format
+				for netName := range n {
+					serviceNetworks = append(serviceNetworks, netName)
+				}
+			default:
+				serviceNetworks = []interface{}{}
+			}
+
+			// Check if database network already exists
+			hasDbNetwork := false
+			for _, net := range serviceNetworks {
+				if netStr, ok := net.(string); ok && netStr == dbNetworkName {
+					hasDbNetwork = true
+					break
+				}
+			}
+
+			// Add database network if not present
+			if !hasDbNetwork {
+				serviceNetworks = append(serviceNetworks, dbNetworkName)
+				service["networks"] = serviceNetworks
+				services[serviceName] = service
+			}
+		}
+	}
+
+	// Re-marshal
+	data, err := yaml.Marshal(compose)
+	if err != nil {
+		return content
+	}
+
+	return string(data)
 }
 
 func (s *Server) processTemplateFiles(deploymentName, templateID string) {
