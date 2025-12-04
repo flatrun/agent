@@ -25,6 +25,7 @@ nginx:
     config_path: ""
     reload_command: nginx -s reload
     external: false
+    container_webroot_path: ""
 certbot:
     enabled: true
     image: certbot/certbot
@@ -32,6 +33,7 @@ certbot:
     staging: true
     certs_path: ""
     webroot_path: ""
+    container_webroot_path: ""
     dns_provider: ""
 logging:
     level: info
@@ -43,7 +45,7 @@ infrastructure:
     default_proxy_network: proxy
     default_database_network: database
     database:
-        enabled: false
+        enabled: true
         type: mysql
         container: ""
         host: ""

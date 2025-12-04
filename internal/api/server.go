@@ -1123,8 +1123,8 @@ func (s *Server) createPluginDeployment(c *gin.Context) {
 }
 
 type TemplateFile struct {
-	Path    string `yaml:"path"`
-	Content string `yaml:"content"`
+	Path    string `json:"path" yaml:"path"`
+	Content string `json:"content" yaml:"content"`
 }
 
 type TemplateMetadata struct {
@@ -1158,6 +1158,7 @@ type Template struct {
 	Priority      int             `json:"priority" yaml:"priority"`
 	ContainerPort int             `json:"container_port" yaml:"container_port"`
 	Mounts        []TemplateMount `json:"mounts" yaml:"mounts"`
+	Files         []TemplateFile  `json:"files" yaml:"files"`
 	Content       string          `json:"content"`
 }
 
@@ -1225,6 +1226,7 @@ func (s *Server) listTemplates(c *gin.Context) {
 			Priority:      metadata.Priority,
 			ContainerPort: metadata.ContainerPort,
 			Mounts:        metadata.Mounts,
+			Files:         metadata.Files,
 			Content:       string(composeContent),
 		})
 	}
