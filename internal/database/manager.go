@@ -443,3 +443,68 @@ func (m *Manager) GrantPrivileges(cfg *ConnectionConfig, username, database, hos
 	_, err = db.Exec(query)
 	return err
 }
+
+func (m *Manager) DeleteDatabase(cfg *ConnectionConfig, dbName string) error {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	dsn, err := m.buildDSN(cfg)
+	if err != nil {
+		return err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	dbName = strings.ReplaceAll(dbName, "`", "")
+	dbName = strings.ReplaceAll(dbName, "'", "")
+	dbName = strings.ReplaceAll(dbName, "\"", "")
+
+	var query string
+	switch cfg.Type {
+	case "mysql", "mariadb":
+		query = fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName)
+	case "postgresql":
+		query = fmt.Sprintf("DROP DATABASE IF EXISTS \"%s\"", dbName)
+	}
+
+	_, err = db.Exec(query)
+	return err
+}
+
+func (m *Manager) DeleteUser(cfg *ConnectionConfig, username, host string) error {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	dsn, err := m.buildDSN(cfg)
+	if err != nil {
+		return err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	var query string
+	switch cfg.Type {
+	case "mysql", "mariadb":
+		if host == "" {
+			host = "%"
+		}
+		query = fmt.Sprintf("DROP USER IF EXISTS '%s'@'%s'", username, host)
+	case "postgresql":
+		query = fmt.Sprintf("DROP USER IF EXISTS %s", username)
+	}
+
+	_, err = db.Exec(query)
+	return err
+}

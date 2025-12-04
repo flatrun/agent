@@ -180,7 +180,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/databases/tables", s.listDatabaseTables)
 			protected.POST("/databases/users", s.listDatabaseUsers)
 			protected.POST("/databases/create", s.createDatabaseInServer)
+			protected.POST("/databases/delete", s.deleteDatabaseInServer)
 			protected.POST("/databases/users/create", s.createDatabaseUser)
+			protected.POST("/databases/users/delete", s.deleteDatabaseUser)
 			protected.POST("/databases/privileges/grant", s.grantDatabasePrivileges)
 
 			protected.GET("/infrastructure", s.listInfrastructure)
@@ -2582,6 +2584,57 @@ func (s *Server) grantDatabasePrivileges(c *gin.Context) {
 		"message":  "Privileges granted",
 		"username": req.Username,
 		"database": req.Database,
+	})
+}
+
+func (s *Server) deleteDatabaseInServer(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		DbName string `json:"db_name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.databaseManager.DeleteDatabase(&req.ConnectionConfig, req.DbName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Database deleted",
+		"name":    req.DbName,
+	})
+}
+
+func (s *Server) deleteDatabaseUser(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Username string `json:"username" binding:"required"`
+		Host     string `json:"user_host"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.databaseManager.DeleteUser(&req.ConnectionConfig, req.Username, req.Host); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "User deleted",
+		"username": req.Username,
 	})
 }
 
