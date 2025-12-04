@@ -41,12 +41,13 @@ type AuthConfig struct {
 }
 
 type NginxConfig struct {
-	Enabled       bool   `yaml:"enabled" json:"enabled"`
-	Image         string `yaml:"image" json:"image"`
-	ContainerName string `yaml:"container_name" json:"container_name"`
-	ConfigPath    string `yaml:"config_path" json:"config_path"`
-	ReloadCommand string `yaml:"reload_command" json:"reload_command"`
-	External      bool   `yaml:"external" json:"external"`
+	Enabled              bool   `yaml:"enabled" json:"enabled"`
+	Image                string `yaml:"image" json:"image"`
+	ContainerName        string `yaml:"container_name" json:"container_name"`
+	ConfigPath           string `yaml:"config_path" json:"config_path"`
+	ReloadCommand        string `yaml:"reload_command" json:"reload_command"`
+	External             bool   `yaml:"external" json:"external"`
+	ContainerWebrootPath string `yaml:"container_webroot_path" json:"container_webroot_path"`
 }
 
 type CertbotConfig struct {
