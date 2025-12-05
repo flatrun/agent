@@ -1501,10 +1501,10 @@ type composeFile struct {
 type composeService struct {
 	Image         string      `yaml:"image"`
 	ContainerName string      `yaml:"container_name"`
-	Ports         []string    `yaml:"ports"`
-	Expose        []string    `yaml:"expose"`
-	Networks      []string    `yaml:"networks"`
-	Volumes       []string    `yaml:"volumes"`
+	Ports         interface{} `yaml:"ports"`
+	Expose        interface{} `yaml:"expose"`
+	Networks      interface{} `yaml:"networks"`
+	Volumes       interface{} `yaml:"volumes"`
 	Environment   interface{} `yaml:"environment"`
 	EnvFile       interface{} `yaml:"env_file"`
 }
@@ -1532,13 +1532,14 @@ func (s *Server) validateComposeContent(content, deploymentName string) error {
 		}
 
 		hasExpectedNetwork := false
-		for _, net := range service.Networks {
+		networkNames := extractNetworkNames(service.Networks)
+		for _, net := range networkNames {
 			if net == expectedNetwork {
 				hasExpectedNetwork = true
 				break
 			}
 		}
-		if !hasExpectedNetwork && len(service.Networks) > 0 {
+		if !hasExpectedNetwork && len(networkNames) > 0 {
 			log.Printf("Warning: service '%s' does not use the configured proxy network '%s'", serviceName, expectedNetwork)
 		}
 	}
@@ -1552,6 +1553,33 @@ func (s *Server) validateComposeContent(content, deploymentName string) error {
 	}
 
 	return nil
+}
+
+func extractNetworkNames(networks interface{}) []string {
+	if networks == nil {
+		return nil
+	}
+
+	switch v := networks.(type) {
+	case []interface{}:
+		var names []string
+		for _, n := range v {
+			if name, ok := n.(string); ok {
+				names = append(names, name)
+			}
+		}
+		return names
+	case []string:
+		return v
+	case map[string]interface{}:
+		var names []string
+		for name := range v {
+			names = append(names, name)
+		}
+		return names
+	default:
+		return nil
+	}
 }
 
 func (s *Server) ensureBuiltinTemplates(templatesDir string) {
