@@ -336,10 +336,6 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 
-	if req.TemplateID != "" {
-		s.processTemplateFiles(req.Name, req.TemplateID)
-	}
-
 	var dbEnvVars []EnvVar
 	if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
 		dbResult, err := s.createDatabaseForDeployment(req.Name)
@@ -360,6 +356,10 @@ func (s *Server) createDeployment(c *gin.Context) {
 			})
 			return
 		}
+	}
+
+	if req.TemplateID != "" {
+		s.processTemplateFiles(req.Name, req.TemplateID, allEnvVars)
 	}
 
 	if req.Metadata != nil {
@@ -1123,8 +1123,8 @@ func (s *Server) createPluginDeployment(c *gin.Context) {
 }
 
 type TemplateFile struct {
-	Path    string `yaml:"path"`
-	Content string `yaml:"content"`
+	Path    string `json:"path" yaml:"path"`
+	Content string `json:"content" yaml:"content"`
 }
 
 type TemplateMetadata struct {
@@ -1158,6 +1158,7 @@ type Template struct {
 	Priority      int             `json:"priority" yaml:"priority"`
 	ContainerPort int             `json:"container_port" yaml:"container_port"`
 	Mounts        []TemplateMount `json:"mounts" yaml:"mounts"`
+	Files         []TemplateFile  `json:"files" yaml:"files"`
 	Content       string          `json:"content"`
 }
 
@@ -1225,6 +1226,7 @@ func (s *Server) listTemplates(c *gin.Context) {
 			Priority:      metadata.Priority,
 			ContainerPort: metadata.ContainerPort,
 			Mounts:        metadata.Mounts,
+			Files:         metadata.Files,
 			Content:       string(composeContent),
 		})
 	}
@@ -1499,10 +1501,10 @@ type composeFile struct {
 type composeService struct {
 	Image         string      `yaml:"image"`
 	ContainerName string      `yaml:"container_name"`
-	Ports         []string    `yaml:"ports"`
-	Expose        []string    `yaml:"expose"`
-	Networks      []string    `yaml:"networks"`
-	Volumes       []string    `yaml:"volumes"`
+	Ports         interface{} `yaml:"ports"`
+	Expose        interface{} `yaml:"expose"`
+	Networks      interface{} `yaml:"networks"`
+	Volumes       interface{} `yaml:"volumes"`
 	Environment   interface{} `yaml:"environment"`
 	EnvFile       interface{} `yaml:"env_file"`
 }
@@ -1530,13 +1532,14 @@ func (s *Server) validateComposeContent(content, deploymentName string) error {
 		}
 
 		hasExpectedNetwork := false
-		for _, net := range service.Networks {
+		networkNames := extractNetworkNames(service.Networks)
+		for _, net := range networkNames {
 			if net == expectedNetwork {
 				hasExpectedNetwork = true
 				break
 			}
 		}
-		if !hasExpectedNetwork && len(service.Networks) > 0 {
+		if !hasExpectedNetwork && len(networkNames) > 0 {
 			log.Printf("Warning: service '%s' does not use the configured proxy network '%s'", serviceName, expectedNetwork)
 		}
 	}
@@ -1550,6 +1553,33 @@ func (s *Server) validateComposeContent(content, deploymentName string) error {
 	}
 
 	return nil
+}
+
+func extractNetworkNames(networks interface{}) []string {
+	if networks == nil {
+		return nil
+	}
+
+	switch v := networks.(type) {
+	case []interface{}:
+		var names []string
+		for _, n := range v {
+			if name, ok := n.(string); ok {
+				names = append(names, name)
+			}
+		}
+		return names
+	case []string:
+		return v
+	case map[string]interface{}:
+		var names []string
+		for name := range v {
+			names = append(names, name)
+		}
+		return names
+	default:
+		return nil
+	}
 }
 
 func (s *Server) ensureBuiltinTemplates(templatesDir string) {
@@ -1735,7 +1765,7 @@ func (s *Server) addDatabaseNetwork(content string) string {
 	return string(data)
 }
 
-func (s *Server) processTemplateFiles(deploymentName, templateID string) {
+func (s *Server) processTemplateFiles(deploymentName, templateID string, envVars []EnvVar) {
 	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
 	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
 
@@ -1757,6 +1787,11 @@ func (s *Server) processTemplateFiles(deploymentName, templateID string) {
 
 	for _, file := range metadata.Files {
 		content := strings.ReplaceAll(file.Content, "${NAME}", deploymentName)
+
+		for _, env := range envVars {
+			placeholder := "${" + env.Key + "}"
+			content = strings.ReplaceAll(content, placeholder, env.Value)
+		}
 
 		filePath := filepath.Join(deploymentDir, file.Path)
 		fileDir := filepath.Dir(filePath)

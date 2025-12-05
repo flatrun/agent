@@ -8,8 +8,13 @@ services:
       WORDPRESS_DB_USER: ${DB_USERNAME:-wordpress}
       WORDPRESS_DB_PASSWORD: ${DB_PASSWORD:-changeme}
       WORDPRESS_DB_NAME: ${DB_DATABASE:-wordpress}
+      WORDPRESS_CONFIG_EXTRA: |
+        /* Handle HTTPS behind reverse proxy */
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+            $$_SERVER['HTTPS'] = 'on';
+        }
     volumes:
-      - wordpress_data:/var/www/html
+      - ${NAME}_data:/var/www/html
     expose:
       - "80"
     networks:
@@ -17,7 +22,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  wordpress_data:
+  ${NAME}_data:
 
 networks:
   proxy:
