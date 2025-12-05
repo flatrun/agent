@@ -550,6 +550,8 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		return
 	}
 
+	deployment.Metadata = &metadata
+
 	var proxyResult *proxy.SetupResult
 	if metadata.Networking.Expose {
 		proxyResult, _ = s.proxyOrchestrator.SetupDeployment(deployment)
