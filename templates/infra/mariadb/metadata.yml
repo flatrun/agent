@@ -1,7 +1,7 @@
 name: MariaDB
 description: Community-developed fork of MySQL
 icon: pi pi-database
-logo: https://mariadb.com/wp-content/uploads/2019/11/mariadb-logo_blue-transparent.png
+logo: https://cdn.simpleicons.org/mariadb
 category: database
 type: infrastructure
 priority: 85

@@ -137,17 +137,31 @@ func (d *Discovery) GetDeployment(name string) (*models.Deployment, error) {
 }
 
 func (d *Discovery) findComposeFile(dirPath string) string {
-	candidates := []string{
+	// First check exact standard names (preferred)
+	standardNames := []string{
 		"docker-compose.yml",
 		"docker-compose.yaml",
 		"compose.yml",
 		"compose.yaml",
 	}
 
-	for _, candidate := range candidates {
-		path := filepath.Join(dirPath, candidate)
+	for _, name := range standardNames {
+		path := filepath.Join(dirPath, name)
 		if _, err := os.Stat(path); err == nil {
 			return path
+		}
+	}
+
+	// Fallback to pattern matching for *compose*.yml/yaml files
+	patterns := []string{
+		"*compose*.yml",
+		"*compose*.yaml",
+	}
+
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(filepath.Join(dirPath, pattern))
+		if err == nil && len(matches) > 0 {
+			return matches[0]
 		}
 	}
 
@@ -263,20 +277,21 @@ func (d *Discovery) DeleteDeployment(name string) error {
 	return os.RemoveAll(dirPath)
 }
 
-func (d *Discovery) GetComposeFile(name string) (string, error) {
+func (d *Discovery) GetComposeFile(name string) (string, string, error) {
 	dirPath := filepath.Join(d.basePath, name)
 	composePath := d.findComposeFile(dirPath)
 
 	if composePath == "" {
-		return "", os.ErrNotExist
+		return "", "", os.ErrNotExist
 	}
 
 	data, err := os.ReadFile(composePath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return string(data), nil
+	filename := filepath.Base(composePath)
+	return string(data), filename, nil
 }
 
 func (d *Discovery) UpdateComposeFile(name string, content string) error {

@@ -1,7 +1,7 @@
 name: Astro
 description: The web framework for content-driven websites
 icon: pi pi-star
-logo: https://astro.build/assets/press/astro-icon-light-gradient.svg
+logo: https://cdn.simpleicons.org/astro
 category: framework
 priority: 50
 container_port: 4321

@@ -1,7 +1,7 @@
 name: Laravel
 description: PHP framework for web artisans
 icon: pi pi-code
-logo: https://laravel.com/img/logomark.min.svg
+logo: https://cdn.simpleicons.org/laravel
 category: framework
 priority: 80
 container_port: 8000

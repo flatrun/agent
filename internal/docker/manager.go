@@ -180,7 +180,7 @@ func (m *Manager) UpdateDeployment(name string, composeContent string) error {
 	return m.discovery.UpdateComposeFile(name, composeContent)
 }
 
-func (m *Manager) GetComposeFile(name string) (string, error) {
+func (m *Manager) GetComposeFile(name string) (string, string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

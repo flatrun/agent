@@ -1,7 +1,7 @@
 name: WordPress
 description: Popular content management system
 icon: pi pi-globe
-logo: https://s.w.org/style/images/about/WordPress-logotype-wmark.png
+logo: https://cdn.simpleicons.org/wordpress
 category: application
 priority: 100
 container_port: 80

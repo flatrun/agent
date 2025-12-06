@@ -1,7 +1,7 @@
 name: PHP
 description: PHP with Apache web server
 icon: pi pi-code
-logo: https://www.php.net/images/logos/new-php-logo.svg
+logo: https://cdn.simpleicons.org/php
 category: runtime
 priority: 30
 container_port: 80
