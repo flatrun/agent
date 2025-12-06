@@ -103,6 +103,9 @@ func (s *Server) setupRoutes() {
 		api.POST("/auth/login", s.authMiddleware.Login)
 		api.GET("/auth/validate", s.authMiddleware.ValidateToken)
 
+		// WebSocket endpoint handles its own auth via first-message
+		api.GET("/containers/:id/exec", s.containerExec)
+
 		protected := api.Group("")
 		protected.Use(s.authMiddleware.RequireAuth())
 		{
@@ -152,6 +155,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/containers/:id/logs", s.getContainerLogs)
 			protected.GET("/containers/:id/stats", s.getContainerStats)
 			protected.GET("/containers/stats", s.getAllContainerStats)
+			protected.POST("/containers/:id/exec", s.containerExecHTTP)
 			protected.GET("/deployments/:name/stats", s.getDeploymentContainerStats)
 			protected.GET("/images", s.listImages)
 			protected.DELETE("/images/:id", s.removeImage)
