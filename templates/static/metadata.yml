@@ -1,7 +1,7 @@
 name: Static Site
 description: Simple static HTML/CSS/JS site
 icon: pi pi-file
-logo: https://cdn-icons-png.flaticon.com/512/888/888859.png
+logo: https://cdn.simpleicons.org/html5
 category: basic
 priority: 100
 container_port: 80

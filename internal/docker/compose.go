@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -41,8 +42,8 @@ func (c *ComposeExecutor) Stop(deploymentPath string) (string, error) {
 }
 
 func (c *ComposeExecutor) Restart(deploymentPath string) (string, error) {
-	// Stop then start to handle both existing and new containers
-	_, _ = c.runCompose(deploymentPath, "stop")
+	// Use down to properly remove containers before recreating
+	_, _ = c.runCompose(deploymentPath, "down", "--remove-orphans")
 	return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
 }
 
@@ -82,27 +83,53 @@ func (c *ComposeExecutor) getProjectName(deploymentPath string) string {
 
 // readComposeProjectName reads the 'name:' attribute from the compose file
 func (c *ComposeExecutor) readComposeProjectName(deploymentPath string) string {
-	composeFiles := []string{
+	composePath := c.findComposeFile(deploymentPath)
+	if composePath == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return ""
+	}
+
+	var compose struct {
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal(data, &compose); err == nil && compose.Name != "" {
+		return compose.Name
+	}
+	return ""
+}
+
+// findComposeFile finds any compose file in the deployment directory
+func (c *ComposeExecutor) findComposeFile(dirPath string) string {
+	standardNames := []string{
 		"docker-compose.yml",
 		"docker-compose.yaml",
 		"compose.yml",
 		"compose.yaml",
 	}
 
-	for _, filename := range composeFiles {
-		path := deploymentPath + "/" + filename
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-
-		var compose struct {
-			Name string `yaml:"name"`
-		}
-		if err := yaml.Unmarshal(data, &compose); err == nil && compose.Name != "" {
-			return compose.Name
+	for _, name := range standardNames {
+		path := dirPath + "/" + name
+		if _, err := os.Stat(path); err == nil {
+			return path
 		}
 	}
+
+	patterns := []string{
+		"*compose*.yml",
+		"*compose*.yaml",
+	}
+
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(dirPath + "/" + pattern)
+		if len(matches) > 0 {
+			return matches[0]
+		}
+	}
+
 	return ""
 }
 
@@ -129,10 +156,15 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, args ...string) (str
 		return "", fmt.Errorf("docker compose command not found")
 	}
 
+	composePath := c.findComposeFile(deploymentPath)
+	if composePath == "" {
+		return "", fmt.Errorf("no compose file found in %s", deploymentPath)
+	}
+
 	projectName := c.getProjectName(deploymentPath)
 
 	var baseArgs []string
-	baseArgs = append(baseArgs, "-p", projectName)
+	baseArgs = append(baseArgs, "-f", composePath, "-p", projectName)
 
 	envFile := deploymentPath + "/.env.flatrun"
 	if _, err := os.Stat(envFile); err == nil {
