@@ -1,11 +1,21 @@
 package docker
 
 import (
+	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/flatrun/agent/pkg/models"
 )
+
+type composeContainer struct {
+	ID      string `json:"ID"`
+	Name    string `json:"Name"`
+	Service string `json:"Service"`
+	State   string `json:"State"`
+	Health  string `json:"Health"`
+}
 
 type Manager struct {
 	discovery *Discovery
@@ -55,7 +65,43 @@ func (m *Manager) GetDeployment(name string) (*models.Deployment, error) {
 	status, _ := m.executor.GetStatus(deployment.Path)
 	deployment.Status = status
 
+	m.populateContainerInfo(deployment)
+
 	return deployment, nil
+}
+
+func (m *Manager) populateContainerInfo(deployment *models.Deployment) {
+	output, err := m.executor.PS(deployment.Path)
+	if err != nil {
+		return
+	}
+
+	var containers []composeContainer
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "[]" {
+			continue
+		}
+		var container composeContainer
+		if err := json.Unmarshal([]byte(line), &container); err != nil {
+			continue
+		}
+		containers = append(containers, container)
+	}
+
+	for i := range deployment.Services {
+		svc := &deployment.Services[i]
+		for _, container := range containers {
+			if container.Service == svc.Name {
+				svc.ContainerID = container.ID
+				svc.Status = container.State
+				if container.Health != "" {
+					svc.Health = container.Health
+				}
+				break
+			}
+		}
+	}
 }
 
 func (m *Manager) CreateDeployment(name string, composeContent string) error {

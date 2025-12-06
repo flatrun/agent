@@ -210,3 +210,14 @@ func (m *Middleware) GetAuthStatus(c *gin.Context) {
 		"enabled": m.config.Enabled,
 	})
 }
+
+func (m *Middleware) ValidateTokenString(token string) bool {
+	if !m.config.Enabled {
+		return true
+	}
+	return m.validateJWT(token) || m.validateAPIKey(token)
+}
+
+func (m *Middleware) IsAuthEnabled() bool {
+	return m.config.Enabled
+}

@@ -47,7 +47,13 @@ func TestParseContainerIP(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := parseContainerIP([]byte(tt.json))
-			if result != tt.expected {
+			// For "multiple networks without database", any valid IP is acceptable
+			// since Go map iteration order is non-deterministic
+			if tt.name == "multiple networks without database" {
+				if result != "172.18.0.3" && result != "172.17.0.2" {
+					t.Errorf("parseContainerIP() = %q, want one of [172.18.0.3, 172.17.0.2]", result)
+				}
+			} else if result != tt.expected {
 				t.Errorf("parseContainerIP() = %q, want %q", result, tt.expected)
 			}
 		})
