@@ -1,7 +1,7 @@
 name: PostgreSQL
 description: Advanced open-source relational database
 icon: pi pi-database
-logo: https://www.postgresql.org/media/img/about/press/elephant.png
+logo: https://cdn.simpleicons.org/postgresql
 category: database
 type: infrastructure
 priority: 80

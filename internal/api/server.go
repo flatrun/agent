@@ -258,13 +258,14 @@ func (s *Server) getDeployment(c *gin.Context) {
 		return
 	}
 
-	composeContent, _ := s.manager.GetComposeFile(name)
+	composeContent, composeFilename, _ := s.manager.GetComposeFile(name)
 	proxyStatus := s.proxyOrchestrator.GetDeploymentProxyStatus(deployment)
 
 	c.JSON(http.StatusOK, gin.H{
-		"deployment":      deployment,
-		"compose_content": composeContent,
-		"proxy_status":    proxyStatus,
+		"deployment":       deployment,
+		"compose_content":  composeContent,
+		"compose_filename": composeFilename,
+		"proxy_status":     proxyStatus,
 	})
 }
 
@@ -671,7 +672,7 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 func (s *Server) getDeploymentCompose(c *gin.Context) {
 	name := c.Param("name")
 
-	content, err := s.manager.GetComposeFile(name)
+	content, filename, err := s.manager.GetComposeFile(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": err.Error(),
@@ -680,8 +681,9 @@ func (s *Server) getDeploymentCompose(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"name":    name,
-		"content": content,
+		"name":     name,
+		"content":  content,
+		"filename": filename,
 	})
 }
 

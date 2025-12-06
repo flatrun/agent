@@ -1,0 +1,26 @@
+name: Nextcloud
+description: Self-hosted productivity platform
+icon: pi pi-cloud
+logo: https://cdn.simpleicons.org/nextcloud
+category: application
+priority: 85
+container_port: 80
+mounts:
+  - id: data
+    name: User Data
+    container_path: /var/www/html/data
+    description: User files and data storage
+    type: volume
+    required: true
+  - id: config
+    name: Configuration
+    container_path: /var/www/html/config
+    description: Nextcloud configuration files
+    type: volume
+    required: true
+  - id: apps
+    name: Custom Apps
+    container_path: /var/www/html/custom_apps
+    description: Custom Nextcloud applications
+    type: volume
+    required: false
