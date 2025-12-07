@@ -135,6 +135,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/proxy/setup/:name", s.setupProxy)
 			protected.DELETE("/proxy/:name", s.teardownProxy)
 			protected.GET("/proxy/vhosts", s.listVirtualHosts)
+			protected.POST("/proxy/sync", s.syncAllProxies)
 
 			protected.GET("/settings", s.getSettings)
 			protected.PUT("/settings", s.updateSettings)
@@ -380,6 +381,16 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 	}
 
+	var startOutput string
+	var startError string
+	if req.AutoStart {
+		output, err := s.manager.StartDeployment(req.Name)
+		startOutput = output
+		if err != nil {
+			startError = err.Error()
+		}
+	}
+
 	var proxyResult *proxy.SetupResult
 	if req.Metadata != nil {
 		log.Printf("Deployment %s: metadata.networking.expose=%v, domain=%s",
@@ -395,23 +406,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 		} else {
 			log.Printf("Setting up proxy for deployment %s with domain %s",
 				deployment.Name, deployment.Metadata.Networking.Domain)
-			proxyResult, err = s.proxyOrchestrator.SetupDeployment(deployment)
+			proxyResult, err = s.setupProxyWithRetry(deployment, 3)
 			if err != nil {
-				log.Printf("Warning: failed to setup proxy for deployment: %v", err)
+				log.Printf("Warning: failed to setup proxy for deployment after retries: %v", err)
 			} else {
 				log.Printf("Proxy setup result for %s: success=%v, virtual_host_created=%v, cert_requested=%v",
 					deployment.Name, proxyResult.Success, proxyResult.VirtualHostCreated, proxyResult.CertificateRequested)
 			}
-		}
-	}
-
-	var startOutput string
-	var startError string
-	if req.AutoStart {
-		output, err := s.manager.StartDeployment(req.Name)
-		startOutput = output
-		if err != nil {
-			startError = err.Error()
 		}
 	}
 
@@ -2042,6 +2043,121 @@ func (s *Server) listVirtualHosts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"virtual_hosts": vhosts,
 	})
+}
+
+type ProxySyncResult struct {
+	Name    string `json:"name"`
+	Domain  string `json:"domain"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+	Created bool   `json:"created"`
+}
+
+func (s *Server) syncAllProxies(c *gin.Context) {
+	deployments, err := s.manager.ListDeployments()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	existingVhosts, err := s.proxyOrchestrator.ListVirtualHosts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to list virtual hosts: " + err.Error(),
+		})
+		return
+	}
+
+	vhostMap := make(map[string]bool)
+	for _, vhost := range existingVhosts {
+		vhostMap[vhost.Name] = true
+	}
+
+	var results []ProxySyncResult
+	var synced, skipped, failed int
+
+	for _, deployment := range deployments {
+		if deployment.Metadata == nil || !deployment.Metadata.Networking.Expose {
+			continue
+		}
+
+		domain := deployment.Metadata.Networking.Domain
+		if domain == "" {
+			continue
+		}
+
+		if vhostMap[domain] {
+			skipped++
+			results = append(results, ProxySyncResult{
+				Name:    deployment.Name,
+				Domain:  domain,
+				Success: true,
+				Message: "Already exists",
+				Created: false,
+			})
+			continue
+		}
+
+		result, err := s.proxyOrchestrator.SetupDeployment(&deployment)
+		if err != nil {
+			failed++
+			results = append(results, ProxySyncResult{
+				Name:    deployment.Name,
+				Domain:  domain,
+				Success: false,
+				Message: err.Error(),
+				Created: false,
+			})
+			continue
+		}
+
+		if result.VirtualHostCreated {
+			synced++
+			results = append(results, ProxySyncResult{
+				Name:    deployment.Name,
+				Domain:  domain,
+				Success: true,
+				Message: "Created",
+				Created: true,
+			})
+		} else {
+			skipped++
+			results = append(results, ProxySyncResult{
+				Name:    deployment.Name,
+				Domain:  domain,
+				Success: true,
+				Message: "Setup completed but vhost already existed",
+				Created: false,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Proxy sync completed",
+		"synced":   synced,
+		"skipped":  skipped,
+		"failed":   failed,
+		"total":    len(results),
+		"results":  results,
+	})
+}
+
+func (s *Server) setupProxyWithRetry(deployment *models.Deployment, maxRetries int) (*proxy.SetupResult, error) {
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		result, err := s.proxyOrchestrator.SetupDeployment(deployment)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		log.Printf("Proxy setup attempt %d/%d for %s failed: %v", i+1, maxRetries, deployment.Name, err)
+		if i < maxRetries-1 {
+			time.Sleep(time.Duration(i+1) * 2 * time.Second)
+		}
+	}
+	return nil, lastErr
 }
 
 func (s *Server) getSystemStats(c *gin.Context) {

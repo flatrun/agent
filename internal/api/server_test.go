@@ -984,3 +984,63 @@ mounts:
 		t.Error("Result should not contain disabled mount")
 	}
 }
+
+func TestProxySyncResultStructure(t *testing.T) {
+	result := ProxySyncResult{
+		Name:    "test-deployment",
+		Domain:  "test.example.com",
+		Success: true,
+		Message: "Created",
+		Created: true,
+	}
+
+	if result.Name != "test-deployment" {
+		t.Errorf("expected name 'test-deployment', got '%s'", result.Name)
+	}
+	if result.Domain != "test.example.com" {
+		t.Errorf("expected domain 'test.example.com', got '%s'", result.Domain)
+	}
+	if !result.Success {
+		t.Error("expected Success to be true")
+	}
+	if !result.Created {
+		t.Error("expected Created to be true")
+	}
+}
+
+func TestProxySyncResultSkipped(t *testing.T) {
+	result := ProxySyncResult{
+		Name:    "existing-deployment",
+		Domain:  "existing.example.com",
+		Success: true,
+		Message: "Already exists",
+		Created: false,
+	}
+
+	if !result.Success {
+		t.Error("expected Success to be true for skipped")
+	}
+	if result.Created {
+		t.Error("expected Created to be false for skipped")
+	}
+	if result.Message != "Already exists" {
+		t.Errorf("expected message 'Already exists', got '%s'", result.Message)
+	}
+}
+
+func TestProxySyncResultFailed(t *testing.T) {
+	result := ProxySyncResult{
+		Name:    "failed-deployment",
+		Domain:  "failed.example.com",
+		Success: false,
+		Message: "connection refused",
+		Created: false,
+	}
+
+	if result.Success {
+		t.Error("expected Success to be false for failed")
+	}
+	if result.Created {
+		t.Error("expected Created to be false for failed")
+	}
+}
