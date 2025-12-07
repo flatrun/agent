@@ -444,6 +444,43 @@ func (m *Manager) GrantPrivileges(cfg *ConnectionConfig, username, database, hos
 	return err
 }
 
+func (m *Manager) RevokePrivileges(cfg *ConnectionConfig, username, database string) error {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	dsn, err := m.buildDSN(cfg)
+	if err != nil {
+		return err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	var query string
+	switch cfg.Type {
+	case "mysql", "mariadb":
+		query = fmt.Sprintf("REVOKE ALL PRIVILEGES ON `%s`.* FROM '%s'@'%%'", database, username)
+	case "postgresql":
+		query = fmt.Sprintf("REVOKE ALL PRIVILEGES ON DATABASE \"%s\" FROM %s", database, username)
+	}
+
+	_, err = db.Exec(query)
+	return err
+}
+
+func (m *Manager) DropDatabase(cfg *ConnectionConfig, dbName string) error {
+	return m.DeleteDatabase(cfg, dbName)
+}
+
+func (m *Manager) DropUser(cfg *ConnectionConfig, username string) error {
+	return m.DeleteUser(cfg, username, "%")
+}
+
 func (m *Manager) DeleteDatabase(cfg *ConnectionConfig, dbName string) error {
 	driver := m.getDriver(cfg.Type)
 	if driver == "" {

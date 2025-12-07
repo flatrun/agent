@@ -135,6 +135,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/proxy/setup/:name", s.setupProxy)
 			protected.DELETE("/proxy/:name", s.teardownProxy)
 			protected.GET("/proxy/vhosts", s.listVirtualHosts)
+			protected.POST("/proxy/sync", s.syncAllProxies)
 
 			protected.GET("/settings", s.getSettings)
 			protected.PUT("/settings", s.updateSettings)
@@ -380,6 +381,16 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 	}
 
+	var startOutput string
+	var startError string
+	if req.AutoStart {
+		output, err := s.manager.StartDeployment(req.Name)
+		startOutput = output
+		if err != nil {
+			startError = err.Error()
+		}
+	}
+
 	var proxyResult *proxy.SetupResult
 	if req.Metadata != nil {
 		log.Printf("Deployment %s: metadata.networking.expose=%v, domain=%s",
@@ -395,23 +406,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 		} else {
 			log.Printf("Setting up proxy for deployment %s with domain %s",
 				deployment.Name, deployment.Metadata.Networking.Domain)
-			proxyResult, err = s.proxyOrchestrator.SetupDeployment(deployment)
+			proxyResult, err = s.setupProxyWithRetry(deployment, 3)
 			if err != nil {
-				log.Printf("Warning: failed to setup proxy for deployment: %v", err)
+				log.Printf("Warning: failed to setup proxy for deployment after retries: %v", err)
 			} else {
 				log.Printf("Proxy setup result for %s: success=%v, virtual_host_created=%v, cert_requested=%v",
 					deployment.Name, proxyResult.Success, proxyResult.VirtualHostCreated, proxyResult.CertificateRequested)
 			}
-		}
-	}
-
-	var startOutput string
-	var startError string
-	if req.AutoStart {
-		output, err := s.manager.StartDeployment(req.Name)
-		startOutput = output
-		if err != nil {
-			startError = err.Error()
 		}
 	}
 
@@ -494,6 +495,35 @@ func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 	}
 
 	return os.WriteFile(envFilePath, []byte(content.String()), 0600)
+}
+
+func (s *Server) deleteDatabaseForDeployment(deploymentName string) error {
+	dbConfig := s.config.Infrastructure.Database
+	dbName := strings.ReplaceAll(deploymentName, "-", "_") + "_db"
+	dbUser := strings.ReplaceAll(deploymentName, "-", "_") + "_user"
+
+	connConfig := &database.ConnectionConfig{
+		Type:      dbConfig.Type,
+		Host:      dbConfig.Host,
+		Port:      dbConfig.Port,
+		Username:  dbConfig.RootUser,
+		Password:  dbConfig.RootPassword,
+		Container: dbConfig.Container,
+	}
+
+	if err := s.databaseManager.RevokePrivileges(connConfig, dbUser, dbName); err != nil {
+		log.Printf("Warning: failed to revoke privileges for %s: %v", dbUser, err)
+	}
+
+	if err := s.databaseManager.DropUser(connConfig, dbUser); err != nil {
+		log.Printf("Warning: failed to drop user %s: %v", dbUser, err)
+	}
+
+	if err := s.databaseManager.DropDatabase(connConfig, dbName); err != nil {
+		return fmt.Errorf("failed to drop database: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Server) getDeploymentEnv(c *gin.Context) {
@@ -637,7 +667,41 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 func (s *Server) deleteDeployment(c *gin.Context) {
 	name := c.Param("name")
 
-	_ = s.proxyOrchestrator.TeardownDeployment(name)
+	deleteSSL := c.DefaultQuery("delete_ssl", "true") == "true"
+	deleteDatabase := c.DefaultQuery("delete_database", "false") == "true"
+	deleteVhost := c.DefaultQuery("delete_vhost", "true") == "true"
+
+	deployment, _ := s.manager.GetDeployment(name)
+
+	var deletedItems []string
+
+	if deleteVhost {
+		if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
+			log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
+		} else {
+			deletedItems = append(deletedItems, "virtual_host")
+		}
+	}
+
+	if deployment != nil && deployment.Metadata != nil {
+		domain := deployment.Metadata.Networking.Domain
+
+		if deleteSSL && domain != "" && deployment.Metadata.SSL.Enabled {
+			if err := s.proxyOrchestrator.SSLManager().DeleteCertificate(domain); err != nil {
+				log.Printf("Warning: failed to delete SSL certificate for %s: %v", domain, err)
+			} else {
+				deletedItems = append(deletedItems, "ssl_certificate")
+			}
+		}
+	}
+
+	if deleteDatabase && s.config.Infrastructure.Database.Enabled {
+		if err := s.deleteDatabaseForDeployment(name); err != nil {
+			log.Printf("Warning: failed to delete database for %s: %v", name, err)
+		} else {
+			deletedItems = append(deletedItems, "database")
+		}
+	}
 
 	if err := s.manager.DeleteDeployment(name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -647,8 +711,9 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Deployment deleted",
-		"name":    name,
+		"message":       "Deployment deleted",
+		"name":          name,
+		"deleted_items": deletedItems,
 	})
 }
 
@@ -2028,6 +2093,121 @@ func (s *Server) listVirtualHosts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"virtual_hosts": vhosts,
 	})
+}
+
+type ProxySyncResult struct {
+	Name    string `json:"name"`
+	Domain  string `json:"domain"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+	Created bool   `json:"created"`
+}
+
+func (s *Server) syncAllProxies(c *gin.Context) {
+	deployments, err := s.manager.ListDeployments()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	existingVhosts, err := s.proxyOrchestrator.ListVirtualHosts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to list virtual hosts: " + err.Error(),
+		})
+		return
+	}
+
+	vhostMap := make(map[string]bool)
+	for _, vhost := range existingVhosts {
+		vhostMap[vhost.Name] = true
+	}
+
+	var results []ProxySyncResult
+	var synced, skipped, failed int
+
+	for _, deployment := range deployments {
+		if deployment.Metadata == nil || !deployment.Metadata.Networking.Expose {
+			continue
+		}
+
+		domain := deployment.Metadata.Networking.Domain
+		if domain == "" {
+			continue
+		}
+
+		if vhostMap[domain] {
+			skipped++
+			results = append(results, ProxySyncResult{
+				Name:    deployment.Name,
+				Domain:  domain,
+				Success: true,
+				Message: "Already exists",
+				Created: false,
+			})
+			continue
+		}
+
+		result, err := s.proxyOrchestrator.SetupDeployment(&deployment)
+		if err != nil {
+			failed++
+			results = append(results, ProxySyncResult{
+				Name:    deployment.Name,
+				Domain:  domain,
+				Success: false,
+				Message: err.Error(),
+				Created: false,
+			})
+			continue
+		}
+
+		if result.VirtualHostCreated {
+			synced++
+			results = append(results, ProxySyncResult{
+				Name:    deployment.Name,
+				Domain:  domain,
+				Success: true,
+				Message: "Created",
+				Created: true,
+			})
+		} else {
+			skipped++
+			results = append(results, ProxySyncResult{
+				Name:    deployment.Name,
+				Domain:  domain,
+				Success: true,
+				Message: "Setup completed but vhost already existed",
+				Created: false,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Proxy sync completed",
+		"synced":   synced,
+		"skipped":  skipped,
+		"failed":   failed,
+		"total":    len(results),
+		"results":  results,
+	})
+}
+
+func (s *Server) setupProxyWithRetry(deployment *models.Deployment, maxRetries int) (*proxy.SetupResult, error) {
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		result, err := s.proxyOrchestrator.SetupDeployment(deployment)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		log.Printf("Proxy setup attempt %d/%d for %s failed: %v", i+1, maxRetries, deployment.Name, err)
+		if i < maxRetries-1 {
+			time.Sleep(time.Duration(i+1) * 2 * time.Second)
+		}
+	}
+	return nil, lastErr
 }
 
 func (s *Server) getSystemStats(c *gin.Context) {
