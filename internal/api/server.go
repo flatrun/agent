@@ -637,7 +637,21 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 func (s *Server) deleteDeployment(c *gin.Context) {
 	name := c.Param("name")
 
+	// Get deployment metadata before deletion to retrieve domain for SSL cleanup
+	deployment, _ := s.manager.GetDeployment(name)
+
+	// Teardown proxy (virtual host)
 	_ = s.proxyOrchestrator.TeardownDeployment(name)
+
+	// Delete SSL certificate if deployment had SSL enabled
+	if deployment != nil && deployment.Metadata != nil {
+		domain := deployment.Metadata.Networking.Domain
+		if domain != "" && deployment.Metadata.SSL.Enabled {
+			if err := s.proxyOrchestrator.SSLManager().DeleteCertificate(domain); err != nil {
+				log.Printf("Warning: failed to delete SSL certificate for %s: %v", domain, err)
+			}
+		}
+	}
 
 	if err := s.manager.DeleteDeployment(name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

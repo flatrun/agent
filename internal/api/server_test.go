@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/flatrun/agent/pkg/config"
+	"gopkg.in/yaml.v3"
 )
 
 func TestAddDatabaseNetwork(t *testing.T) {
@@ -133,6 +134,220 @@ networks:
 	count := strings.Count(result, "- database")
 	if count != 1 {
 		t.Errorf("expected exactly 1 occurrence of '- database' in service networks, got %d:\n%s", count, result)
+	}
+}
+
+func TestAddDatabaseNetworkPreservesMultilineEnv(t *testing.T) {
+	cfg := &config.Config{
+		Infrastructure: config.InfrastructureConfig{
+			DefaultDatabaseNetwork: "database",
+		},
+	}
+	s := &Server{config: cfg}
+
+	input := `name: test-wp
+services:
+  wordpress:
+    image: wordpress:latest
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_CONFIG_EXTRA: |
+        /* Handle HTTPS */
+        if (isset($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+            $_SERVER['HTTPS'] = 'on';
+        }
+    networks:
+      - proxy
+networks:
+  proxy:
+    external: true
+`
+
+	result := s.addDatabaseNetwork(input)
+
+	if !strings.Contains(result, "database") {
+		t.Error("database network should be added")
+	}
+	if !strings.Contains(result, "WORDPRESS_CONFIG_EXTRA") {
+		t.Error("multiline environment variable should be preserved")
+	}
+	if !strings.Contains(result, "HTTP_X_FORWARDED_PROTO") {
+		t.Error("multiline content should be preserved")
+	}
+}
+
+func TestAddDatabaseNetworkWithMapStyleNetworks(t *testing.T) {
+	cfg := &config.Config{
+		Infrastructure: config.InfrastructureConfig{
+			DefaultDatabaseNetwork: "database",
+		},
+	}
+	s := &Server{config: cfg}
+
+	input := `name: test-app
+services:
+  app:
+    image: nginx
+    networks:
+      proxy:
+        aliases:
+          - myapp
+networks:
+  proxy:
+    external: true
+`
+
+	result := s.addDatabaseNetwork(input)
+
+	if !strings.Contains(result, "database") {
+		t.Error("database network should be added")
+	}
+	if !strings.Contains(result, "proxy") {
+		t.Error("existing proxy network should be preserved")
+	}
+}
+
+func TestSharedDatabaseNetworkIntegration(t *testing.T) {
+	tests := []struct {
+		name              string
+		useSharedDatabase bool
+		dbEnabled         bool
+		dbType            string
+		wantNetwork       bool
+	}{
+		{
+			name:              "adds network when shared db enabled and local container",
+			useSharedDatabase: true,
+			dbEnabled:         true,
+			dbType:            "container",
+			wantNetwork:       true,
+		},
+		{
+			name:              "no network when shared db disabled",
+			useSharedDatabase: false,
+			dbEnabled:         true,
+			dbType:            "container",
+			wantNetwork:       false,
+		},
+		{
+			name:              "no network when db infrastructure disabled",
+			useSharedDatabase: true,
+			dbEnabled:         false,
+			dbType:            "container",
+			wantNetwork:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				DeploymentsPath: t.TempDir(),
+				Infrastructure: config.InfrastructureConfig{
+					DefaultDatabaseNetwork: "database",
+					Database: config.SharedDatabaseConfig{
+						Enabled: tt.dbEnabled,
+						Type:    tt.dbType,
+					},
+				},
+			}
+
+			composeContent := `name: test-app
+services:
+  app:
+    image: nginx
+    networks:
+      - proxy
+networks:
+  proxy:
+    external: true
+`
+
+			var result string
+			if tt.useSharedDatabase && cfg.Infrastructure.Database.Enabled {
+				s := &Server{config: cfg}
+				result = s.addDatabaseNetwork(composeContent)
+			} else {
+				result = composeContent
+			}
+
+			hasDbNetwork := strings.Contains(result, "database")
+			if hasDbNetwork != tt.wantNetwork {
+				t.Errorf("wantNetwork=%v, got hasDbNetwork=%v\nResult:\n%s",
+					tt.wantNetwork, hasDbNetwork, result)
+			}
+		})
+	}
+}
+
+func TestAddDatabaseNetworkOutputIsValidYAML(t *testing.T) {
+	cfg := &config.Config{
+		Infrastructure: config.InfrastructureConfig{
+			DefaultDatabaseNetwork: "database",
+		},
+	}
+	s := &Server{config: cfg}
+
+	input := `name: test-app
+services:
+  app:
+    image: nginx:alpine
+    container_name: test-app
+    environment:
+      - FOO=bar
+      - BAZ=qux
+    volumes:
+      - ./data:/var/data
+    expose:
+      - "80"
+    networks:
+      - proxy
+    restart: unless-stopped
+
+networks:
+  proxy:
+    external: true
+`
+
+	result := s.addDatabaseNetwork(input)
+
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Errorf("output is not valid YAML: %v\nOutput:\n%s", err, result)
+	}
+
+	services, ok := parsed["services"].(map[string]interface{})
+	if !ok {
+		t.Fatal("services section missing")
+	}
+
+	app, ok := services["app"].(map[string]interface{})
+	if !ok {
+		t.Fatal("app service missing")
+	}
+
+	networks, ok := app["networks"].([]interface{})
+	if !ok {
+		t.Fatal("networks should be a list")
+	}
+
+	hasProxy := false
+	hasDatabase := false
+	for _, n := range networks {
+		if ns, ok := n.(string); ok {
+			if ns == "proxy" {
+				hasProxy = true
+			}
+			if ns == "database" {
+				hasDatabase = true
+			}
+		}
+	}
+
+	if !hasProxy {
+		t.Error("proxy network should be preserved")
+	}
+	if !hasDatabase {
+		t.Error("database network should be added")
 	}
 }
 
