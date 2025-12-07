@@ -369,3 +369,403 @@ func TestGenerateComposeWithOptionsCustomTemplate(t *testing.T) {
 		t.Error("Result should contain deployment name")
 	}
 }
+
+func TestInjectMounts(t *testing.T) {
+	cfg := &config.Config{}
+	s := &Server{config: cfg}
+
+	availableMounts := []TemplateMount{
+		{ID: "app", Name: "Application", ContainerPath: "/app", Type: "file"},
+		{ID: "data", Name: "Data", ContainerPath: "/var/data", Type: "volume"},
+		{ID: "config", Name: "Config", ContainerPath: "/etc/config", Type: "file"},
+	}
+
+	tests := []struct {
+		name           string
+		composeContent string
+		selections     []MountSelection
+		wantVolumes    []string
+		dontWant       []string
+	}{
+		{
+			name: "injects single bind mount",
+			composeContent: `name: test
+services:
+  app:
+    image: nginx
+    expose:
+      - "80"
+`,
+			selections: []MountSelection{
+				{ID: "app", Enabled: true, Type: "file"},
+			},
+			wantVolumes: []string{"./app:/app"},
+		},
+		{
+			name: "injects named volume",
+			composeContent: `name: test
+services:
+  app:
+    image: nginx
+`,
+			selections: []MountSelection{
+				{ID: "data", Enabled: true, Type: "volume"},
+			},
+			wantVolumes: []string{"data_data:/var/data"},
+		},
+		{
+			name: "injects multiple mounts",
+			composeContent: `name: test
+services:
+  app:
+    image: nginx
+`,
+			selections: []MountSelection{
+				{ID: "app", Enabled: true, Type: "file"},
+				{ID: "config", Enabled: true, Type: "file"},
+			},
+			wantVolumes: []string{"./app:/app", "./config:/etc/config"},
+		},
+		{
+			name: "skips disabled mounts",
+			composeContent: `name: test
+services:
+  app:
+    image: nginx
+`,
+			selections: []MountSelection{
+				{ID: "app", Enabled: true, Type: "file"},
+				{ID: "data", Enabled: false, Type: "volume"},
+			},
+			wantVolumes: []string{"./app:/app"},
+			dontWant:    []string{"data_data:/var/data"},
+		},
+		{
+			name: "preserves existing volumes and adds new ones",
+			composeContent: `name: test
+services:
+  app:
+    image: nginx
+    volumes:
+      - ./existing:/existing
+`,
+			selections: []MountSelection{
+				{ID: "app", Enabled: true, Type: "file"},
+			},
+			wantVolumes: []string{"./existing:/existing", "./app:/app"},
+		},
+		{
+			name: "no injection when all mounts disabled",
+			composeContent: `name: test
+services:
+  app:
+    image: nginx
+    volumes:
+      - ./existing:/existing
+`,
+			selections: []MountSelection{
+				{ID: "app", Enabled: false, Type: "file"},
+				{ID: "data", Enabled: false, Type: "volume"},
+			},
+			wantVolumes: []string{"./existing:/existing"},
+			dontWant:    []string{"./app:/app", "data_data:/var/data"},
+		},
+		{
+			name: "handles unknown mount ID gracefully",
+			composeContent: `name: test
+services:
+  app:
+    image: nginx
+`,
+			selections: []MountSelection{
+				{ID: "unknown", Enabled: true, Type: "file"},
+				{ID: "app", Enabled: true, Type: "file"},
+			},
+			wantVolumes: []string{"./app:/app"},
+			dontWant:    []string{"unknown"},
+		},
+		{
+			name: "empty selections returns original content",
+			composeContent: `name: test
+services:
+  app:
+    image: nginx
+`,
+			selections:  []MountSelection{},
+			wantVolumes: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := s.injectMounts(tt.composeContent, tt.selections, availableMounts)
+
+			for _, want := range tt.wantVolumes {
+				if !strings.Contains(result, want) {
+					t.Errorf("expected volume %q in result:\n%s", want, result)
+				}
+			}
+
+			for _, dontWant := range tt.dontWant {
+				if strings.Contains(result, dontWant) {
+					t.Errorf("unexpected volume %q in result:\n%s", dontWant, result)
+				}
+			}
+		})
+	}
+}
+
+func TestInjectMountsNoDuplicates(t *testing.T) {
+	cfg := &config.Config{}
+	s := &Server{config: cfg}
+
+	availableMounts := []TemplateMount{
+		{ID: "app", Name: "Application", ContainerPath: "/app", Type: "file"},
+	}
+
+	composeContent := `name: test
+services:
+  app:
+    image: nginx
+    volumes:
+      - ./app:/app
+`
+	selections := []MountSelection{
+		{ID: "app", Enabled: true, Type: "file"},
+	}
+
+	result := s.injectMounts(composeContent, selections, availableMounts)
+
+	count := strings.Count(result, "./app:/app")
+	if count > 1 {
+		t.Errorf("expected no duplicate mounts, found %d occurrences of './app:/app':\n%s", count, result)
+	}
+}
+
+func TestInjectMountsPreservesYAMLStructure(t *testing.T) {
+	cfg := &config.Config{}
+	s := &Server{config: cfg}
+
+	availableMounts := []TemplateMount{
+		{ID: "app", Name: "Application", ContainerPath: "/app", Type: "file"},
+	}
+
+	composeContent := `name: test
+services:
+  app:
+    image: nginx
+    environment:
+      - FOO=bar
+    expose:
+      - "80"
+    networks:
+      - proxy
+networks:
+  proxy:
+    external: true
+`
+	selections := []MountSelection{
+		{ID: "app", Enabled: true, Type: "file"},
+	}
+
+	result := s.injectMounts(composeContent, selections, availableMounts)
+
+	if !strings.Contains(result, "environment") {
+		t.Error("environment section should be preserved")
+	}
+	if !strings.Contains(result, "FOO") {
+		t.Error("environment variables should be preserved")
+	}
+	if !strings.Contains(result, "networks") {
+		t.Error("networks section should be preserved")
+	}
+	if !strings.Contains(result, "external: true") {
+		t.Error("network external flag should be preserved")
+	}
+	if !strings.Contains(result, "./app:/app") {
+		t.Error("volume should be injected")
+	}
+}
+
+func TestInjectMountsInvalidYAML(t *testing.T) {
+	cfg := &config.Config{}
+	s := &Server{config: cfg}
+
+	availableMounts := []TemplateMount{
+		{ID: "app", Name: "Application", ContainerPath: "/app", Type: "file"},
+	}
+
+	invalidContent := `this is not valid yaml: {{{`
+	selections := []MountSelection{
+		{ID: "app", Enabled: true, Type: "file"},
+	}
+
+	result := s.injectMounts(invalidContent, selections, availableMounts)
+
+	if result != invalidContent {
+		t.Error("invalid YAML should return original content unchanged")
+	}
+}
+
+func TestInjectMountsNoServicesSection(t *testing.T) {
+	cfg := &config.Config{}
+	s := &Server{config: cfg}
+
+	availableMounts := []TemplateMount{
+		{ID: "app", Name: "Application", ContainerPath: "/app", Type: "file"},
+	}
+
+	contentWithoutServices := `name: test
+networks:
+  proxy:
+    external: true
+`
+	selections := []MountSelection{
+		{ID: "app", Enabled: true, Type: "file"},
+	}
+
+	result := s.injectMounts(contentWithoutServices, selections, availableMounts)
+
+	if result != contentWithoutServices {
+		t.Error("content without services should return original content unchanged")
+	}
+}
+
+func TestGenerateComposeWithMountInjection(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	templateDir := cfg.DeploymentsPath + "/.flatrun/templates/test-app"
+	if err := createDir(templateDir); err != nil {
+		t.Fatalf("failed to create template dir: %v", err)
+	}
+
+	composeContent := `name: ${NAME}
+services:
+  app:
+    image: node:20-alpine
+    container_name: ${NAME}
+    expose:
+      - "3000"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+`
+	if err := writeFile(templateDir+"/docker-compose.yml", composeContent); err != nil {
+		t.Fatalf("failed to write compose: %v", err)
+	}
+
+	metadata := `name: Test App
+container_port: 3000
+mounts:
+  - id: app
+    name: Application
+    container_path: /app
+    type: file
+  - id: data
+    name: Data Storage
+    container_path: /var/data
+    type: volume
+`
+	if err := writeFile(templateDir+"/metadata.yml", metadata); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+
+	opts := &ComposeGenerateRequest{
+		Name:          "my-node-app",
+		ContainerPort: 3000,
+		Mounts: []MountSelection{
+			{ID: "app", Enabled: true, Type: "file"},
+			{ID: "data", Enabled: true, Type: "volume"},
+		},
+	}
+
+	result, err := s.generateComposeWithOptions("test-app", opts)
+	if err != nil {
+		t.Fatalf("generateComposeWithOptions failed: %v", err)
+	}
+
+	if !strings.Contains(result, "my-node-app") {
+		t.Error("Result should contain deployment name")
+	}
+	if !strings.Contains(result, "./app:/app") {
+		t.Error("Result should contain bind mount for app")
+	}
+	if !strings.Contains(result, "data_data:/var/data") {
+		t.Error("Result should contain named volume for data")
+	}
+}
+
+func TestGenerateComposeWithNoMountsSelected(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	templateDir := cfg.DeploymentsPath + "/.flatrun/templates/stateless-app"
+	if err := createDir(templateDir); err != nil {
+		t.Fatalf("failed to create template dir: %v", err)
+	}
+
+	composeContent := `name: ${NAME}
+services:
+  app:
+    image: nginx:alpine
+    container_name: ${NAME}
+    expose:
+      - "80"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+`
+	if err := writeFile(templateDir+"/docker-compose.yml", composeContent); err != nil {
+		t.Fatalf("failed to write compose: %v", err)
+	}
+
+	metadata := `name: Stateless App
+container_port: 80
+mounts:
+  - id: html
+    name: HTML Content
+    container_path: /usr/share/nginx/html
+    type: file
+    required: false
+`
+	if err := writeFile(templateDir+"/metadata.yml", metadata); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+
+	opts := &ComposeGenerateRequest{
+		Name:          "my-stateless-app",
+		ContainerPort: 80,
+		Mounts: []MountSelection{
+			{ID: "html", Enabled: false, Type: "file"},
+		},
+	}
+
+	result, err := s.generateComposeWithOptions("stateless-app", opts)
+	if err != nil {
+		t.Fatalf("generateComposeWithOptions failed: %v", err)
+	}
+
+	if strings.Contains(result, "volumes:") {
+		t.Error("Result should not contain volumes section when all mounts disabled")
+	}
+	if strings.Contains(result, "./html") {
+		t.Error("Result should not contain disabled mount")
+	}
+}

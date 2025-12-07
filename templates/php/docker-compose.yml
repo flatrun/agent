@@ -3,8 +3,6 @@ services:
   app:
     image: php:8.3-apache
     container_name: ${NAME}
-    volumes:
-      - ./html:/var/www/html
     expose:
       - "80"
     networks:
