@@ -1435,14 +1435,14 @@ func (s *Server) generateComposeWithOptions(templateID string, opts *ComposeGene
 	content = strings.ReplaceAll(content, "${PROXY_NETWORK}", networkName)
 	content = replaceHardcodedNetwork(content, "proxy", networkName)
 
-	if opts.MapPorts && opts.HostPort != "" {
-		var metadata TemplateMetadata
-		metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
-		metadataContent, err := os.ReadFile(metadataPath)
-		if err == nil {
-			_ = yaml.Unmarshal(metadataContent, &metadata)
-		}
+	var metadata TemplateMetadata
+	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err == nil {
+		_ = yaml.Unmarshal(metadataContent, &metadata)
+	}
 
+	if opts.MapPorts && opts.HostPort != "" {
 		containerPort := opts.ContainerPort
 		if containerPort == 0 && metadata.ContainerPort > 0 {
 			containerPort = metadata.ContainerPort
@@ -1457,7 +1457,89 @@ func (s *Server) generateComposeWithOptions(templateID string, opts *ComposeGene
 		content = re.ReplaceAllString(content, portMapping)
 	}
 
+	if len(opts.Mounts) > 0 && len(metadata.Mounts) > 0 {
+		content = s.injectMounts(content, opts.Mounts, metadata.Mounts)
+	}
+
 	return content, nil
+}
+
+func (s *Server) injectMounts(content string, selections []MountSelection, available []TemplateMount) string {
+	mountMap := make(map[string]TemplateMount)
+	for _, m := range available {
+		mountMap[m.ID] = m
+	}
+
+	var newVolumes []string
+	for _, sel := range selections {
+		if !sel.Enabled {
+			continue
+		}
+		mount, ok := mountMap[sel.ID]
+		if !ok {
+			continue
+		}
+
+		var hostPath string
+		if sel.Type == "volume" {
+			hostPath = sel.ID + "_data"
+		} else {
+			hostPath = "./" + sel.ID
+		}
+		newVolumes = append(newVolumes, fmt.Sprintf("%s:%s", hostPath, mount.ContainerPath))
+	}
+
+	if len(newVolumes) == 0 {
+		return content
+	}
+
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return content
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return content
+	}
+
+	for serviceName, serviceData := range services {
+		service, ok := serviceData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		existingVolumes := make(map[string]bool)
+		var volumesList []string
+
+		if v, ok := service["volumes"].([]interface{}); ok {
+			for _, vol := range v {
+				if vs, ok := vol.(string); ok {
+					existingVolumes[vs] = true
+					volumesList = append(volumesList, vs)
+				}
+			}
+		}
+
+		for _, vol := range newVolumes {
+			if !existingVolumes[vol] {
+				volumesList = append(volumesList, vol)
+			}
+		}
+
+		service["volumes"] = volumesList
+		services[serviceName] = service
+		break
+	}
+
+	compose["services"] = services
+
+	result, err := yaml.Marshal(compose)
+	if err != nil {
+		return content
+	}
+
+	return string(result)
 }
 
 func (s *Server) generateCustomCompose(opts *ComposeGenerateRequest) (string, error) {
