@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -178,6 +179,9 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/deployments/:name/files/*path", s.deleteDeploymentFile)
 			protected.POST("/deployments/:name/mkdir/*path", s.createDeploymentDir)
 			protected.GET("/deployments/:name/files-info", s.getDeploymentFilesInfo)
+
+			protected.GET("/deployments/:name/env", s.getDeploymentEnv)
+			protected.PUT("/deployments/:name/env", s.updateDeploymentEnv)
 
 			protected.POST("/databases/test", s.testDatabaseConnection)
 			protected.POST("/databases/list", s.listDatabasesInServer)
@@ -490,6 +494,65 @@ func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 	}
 
 	return os.WriteFile(envFilePath, []byte(content.String()), 0600)
+}
+
+func (s *Server) getDeploymentEnv(c *gin.Context) {
+	name := c.Param("name")
+	deploymentPath := filepath.Join(s.config.DeploymentsPath, name)
+	envFilePath := filepath.Join(deploymentPath, ".env.flatrun")
+
+	content, err := os.ReadFile(envFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{"env_vars": []EnvVar{}})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	envVars := parseEnvContent(string(content))
+	c.JSON(http.StatusOK, gin.H{"env_vars": envVars})
+}
+
+func (s *Server) updateDeploymentEnv(c *gin.Context) {
+	name := c.Param("name")
+
+	var req struct {
+		EnvVars []EnvVar `json:"env_vars"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.writeEnvFile(name, req.EnvVars); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Environment variables updated"})
+}
+
+func parseEnvContent(content string) []EnvVar {
+	var envVars []EnvVar
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		eqIndex := strings.Index(line, "=")
+		if eqIndex == -1 {
+			continue
+		}
+		key := strings.TrimSpace(line[:eqIndex])
+		value := strings.TrimSpace(line[eqIndex+1:])
+		if key != "" {
+			envVars = append(envVars, EnvVar{Key: key, Value: value})
+		}
+	}
+	return envVars
 }
 
 func generateRandomPassword(length int) string {
@@ -1355,115 +1418,44 @@ func (s *Server) generateComposeWithOptions(templateID string, opts *ComposeGene
 
 	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
 
-	var metadata TemplateMetadata
-	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
-	metadataContent, err := os.ReadFile(metadataPath)
-	if err == nil {
-		_ = yaml.Unmarshal(metadataContent, &metadata)
-	}
-
-	networkName := s.config.Infrastructure.DefaultProxyNetwork
-
-	containerPort := opts.ContainerPort
-	if containerPort == 0 && metadata.ContainerPort > 0 {
-		containerPort = metadata.ContainerPort
-	}
-	if containerPort == 0 {
-		containerPort = 80
-	}
-
-	portConfig := fmt.Sprintf("expose:\n      - \"%d\"", containerPort)
-	if opts.MapPorts && opts.HostPort != "" {
-		portConfig = fmt.Sprintf("ports:\n      - \"%s:%d\"", opts.HostPort, containerPort)
-	}
-
-	mountSelections := make(map[string]MountSelection)
-	for _, m := range opts.Mounts {
-		mountSelections[m.ID] = m
-	}
-
-	var volumeLines []string
-	var topLevelVolumes []string
-
-	for _, mount := range metadata.Mounts {
-		selection, hasSelection := mountSelections[mount.ID]
-
-		if hasSelection && !selection.Enabled {
-			continue
-		}
-
-		if !hasSelection && !mount.Required {
-			continue
-		}
-
-		mountType := mount.Type
-		if hasSelection && selection.Type != "" {
-			mountType = selection.Type
-		}
-
-		if mountType == "volume" {
-			volumeName := opts.Name + "_" + mount.ID
-			volumeLines = append(volumeLines, fmt.Sprintf("      - %s:%s", volumeName, mount.ContainerPath))
-			topLevelVolumes = append(topLevelVolumes, volumeName)
-		} else {
-			volumeLines = append(volumeLines, fmt.Sprintf("      - ./%s:%s", mount.ID, mount.ContainerPath))
-		}
-	}
-
-	volumesSection := ""
-	if len(volumeLines) > 0 {
-		volumesSection = "volumes:\n" + strings.Join(volumeLines, "\n")
-	}
-
-	topLevelVolumesSection := ""
-	if len(topLevelVolumes) > 0 {
-		var volDefs []string
-		for _, v := range topLevelVolumes {
-			volDefs = append(volDefs, "  "+v+":")
-		}
-		topLevelVolumesSection = "\nvolumes:\n" + strings.Join(volDefs, "\n")
-	}
-
-	content := fmt.Sprintf(`name: %s
-services:
-  app:
-    image: ${IMAGE}
-    container_name: %s
-    %s
-    %s
-    networks:
-      - %s
-    restart: unless-stopped
-%s
-networks:
-  %s:
-    external: true
-`, opts.Name, opts.Name, portConfig, volumesSection, networkName, topLevelVolumesSection, networkName)
-
 	composeBytes, err := templates.GetCompose(templateID)
 	if err != nil {
 		composePath := filepath.Join(templatesDir, templateID, "docker-compose.yml")
 		composeBytes, err = os.ReadFile(composePath)
 		if err != nil {
-			return content, nil
+			return s.generateCustomCompose(opts)
 		}
 	}
 
-	var compose map[string]interface{}
-	if err := yaml.Unmarshal(composeBytes, &compose); err == nil {
-		if services, ok := compose["services"].(map[string]interface{}); ok {
-			for _, svc := range services {
-				if svcMap, ok := svc.(map[string]interface{}); ok {
-					if image, ok := svcMap["image"].(string); ok {
-						content = strings.ReplaceAll(content, "${IMAGE}", image)
-						break
-					}
-				}
-			}
-		}
-	}
+	content := string(composeBytes)
 
-	content = strings.ReplaceAll(content, "${IMAGE}", "nginx:alpine")
+	content = strings.ReplaceAll(content, "${NAME}", opts.Name)
+
+	networkName := s.config.Infrastructure.DefaultProxyNetwork
+	content = strings.ReplaceAll(content, "${PROXY_NETWORK}", networkName)
+	content = replaceHardcodedNetwork(content, "proxy", networkName)
+
+	if opts.MapPorts && opts.HostPort != "" {
+		var metadata TemplateMetadata
+		metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
+		metadataContent, err := os.ReadFile(metadataPath)
+		if err == nil {
+			_ = yaml.Unmarshal(metadataContent, &metadata)
+		}
+
+		containerPort := opts.ContainerPort
+		if containerPort == 0 && metadata.ContainerPort > 0 {
+			containerPort = metadata.ContainerPort
+		}
+		if containerPort == 0 {
+			containerPort = 80
+		}
+
+		exposePattern := fmt.Sprintf(`expose:\s*\n\s*-\s*["']?%d["']?`, containerPort)
+		re := regexp.MustCompile(exposePattern)
+		portMapping := fmt.Sprintf("ports:\n      - \"%s:%d\"", opts.HostPort, containerPort)
+		content = re.ReplaceAllString(content, portMapping)
+	}
 
 	return content, nil
 }
@@ -2672,9 +2664,9 @@ func (s *Server) createDatabaseInServer(c *gin.Context) {
 func (s *Server) createDatabaseUser(c *gin.Context) {
 	var req struct {
 		database.ConnectionConfig
-		Username string `json:"username" binding:"required"`
-		Password string `json:"user_password" binding:"required"`
-		Host     string `json:"user_host"`
+		TargetUsername string `json:"target_username" binding:"required"`
+		TargetPassword string `json:"target_password" binding:"required"`
+		TargetHost     string `json:"target_host"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -2683,7 +2675,7 @@ func (s *Server) createDatabaseUser(c *gin.Context) {
 		return
 	}
 
-	if err := s.databaseManager.CreateUser(&req.ConnectionConfig, req.Username, req.Password, req.Host); err != nil {
+	if err := s.databaseManager.CreateUser(&req.ConnectionConfig, req.TargetUsername, req.TargetPassword, req.TargetHost); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -2692,16 +2684,16 @@ func (s *Server) createDatabaseUser(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":  "User created",
-		"username": req.Username,
+		"username": req.TargetUsername,
 	})
 }
 
 func (s *Server) grantDatabasePrivileges(c *gin.Context) {
 	var req struct {
 		database.ConnectionConfig
-		Username string `json:"username" binding:"required"`
-		Database string `json:"database" binding:"required"`
-		Host     string `json:"user_host"`
+		TargetUsername string `json:"target_username" binding:"required"`
+		TargetDatabase string `json:"target_database" binding:"required"`
+		TargetHost     string `json:"target_host"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -2710,7 +2702,7 @@ func (s *Server) grantDatabasePrivileges(c *gin.Context) {
 		return
 	}
 
-	if err := s.databaseManager.GrantPrivileges(&req.ConnectionConfig, req.Username, req.Database, req.Host); err != nil {
+	if err := s.databaseManager.GrantPrivileges(&req.ConnectionConfig, req.TargetUsername, req.TargetDatabase, req.TargetHost); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -2719,8 +2711,8 @@ func (s *Server) grantDatabasePrivileges(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "Privileges granted",
-		"username": req.Username,
-		"database": req.Database,
+		"username": req.TargetUsername,
+		"database": req.TargetDatabase,
 	})
 }
 
@@ -2752,8 +2744,8 @@ func (s *Server) deleteDatabaseInServer(c *gin.Context) {
 func (s *Server) deleteDatabaseUser(c *gin.Context) {
 	var req struct {
 		database.ConnectionConfig
-		Username string `json:"username" binding:"required"`
-		Host     string `json:"user_host"`
+		TargetUsername string `json:"target_username" binding:"required"`
+		TargetHost     string `json:"target_host"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -2762,7 +2754,7 @@ func (s *Server) deleteDatabaseUser(c *gin.Context) {
 		return
 	}
 
-	if err := s.databaseManager.DeleteUser(&req.ConnectionConfig, req.Username, req.Host); err != nil {
+	if err := s.databaseManager.DeleteUser(&req.ConnectionConfig, req.TargetUsername, req.TargetHost); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -2771,7 +2763,7 @@ func (s *Server) deleteDatabaseUser(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "User deleted",
-		"username": req.Username,
+		"username": req.TargetUsername,
 	})
 }
 
