@@ -497,6 +497,35 @@ func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 	return os.WriteFile(envFilePath, []byte(content.String()), 0600)
 }
 
+func (s *Server) deleteDatabaseForDeployment(deploymentName string) error {
+	dbConfig := s.config.Infrastructure.Database
+	dbName := strings.ReplaceAll(deploymentName, "-", "_") + "_db"
+	dbUser := strings.ReplaceAll(deploymentName, "-", "_") + "_user"
+
+	connConfig := &database.ConnectionConfig{
+		Type:      dbConfig.Type,
+		Host:      dbConfig.Host,
+		Port:      dbConfig.Port,
+		Username:  dbConfig.RootUser,
+		Password:  dbConfig.RootPassword,
+		Container: dbConfig.Container,
+	}
+
+	if err := s.databaseManager.RevokePrivileges(connConfig, dbUser, dbName); err != nil {
+		log.Printf("Warning: failed to revoke privileges for %s: %v", dbUser, err)
+	}
+
+	if err := s.databaseManager.DropUser(connConfig, dbUser); err != nil {
+		log.Printf("Warning: failed to drop user %s: %v", dbUser, err)
+	}
+
+	if err := s.databaseManager.DropDatabase(connConfig, dbName); err != nil {
+		return fmt.Errorf("failed to drop database: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Server) getDeploymentEnv(c *gin.Context) {
 	name := c.Param("name")
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, name)
@@ -638,19 +667,39 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 func (s *Server) deleteDeployment(c *gin.Context) {
 	name := c.Param("name")
 
-	// Get deployment metadata before deletion to retrieve domain for SSL cleanup
+	deleteSSL := c.DefaultQuery("delete_ssl", "true") == "true"
+	deleteDatabase := c.DefaultQuery("delete_database", "false") == "true"
+	deleteVhost := c.DefaultQuery("delete_vhost", "true") == "true"
+
 	deployment, _ := s.manager.GetDeployment(name)
 
-	// Teardown proxy (virtual host)
-	_ = s.proxyOrchestrator.TeardownDeployment(name)
+	var deletedItems []string
 
-	// Delete SSL certificate if deployment had SSL enabled
+	if deleteVhost {
+		if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
+			log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
+		} else {
+			deletedItems = append(deletedItems, "virtual_host")
+		}
+	}
+
 	if deployment != nil && deployment.Metadata != nil {
 		domain := deployment.Metadata.Networking.Domain
-		if domain != "" && deployment.Metadata.SSL.Enabled {
+
+		if deleteSSL && domain != "" && deployment.Metadata.SSL.Enabled {
 			if err := s.proxyOrchestrator.SSLManager().DeleteCertificate(domain); err != nil {
 				log.Printf("Warning: failed to delete SSL certificate for %s: %v", domain, err)
+			} else {
+				deletedItems = append(deletedItems, "ssl_certificate")
 			}
+		}
+	}
+
+	if deleteDatabase && s.config.Infrastructure.Database.Enabled {
+		if err := s.deleteDatabaseForDeployment(name); err != nil {
+			log.Printf("Warning: failed to delete database for %s: %v", name, err)
+		} else {
+			deletedItems = append(deletedItems, "database")
 		}
 	}
 
@@ -662,8 +711,9 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Deployment deleted",
-		"name":    name,
+		"message":       "Deployment deleted",
+		"name":          name,
+		"deleted_items": deletedItems,
 	})
 }
 
