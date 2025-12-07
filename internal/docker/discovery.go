@@ -243,8 +243,75 @@ func (d *Discovery) CreateDeployment(name string, composeContent string) error {
 	// Ensure compose file has a name attribute for project identification
 	composeContent = d.ensureComposeName(name, composeContent)
 
+	// Pre-create bind mount directories with permissive access for non-root containers
+	if err := d.createBindMountDirs(dirPath, composeContent); err != nil {
+		return fmt.Errorf("failed to create mount directories: %w", err)
+	}
+
 	composePath := filepath.Join(dirPath, "docker-compose.yml")
 	return os.WriteFile(composePath, []byte(composeContent), 0644)
+}
+
+// createBindMountDirs parses compose content and creates bind mount directories
+// with world-writable permissions to support non-root containers (e.g., Bitnami)
+func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string) error {
+	var compose struct {
+		Services map[string]struct {
+			Volumes []string `yaml:"volumes"`
+		} `yaml:"services"`
+	}
+
+	if err := yaml.Unmarshal([]byte(composeContent), &compose); err != nil {
+		return nil // Skip if parse fails, not critical
+	}
+
+	for _, service := range compose.Services {
+		for _, volume := range service.Volumes {
+			hostPath := extractBindMountPath(volume)
+			if hostPath == "" {
+				continue
+			}
+
+			// Only handle relative paths (bind mounts)
+			if !strings.HasPrefix(hostPath, "./") && !strings.HasPrefix(hostPath, "../") {
+				continue
+			}
+
+			fullPath := filepath.Join(deploymentPath, hostPath)
+			if err := os.MkdirAll(fullPath, 0777); err != nil {
+				return err
+			}
+			// Ensure directory is writable by any user (for non-root containers)
+			if err := os.Chmod(fullPath, 0777); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// extractBindMountPath extracts the host path from a volume mount string
+// Handles formats: "./path:/container/path" or "./path:/container/path:ro"
+func extractBindMountPath(volume string) string {
+	// Skip named volumes (no colon or starts with volume name)
+	if !strings.Contains(volume, ":") {
+		return ""
+	}
+
+	parts := strings.SplitN(volume, ":", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+
+	hostPath := parts[0]
+
+	// Skip named volumes (don't start with . or /)
+	if !strings.HasPrefix(hostPath, ".") && !strings.HasPrefix(hostPath, "/") {
+		return ""
+	}
+
+	return hostPath
 }
 
 // ensureComposeName adds or updates the name attribute in a compose file
