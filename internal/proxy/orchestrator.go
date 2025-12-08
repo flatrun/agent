@@ -22,6 +22,13 @@ func NewOrchestrator(cfg *config.Config) *Orchestrator {
 	}
 }
 
+func NewOrchestratorWithManagers(nginxMgr *nginx.Manager, sslMgr *ssl.Manager) *Orchestrator {
+	return &Orchestrator{
+		nginx: nginxMgr,
+		ssl:   sslMgr,
+	}
+}
+
 func (o *Orchestrator) NginxManager() *nginx.Manager {
 	return o.nginx
 }

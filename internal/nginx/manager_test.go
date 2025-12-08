@@ -373,3 +373,127 @@ func TestVirtualHostExists(t *testing.T) {
 		t.Error("VirtualHostExists should return false for non-existing config")
 	}
 }
+
+func TestGetVhostsUsingSSLDomain(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	confDir := filepath.Join(tmpDir, "nginx", "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("failed to create conf.d: %v", err)
+	}
+
+	sslConfig := `server {
+    listen 443 ssl;
+    server_name example.com;
+    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+}`
+	if err := os.WriteFile(filepath.Join(confDir, "ssl-app.conf"), []byte(sslConfig), 0644); err != nil {
+		t.Fatalf("failed to create ssl config: %v", err)
+	}
+
+	httpConfig := `server {
+    listen 80;
+    server_name other.com;
+}`
+	if err := os.WriteFile(filepath.Join(confDir, "http-app.conf"), []byte(httpConfig), 0644); err != nil {
+		t.Fatalf("failed to create http config: %v", err)
+	}
+
+	cfg := &config.NginxConfig{}
+	m := NewManager(cfg, tmpDir, "")
+
+	vhosts := m.GetVhostsUsingSSLDomain("example.com")
+	if len(vhosts) != 1 {
+		t.Errorf("expected 1 vhost using example.com SSL, got %d", len(vhosts))
+	}
+	if len(vhosts) > 0 && vhosts[0] != "ssl-app" {
+		t.Errorf("expected vhost 'ssl-app', got %q", vhosts[0])
+	}
+
+	vhosts = m.GetVhostsUsingSSLDomain("other.com")
+	if len(vhosts) != 0 {
+		t.Errorf("expected 0 vhosts using other.com SSL, got %d", len(vhosts))
+	}
+
+	vhosts = m.GetVhostsUsingSSLDomain("nonexistent.com")
+	if len(vhosts) != 0 {
+		t.Errorf("expected 0 vhosts for nonexistent domain, got %d", len(vhosts))
+	}
+}
+
+func TestGetVhostsUsingSSLDomain_MultipleVhosts(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	confDir := filepath.Join(tmpDir, "nginx", "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("failed to create conf.d: %v", err)
+	}
+
+	sslConfig1 := `server {
+    listen 443 ssl;
+    server_name app1.example.com;
+    ssl_certificate /etc/letsencrypt/live/wildcard.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/wildcard.example.com/privkey.pem;
+}`
+	if err := os.WriteFile(filepath.Join(confDir, "app1.conf"), []byte(sslConfig1), 0644); err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
+
+	sslConfig2 := `server {
+    listen 443 ssl;
+    server_name app2.example.com;
+    ssl_certificate /etc/letsencrypt/live/wildcard.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/wildcard.example.com/privkey.pem;
+}`
+	if err := os.WriteFile(filepath.Join(confDir, "app2.conf"), []byte(sslConfig2), 0644); err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
+
+	cfg := &config.NginxConfig{}
+	m := NewManager(cfg, tmpDir, "")
+
+	vhosts := m.GetVhostsUsingSSLDomain("wildcard.example.com")
+	if len(vhosts) != 2 {
+		t.Errorf("expected 2 vhosts using wildcard cert, got %d", len(vhosts))
+	}
+}
+
+func TestGetVhostsUsingSSLDomain_EmptyDirectory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	confDir := filepath.Join(tmpDir, "nginx", "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("failed to create conf.d: %v", err)
+	}
+
+	cfg := &config.NginxConfig{}
+	m := NewManager(cfg, tmpDir, "")
+
+	vhosts := m.GetVhostsUsingSSLDomain("example.com")
+	if len(vhosts) != 0 {
+		t.Errorf("expected 0 vhosts for empty directory, got %d", len(vhosts))
+	}
+}
+
+func TestGetVhostsUsingSSLDomain_NonExistentDirectory(t *testing.T) {
+	cfg := &config.NginxConfig{}
+	m := NewManager(cfg, "/nonexistent/path", "")
+
+	vhosts := m.GetVhostsUsingSSLDomain("example.com")
+	if len(vhosts) != 0 {
+		t.Errorf("expected 0 vhosts for nonexistent directory, got %d", len(vhosts))
+	}
+}

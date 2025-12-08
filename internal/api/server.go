@@ -138,6 +138,7 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/proxy/:name", s.teardownProxy)
 			protected.GET("/proxy/vhosts", s.listVirtualHosts)
 			protected.POST("/proxy/sync", s.syncAllProxies)
+			protected.POST("/deployments/:name/ssl/disable", s.disableSSL)
 
 			protected.GET("/settings", s.getSettings)
 			protected.PUT("/settings", s.updateSettings)
@@ -2005,6 +2006,17 @@ func (s *Server) renewCertificates(c *gin.Context) {
 
 func (s *Server) deleteCertificate(c *gin.Context) {
 	domain := c.Param("domain")
+	force := c.DefaultQuery("force", "false") == "true"
+
+	vhosts := s.proxyOrchestrator.NginxManager().GetVhostsUsingSSLDomain(domain)
+	if len(vhosts) > 0 && !force {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "Certificate is in use by virtual hosts",
+			"vhosts": vhosts,
+			"hint":   "Disable SSL for these deployments first, or use ?force=true to delete anyway",
+		})
+		return
+	}
 
 	if err := s.proxyOrchestrator.SSLManager().DeleteCertificate(domain); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -2074,6 +2086,58 @@ func (s *Server) teardownProxy(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Proxy removed",
+		"name":    name,
+	})
+}
+
+func (s *Server) disableSSL(c *gin.Context) {
+	name := c.Param("name")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found",
+		})
+		return
+	}
+
+	if deployment.Metadata == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Deployment has no metadata configured",
+		})
+		return
+	}
+
+	deployment.Metadata.SSL.Enabled = false
+	deployment.Metadata.SSL.AutoCert = false
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to save metadata: " + err.Error(),
+		})
+		return
+	}
+
+	if err := s.proxyOrchestrator.NginxManager().UpdateVirtualHost(deployment); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to update virtual host: " + err.Error(),
+		})
+		return
+	}
+
+	if err := s.proxyOrchestrator.NginxManager().TestConfig(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Nginx config test failed: " + err.Error(),
+		})
+		return
+	}
+
+	if err := s.proxyOrchestrator.NginxManager().Reload(); err != nil {
+		log.Printf("Warning: failed to reload nginx: %v", err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "SSL disabled for deployment",
 		"name":    name,
 	})
 }
