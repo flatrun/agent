@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -276,13 +278,14 @@ func (s *Server) getDeployment(c *gin.Context) {
 
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
-		Name              string                  `json:"name" binding:"required"`
-		ComposeContent    string                  `json:"compose_content"`
-		TemplateID        string                  `json:"template_id,omitempty"`
-		Metadata          *models.ServiceMetadata `json:"metadata,omitempty"`
-		EnvVars           []EnvVar                `json:"env_vars,omitempty"`
-		AutoStart         bool                    `json:"auto_start"`
-		UseSharedDatabase bool                    `json:"use_shared_database"`
+		Name                      string                  `json:"name" binding:"required"`
+		ComposeContent            string                  `json:"compose_content"`
+		TemplateID                string                  `json:"template_id,omitempty"`
+		Metadata                  *models.ServiceMetadata `json:"metadata,omitempty"`
+		EnvVars                   []EnvVar                `json:"env_vars,omitempty"`
+		AutoStart                 bool                    `json:"auto_start"`
+		UseSharedDatabase         bool                    `json:"use_shared_database"`
+		ExistingDatabaseContainer string                  `json:"existing_database_container,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -310,7 +313,22 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 
-	// Add database network to compose if using shared database
+	// Add proxy network if expose is enabled
+	proxyNetworkName := s.config.Infrastructure.DefaultProxyNetwork
+	if req.Metadata != nil && req.Metadata.Networking.Expose && proxyNetworkName != "" {
+		if err := s.networksManager.EnsureNetwork(proxyNetworkName); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to ensure proxy network exists: " + err.Error(),
+			})
+			return
+		}
+		req.ComposeContent = s.addProxyNetwork(req.ComposeContent)
+		if err := s.networksManager.EnsureContainerOnNetwork(proxyNetworkName, s.config.Nginx.ContainerName); err != nil {
+			log.Printf("Warning: failed to ensure nginx on network %s: %v", proxyNetworkName, err)
+		}
+	}
+
+	// Add shared database network if using shared database
 	if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
 		dbNetworkName := s.config.Infrastructure.DefaultDatabaseNetwork
 		if dbNetworkName == "" {
@@ -325,18 +343,9 @@ func (s *Server) createDeployment(c *gin.Context) {
 		req.ComposeContent = s.addDatabaseNetwork(req.ComposeContent)
 	}
 
-	networkName := s.config.Infrastructure.DefaultProxyNetwork
-	if err := s.networksManager.EnsureNetwork(networkName); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to ensure network exists: " + err.Error(),
-		})
-		return
-	}
-
-	if req.Metadata != nil && req.Metadata.Networking.Expose {
-		if err := s.networksManager.EnsureContainerOnNetwork(networkName, s.config.Nginx.ContainerName); err != nil {
-			log.Printf("Warning: failed to ensure nginx on network %s: %v", networkName, err)
-		}
+	// Add existing database container's network
+	if req.ExistingDatabaseContainer != "" {
+		req.ComposeContent = s.addContainerNetwork(req.ComposeContent, req.ExistingDatabaseContainer)
 	}
 
 	if err := s.manager.CreateDeployment(req.Name, req.ComposeContent); err != nil {
@@ -1835,81 +1844,69 @@ func replaceHardcodedNetwork(content, oldNetwork, newNetwork string) string {
 	return strings.Join(result, "\n")
 }
 
-// addDatabaseNetwork adds the database network to a compose file so containers
-// can communicate with the shared database infrastructure
+// getContainerNetworks returns the networks a container is connected to
+func (s *Server) getContainerNetworks(containerName string) ([]string, error) {
+	cmd := exec.Command("docker", "inspect", "--format", "{{json .NetworkSettings.Networks}}", containerName)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var networks map[string]interface{}
+	if err := json.Unmarshal(output, &networks); err != nil {
+		return nil, err
+	}
+
+	var result []string
+	for name := range networks {
+		result = append(result, name)
+	}
+	return result, nil
+}
+
+// addDatabaseNetwork adds the configured shared database network to a compose file
 func (s *Server) addDatabaseNetwork(content string) string {
 	dbNetworkName := s.config.Infrastructure.DefaultDatabaseNetwork
 	if dbNetworkName == "" {
 		dbNetworkName = "database"
 	}
-
-	var compose map[string]interface{}
-	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
-		return content
-	}
-
-	// Get or create top-level networks section
-	networks, ok := compose["networks"].(map[string]interface{})
-	if !ok {
-		networks = make(map[string]interface{})
-		compose["networks"] = networks
-	}
-
-	// Add database network as external if not already present
-	if _, exists := networks[dbNetworkName]; !exists {
-		networks[dbNetworkName] = map[string]interface{}{
-			"external": true,
-		}
-	}
-
-	// Add database network to each service
-	services, ok := compose["services"].(map[string]interface{})
-	if ok {
-		for serviceName, serviceData := range services {
-			service, ok := serviceData.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			// Get or create service networks
-			var serviceNetworks []interface{}
-			switch n := service["networks"].(type) {
-			case []interface{}:
-				serviceNetworks = n
-			case map[string]interface{}:
-				// Convert map format to list format
-				for netName := range n {
-					serviceNetworks = append(serviceNetworks, netName)
-				}
-			default:
-				serviceNetworks = []interface{}{}
-			}
-
-			// Check if database network already exists
-			hasDbNetwork := false
-			for _, net := range serviceNetworks {
-				if netStr, ok := net.(string); ok && netStr == dbNetworkName {
-					hasDbNetwork = true
-					break
-				}
-			}
-
-			// Add database network if not present
-			if !hasDbNetwork {
-				serviceNetworks = append(serviceNetworks, dbNetworkName)
-				service["networks"] = serviceNetworks
-				services[serviceName] = service
-			}
-		}
-	}
-
-	// Re-marshal
-	data, err := yaml.Marshal(compose)
+	result, err := docker.AddNetworkToCompose(content, dbNetworkName)
 	if err != nil {
 		return content
 	}
+	return result
+}
 
-	return string(data)
+// addProxyNetwork adds the configured proxy network to a compose file
+func (s *Server) addProxyNetwork(content string) string {
+	result, err := docker.AddNetworkToCompose(content, s.config.Infrastructure.DefaultProxyNetwork)
+	if err != nil {
+		return content
+	}
+	return result
+}
+
+// addContainerNetwork finds and adds the network of a specific container to a compose file
+func (s *Server) addContainerNetwork(content string, containerName string) string {
+	networks, err := s.getContainerNetworks(containerName)
+	if err != nil || len(networks) == 0 {
+		return content
+	}
+	// Add the first non-bridge network, or first network if all are bridge
+	for _, net := range networks {
+		if net != "bridge" && net != "host" && net != "none" {
+			result, err := docker.AddNetworkToCompose(content, net)
+			if err != nil {
+				return content
+			}
+			return result
+		}
+	}
+	result, err := docker.AddNetworkToCompose(content, networks[0])
+	if err != nil {
+		return content
+	}
+	return result
 }
 
 func (s *Server) processTemplateFiles(deploymentName, templateID string, envVars []EnvVar) {
