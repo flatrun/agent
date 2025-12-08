@@ -151,6 +151,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/templates/refresh", s.refreshTemplates)
 			protected.GET("/templates/:id/compose", s.getTemplateCompose)
 			protected.POST("/templates/:id/generate", s.generateTemplateCompose)
+			protected.POST("/compose/update", s.updateCompose)
 			protected.GET("/stats", s.getSystemStats)
 			protected.GET("/containers", s.listContainers)
 			protected.POST("/containers/:id/start", s.startContainer)
@@ -1460,6 +1461,30 @@ type ComposeGenerateRequest struct {
 	Mounts        []MountSelection `json:"mounts"`
 }
 
+type PortConfig struct {
+	ContainerPort int    `json:"container_port"`
+	HostPort      string `json:"host_port"`
+}
+
+type ComposeUpdateRequest struct {
+	Content  string           `json:"content" binding:"required"`
+	Ports    []PortConfig     `json:"ports"`
+	Mounts   []MountSelection `json:"mounts"`
+	Database *DatabaseConfig  `json:"database,omitempty"`
+}
+
+type DatabaseConfig struct {
+	Type              string `json:"type"`
+	Mode              string `json:"mode"`
+	Name              string `json:"name"`
+	User              string `json:"user"`
+	Password          string `json:"password"`
+	RootPassword      string `json:"root_password"`
+	ExistingContainer string `json:"existing_container"`
+	ExternalHost      string `json:"external_host"`
+	ExternalPort      string `json:"external_port"`
+}
+
 func (s *Server) generateTemplateCompose(c *gin.Context) {
 	templateID := c.Param("id")
 
@@ -1480,10 +1505,185 @@ func (s *Server) generateTemplateCompose(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"template_id": templateID,
-		"name":        req.Name,
-		"content":     content,
+		"template_id":    templateID,
+		"name":           req.Name,
+		"content":        content,
+		"container_port": req.ContainerPort,
+		"map_ports":      req.MapPorts,
+		"host_port":      req.HostPort,
 	})
+}
+
+func (s *Server) updateCompose(c *gin.Context) {
+	var req ComposeUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	content := req.Content
+
+	if len(req.Ports) == 0 {
+		req.Ports = []PortConfig{{ContainerPort: 80, HostPort: ""}}
+	}
+
+	content = s.updateComposePorts(content, req.Ports)
+
+	if req.Database != nil && req.Database.Type != "" && req.Database.Type != "none" {
+		content = s.updateComposeDatabase(content, req.Database)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"content": content,
+	})
+}
+
+func (s *Server) updateComposePorts(content string, ports []PortConfig) string {
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return content
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return content
+	}
+
+	for _, svc := range services {
+		service, ok := svc.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		delete(service, "expose")
+		delete(service, "ports")
+
+		var exposeList []string
+		var portsList []string
+
+		for _, p := range ports {
+			if p.HostPort != "" {
+				portsList = append(portsList, fmt.Sprintf("%s:%d", p.HostPort, p.ContainerPort))
+			} else {
+				exposeList = append(exposeList, fmt.Sprintf("%d", p.ContainerPort))
+			}
+		}
+
+		if len(portsList) > 0 {
+			service["ports"] = portsList
+		}
+		if len(exposeList) > 0 {
+			service["expose"] = exposeList
+		}
+		break
+	}
+
+	out, err := yaml.Marshal(compose)
+	if err != nil {
+		return content
+	}
+
+	return string(out)
+}
+
+func (s *Server) updateComposeDatabase(content string, db *DatabaseConfig) string {
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return content
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return content
+	}
+
+	if db.Mode == "create" {
+		dbService := s.createDatabaseService(db)
+		if dbService != nil {
+			services["db"] = dbService
+
+			volumes, _ := compose["volumes"].(map[string]interface{})
+			if volumes == nil {
+				volumes = make(map[string]interface{})
+			}
+			volumes["db_data"] = nil
+			compose["volumes"] = volumes
+		}
+	}
+
+	result, err := yaml.Marshal(compose)
+	if err != nil {
+		return content
+	}
+	return string(result)
+}
+
+func (s *Server) createDatabaseService(db *DatabaseConfig) map[string]interface{} {
+	var image string
+	var envVars map[string]string
+	var volumePath string
+
+	dbName := db.Name
+	if dbName == "" {
+		dbName = "app_db"
+	}
+	dbUser := db.User
+	if dbUser == "" {
+		dbUser = "app"
+	}
+	rootPassword := db.RootPassword
+	if rootPassword == "" {
+		rootPassword = db.Password
+	}
+
+	switch db.Type {
+	case "mysql":
+		image = "mysql:8"
+		volumePath = "/var/lib/mysql"
+		envVars = map[string]string{
+			"MYSQL_ROOT_PASSWORD": rootPassword,
+			"MYSQL_DATABASE":      dbName,
+			"MYSQL_USER":          dbUser,
+			"MYSQL_PASSWORD":      db.Password,
+		}
+	case "mariadb":
+		image = "mariadb:10"
+		volumePath = "/var/lib/mysql"
+		envVars = map[string]string{
+			"MYSQL_ROOT_PASSWORD": rootPassword,
+			"MYSQL_DATABASE":      dbName,
+			"MYSQL_USER":          dbUser,
+			"MYSQL_PASSWORD":      db.Password,
+		}
+	case "postgres":
+		image = "postgres:15"
+		volumePath = "/var/lib/postgresql/data"
+		envVars = map[string]string{
+			"POSTGRES_DB":       dbName,
+			"POSTGRES_USER":     dbUser,
+			"POSTGRES_PASSWORD": db.Password,
+		}
+	case "mongodb":
+		image = "mongo:6"
+		volumePath = "/data/db"
+		envVars = map[string]string{
+			"MONGO_INITDB_ROOT_USERNAME": dbUser,
+			"MONGO_INITDB_ROOT_PASSWORD": db.Password,
+			"MONGO_INITDB_DATABASE":      dbName,
+		}
+	default:
+		return nil
+	}
+
+	networkName := s.config.Infrastructure.DefaultProxyNetwork
+
+	return map[string]interface{}{
+		"image":       image,
+		"environment": envVars,
+		"volumes":     []string{"db_data:" + volumePath},
+		"networks":    []string{networkName},
+		"restart":     "unless-stopped",
+	}
 }
 
 func (s *Server) generateComposeWithOptions(templateID string, opts *ComposeGenerateRequest) (string, error) {
@@ -1584,20 +1784,27 @@ func (s *Server) injectMounts(content string, selections []MountSelection, avail
 			continue
 		}
 
-		existingVolumes := make(map[string]bool)
+		existingByContainerPath := make(map[string]int)
 		var volumesList []string
 
 		if v, ok := service["volumes"].([]interface{}); ok {
 			for _, vol := range v {
 				if vs, ok := vol.(string); ok {
-					existingVolumes[vs] = true
+					containerPath := extractContainerPath(vs)
+					existingByContainerPath[containerPath] = len(volumesList)
 					volumesList = append(volumesList, vs)
 				}
 			}
 		}
 
 		for _, vol := range newVolumes {
-			if !existingVolumes[vol] {
+			containerPath := extractContainerPath(vol)
+			if idx, exists := existingByContainerPath[containerPath]; exists {
+				if hasVolumeOptions(vol) && !hasVolumeOptions(volumesList[idx]) {
+					volumesList[idx] = vol
+				}
+			} else {
+				existingByContainerPath[containerPath] = len(volumesList)
 				volumesList = append(volumesList, vol)
 			}
 		}
@@ -1615,6 +1822,18 @@ func (s *Server) injectMounts(content string, selections []MountSelection, avail
 	}
 
 	return string(result)
+}
+
+func extractContainerPath(volume string) string {
+	parts := strings.Split(volume, ":")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return volume
+}
+
+func hasVolumeOptions(volume string) bool {
+	return len(strings.Split(volume, ":")) >= 3
 }
 
 func (s *Server) generateCustomCompose(opts *ComposeGenerateRequest) (string, error) {
