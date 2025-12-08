@@ -177,6 +177,38 @@ func (m *Manager) ListVirtualHosts() ([]VirtualHostInfo, error) {
 	return hosts, nil
 }
 
+func (m *Manager) GetVhostsUsingSSLDomain(domain string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var vhosts []string
+
+	entries, err := os.ReadDir(m.configPath)
+	if err != nil {
+		return vhosts
+	}
+
+	certPath := fmt.Sprintf("/etc/letsencrypt/live/%s/", domain)
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".conf") {
+			continue
+		}
+
+		configPath := filepath.Join(m.configPath, entry.Name())
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			continue
+		}
+
+		if strings.Contains(string(content), certPath) {
+			vhosts = append(vhosts, strings.TrimSuffix(entry.Name(), ".conf"))
+		}
+	}
+
+	return vhosts
+}
+
 func (m *Manager) Reload() error {
 	if m.config.ContainerName == "" {
 		return fmt.Errorf("nginx container name not configured")
