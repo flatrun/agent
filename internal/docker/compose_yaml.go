@@ -156,6 +156,54 @@ func ParseComposeYAML(content string) (map[string]interface{}, error) {
 	return compose, nil
 }
 
+// EnsureContainerName ensures the first service has container_name set to deploymentName.
+// This is required for nginx reverse proxy DNS resolution on shared networks.
+func EnsureContainerName(content string, deploymentName string) (string, error) {
+	if deploymentName == "" {
+		return content, nil
+	}
+
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		return content, err
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok || len(services) == 0 {
+		return content, nil
+	}
+
+	// Find the first service (prefer "app" if exists, otherwise take any)
+	var targetService string
+	for name := range services {
+		if name == "app" {
+			targetService = "app"
+			break
+		}
+		if targetService == "" {
+			targetService = name
+		}
+	}
+
+	service, ok := services[targetService].(map[string]interface{})
+	if !ok {
+		return content, nil
+	}
+
+	// Only set if not already specified
+	if _, hasContainerName := service["container_name"]; !hasContainerName {
+		service["container_name"] = deploymentName
+		services[targetService] = service
+	}
+
+	result, err := MarshalComposeYAML(compose)
+	if err != nil {
+		return content, err
+	}
+
+	return strings.TrimSpace(string(result)), nil
+}
+
 func AddNetworkToCompose(content string, networkName string) (string, error) {
 	if networkName == "" {
 		return content, nil
