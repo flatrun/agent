@@ -1584,20 +1584,27 @@ func (s *Server) injectMounts(content string, selections []MountSelection, avail
 			continue
 		}
 
-		existingVolumes := make(map[string]bool)
+		existingByContainerPath := make(map[string]int)
 		var volumesList []string
 
 		if v, ok := service["volumes"].([]interface{}); ok {
 			for _, vol := range v {
 				if vs, ok := vol.(string); ok {
-					existingVolumes[vs] = true
+					containerPath := extractContainerPath(vs)
+					existingByContainerPath[containerPath] = len(volumesList)
 					volumesList = append(volumesList, vs)
 				}
 			}
 		}
 
 		for _, vol := range newVolumes {
-			if !existingVolumes[vol] {
+			containerPath := extractContainerPath(vol)
+			if idx, exists := existingByContainerPath[containerPath]; exists {
+				if hasVolumeOptions(vol) && !hasVolumeOptions(volumesList[idx]) {
+					volumesList[idx] = vol
+				}
+			} else {
+				existingByContainerPath[containerPath] = len(volumesList)
 				volumesList = append(volumesList, vol)
 			}
 		}
@@ -1615,6 +1622,18 @@ func (s *Server) injectMounts(content string, selections []MountSelection, avail
 	}
 
 	return string(result)
+}
+
+func extractContainerPath(volume string) string {
+	parts := strings.Split(volume, ":")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return volume
+}
+
+func hasVolumeOptions(volume string) bool {
+	return len(strings.Split(volume, ":")) >= 3
 }
 
 func (s *Server) generateCustomCompose(opts *ComposeGenerateRequest) (string, error) {
