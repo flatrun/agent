@@ -246,6 +246,11 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 	net := deployment.Metadata.Networking
 	ssl := deployment.Metadata.SSL
 
+	healthPath := deployment.Metadata.HealthCheck.Path
+	if healthPath == "/" {
+		healthPath = ""
+	}
+
 	data := templateData{
 		DeploymentName:       deployment.Name,
 		Domain:               net.Domain,
@@ -253,7 +258,7 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 		Protocol:             net.Protocol,
 		ProxyType:            net.ProxyType,
 		SSLEnabled:           ssl.Enabled,
-		HealthPath:           deployment.Metadata.HealthCheck.Path,
+		HealthPath:           healthPath,
 		ContainerWebrootPath: m.containerWebrootPath,
 	}
 

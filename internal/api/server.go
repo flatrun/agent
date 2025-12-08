@@ -315,6 +315,11 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 
+	// Ensure container name is set for proxy DNS resolution
+	if content, err := docker.EnsureContainerName(req.ComposeContent, req.Name); err == nil {
+		req.ComposeContent = content
+	}
+
 	// Add proxy network if expose is enabled
 	proxyNetworkName := s.config.Infrastructure.DefaultProxyNetwork
 	if req.Metadata != nil && req.Metadata.Networking.Expose && proxyNetworkName != "" {

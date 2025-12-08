@@ -497,3 +497,143 @@ func TestGetVhostsUsingSSLDomain_NonExistentDirectory(t *testing.T) {
 		t.Errorf("expected 0 vhosts for nonexistent directory, got %d", len(vhosts))
 	}
 }
+
+func TestGenerateConfig_HealthPathRootNoDuplicate(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	tests := []struct {
+		name       string
+		healthPath string
+		sslEnabled bool
+	}{
+		{
+			name:       "HTTP with health path /",
+			healthPath: "/",
+			sslEnabled: false,
+		},
+		{
+			name:       "SSL with health path /",
+			healthPath: "/",
+			sslEnabled: true,
+		},
+		{
+			name:       "HTTP with health path /health",
+			healthPath: "/health",
+			sslEnabled: false,
+		},
+		{
+			name:       "SSL with health path /health",
+			healthPath: "/health",
+			sslEnabled: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deployment := &models.Deployment{
+				Name: "test-app",
+				Metadata: &models.ServiceMetadata{
+					Networking: models.NetworkingConfig{
+						Expose:        true,
+						Domain:        "test.example.com",
+						ContainerPort: 8080,
+					},
+					SSL: models.SSLConfig{
+						Enabled: tt.sslEnabled,
+					},
+					HealthCheck: models.HealthCheckConfig{
+						Path: tt.healthPath,
+					},
+				},
+			}
+
+			configContent, err := m.generateConfig(deployment)
+			if err != nil {
+				t.Fatalf("generateConfig failed: %v", err)
+			}
+
+			locationCount := strings.Count(configContent, "location / {")
+
+			if tt.sslEnabled {
+				if locationCount != 2 {
+					t.Errorf("SSL config should have exactly 2 'location / {' blocks (port 80 redirect + port 443 proxy), got %d\nConfig:\n%s", locationCount, configContent)
+				}
+			} else {
+				if locationCount != 1 {
+					t.Errorf("HTTP config should have exactly 1 'location / {' block, got %d\nConfig:\n%s", locationCount, configContent)
+				}
+			}
+
+			if tt.healthPath != "/" {
+				expectedHealthLocation := "location " + tt.healthPath + " {"
+				if !strings.Contains(configContent, expectedHealthLocation) {
+					t.Errorf("config should contain health location %q\nConfig:\n%s", expectedHealthLocation, configContent)
+				}
+			}
+		})
+	}
+}
+
+func TestUpdateVirtualHost_PortChange(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, tmpDir, "")
+
+	deployment := &models.Deployment{
+		Name: "test-deployment",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "test.example.com",
+				ContainerPort: 3000,
+			},
+			SSL: models.SSLConfig{
+				Enabled: false,
+			},
+		},
+	}
+
+	err = m.CreateVirtualHost(deployment)
+	if err != nil {
+		t.Fatalf("CreateVirtualHost failed: %v", err)
+	}
+
+	configFile := filepath.Join(tmpDir, "nginx", "conf.d", "test-deployment.conf")
+	content, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "test-deployment:3000") {
+		t.Error("initial config should contain port 3000")
+	}
+
+	deployment.Metadata.Networking.ContainerPort = 8080
+	err = m.UpdateVirtualHost(deployment)
+	if err != nil {
+		t.Fatalf("UpdateVirtualHost failed: %v", err)
+	}
+
+	content, err = os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read updated config file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "test-deployment:8080") {
+		t.Error("updated config should contain port 8080")
+	}
+
+	if strings.Contains(string(content), "test-deployment:3000") {
+		t.Error("updated config should not contain old port 3000")
+	}
+}

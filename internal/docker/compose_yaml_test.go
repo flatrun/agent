@@ -3,6 +3,8 @@ package docker
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestMarshalComposeYAML_KeyOrder(t *testing.T) {
@@ -501,5 +503,116 @@ func TestMarshalComposeYAML_UnknownServiceKeys(t *testing.T) {
 	output := string(result)
 	if !strings.Contains(output, "x-priority:") {
 		t.Errorf("should preserve custom service extension fields")
+	}
+}
+
+func TestEnsureContainerName_AddsToAppService(t *testing.T) {
+	input := `name: myapp
+services:
+  app:
+    image: nginx
+`
+	result, err := EnsureContainerName(input, "my-deployment")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(result, "container_name: my-deployment") {
+		t.Errorf("should add container_name to app service, got:\n%s", result)
+	}
+}
+
+func TestEnsureContainerName_PrefersAppService(t *testing.T) {
+	input := `name: myapp
+services:
+  web:
+    image: nginx
+  app:
+    image: node
+`
+	result, err := EnsureContainerName(input, "my-deployment")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal([]byte(result), &compose); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+
+	services := compose["services"].(map[string]interface{})
+	appService := services["app"].(map[string]interface{})
+	webService := services["web"].(map[string]interface{})
+
+	if appService["container_name"] != "my-deployment" {
+		t.Errorf("app service should have container_name, got: %v", appService["container_name"])
+	}
+	if _, hasName := webService["container_name"]; hasName {
+		t.Errorf("web service should not have container_name")
+	}
+}
+
+func TestEnsureContainerName_FallsBackToFirstService(t *testing.T) {
+	input := `name: myapp
+services:
+  web:
+    image: nginx
+`
+	result, err := EnsureContainerName(input, "my-deployment")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(result, "container_name: my-deployment") {
+		t.Errorf("should add container_name to first service, got:\n%s", result)
+	}
+}
+
+func TestEnsureContainerName_PreservesExisting(t *testing.T) {
+	input := `name: myapp
+services:
+  app:
+    image: nginx
+    container_name: custom-name
+`
+	result, err := EnsureContainerName(input, "my-deployment")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(result, "container_name: custom-name") {
+		t.Errorf("should preserve existing container_name, got:\n%s", result)
+	}
+	if strings.Contains(result, "container_name: my-deployment") {
+		t.Errorf("should not override existing container_name")
+	}
+}
+
+func TestEnsureContainerName_EmptyName(t *testing.T) {
+	input := `name: myapp
+services:
+  app:
+    image: nginx
+`
+	result, err := EnsureContainerName(input, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result != input {
+		t.Errorf("empty deployment name should return unchanged content")
+	}
+}
+
+func TestEnsureContainerName_NoServices(t *testing.T) {
+	input := `name: myapp
+`
+	result, err := EnsureContainerName(input, "my-deployment")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result != input {
+		t.Errorf("no services should return unchanged content")
 	}
 }
