@@ -17,6 +17,7 @@ import (
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/certs"
+	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/database"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/files"
@@ -35,20 +36,21 @@ import (
 )
 
 type Server struct {
-	config            *config.Config
-	configPath        string
-	router            *gin.Engine
-	server            *http.Server
-	manager           *docker.Manager
-	certsDiscovery    *certs.Discovery
-	networksManager   *networks.Manager
-	pluginRegistry    *plugins.Registry
-	authMiddleware    *auth.Middleware
-	proxyOrchestrator *proxy.Orchestrator
-	filesManager      *files.Manager
-	servicesManager   *system.ServicesManager
-	databaseManager   *database.Manager
-	infraManager      *infra.Manager
+	config             *config.Config
+	configPath         string
+	router             *gin.Engine
+	server             *http.Server
+	manager            *docker.Manager
+	certsDiscovery     *certs.Discovery
+	networksManager    *networks.Manager
+	pluginRegistry     *plugins.Registry
+	authMiddleware     *auth.Middleware
+	proxyOrchestrator  *proxy.Orchestrator
+	filesManager       *files.Manager
+	servicesManager    *system.ServicesManager
+	databaseManager    *database.Manager
+	infraManager       *infra.Manager
+	credentialsManager *credentials.Manager
 }
 
 func New(cfg *config.Config, configPath string) *Server {
@@ -76,21 +78,23 @@ func New(cfg *config.Config, configPath string) *Server {
 	servicesManager := system.NewServicesManager()
 	databaseManager := database.NewManager()
 	infraManager := infra.NewManager(cfg)
+	credentialsManager := credentials.NewManager(cfg.DeploymentsPath)
 
 	s := &Server{
-		config:            cfg,
-		configPath:        configPath,
-		router:            router,
-		manager:           manager,
-		certsDiscovery:    certsDiscovery,
-		networksManager:   networksManager,
-		pluginRegistry:    pluginRegistry,
-		authMiddleware:    authMiddleware,
-		proxyOrchestrator: proxyOrchestrator,
-		filesManager:      filesManager,
-		servicesManager:   servicesManager,
-		databaseManager:   databaseManager,
-		infraManager:      infraManager,
+		config:             cfg,
+		configPath:         configPath,
+		router:             router,
+		manager:            manager,
+		certsDiscovery:     certsDiscovery,
+		networksManager:    networksManager,
+		pluginRegistry:     pluginRegistry,
+		authMiddleware:     authMiddleware,
+		proxyOrchestrator:  proxyOrchestrator,
+		filesManager:       filesManager,
+		servicesManager:    servicesManager,
+		databaseManager:    databaseManager,
+		infraManager:       infraManager,
+		credentialsManager: credentialsManager,
 	}
 
 	s.setupRoutes()
@@ -208,6 +212,19 @@ func (s *Server) setupRoutes() {
 			protected.POST("/infrastructure/:name/restart", s.restartInfraService)
 			protected.GET("/infrastructure/:name/logs", s.getInfraServiceLogs)
 			protected.POST("/infrastructure/migrate/:name", s.migrateToInfrastructure)
+
+			protected.GET("/registries", s.listRegistryTypes)
+			protected.GET("/registries/:slug", s.getRegistryType)
+			protected.POST("/registries", s.createRegistryType)
+			protected.PUT("/registries/:slug", s.updateRegistryType)
+			protected.DELETE("/registries/:slug", s.deleteRegistryType)
+
+			protected.GET("/credentials", s.listCredentials)
+			protected.GET("/credentials/:id", s.getCredential)
+			protected.POST("/credentials", s.createCredential)
+			protected.PUT("/credentials/:id", s.updateCredential)
+			protected.DELETE("/credentials/:id", s.deleteCredential)
+			protected.POST("/credentials/:id/test", s.testCredential)
 		}
 	}
 }
@@ -288,6 +305,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 		AutoStart                 bool                    `json:"auto_start"`
 		UseSharedDatabase         bool                    `json:"use_shared_database"`
 		ExistingDatabaseContainer string                  `json:"existing_database_container,omitempty"`
+		RegistryCredential *struct {
+			CredentialID   string `json:"credential_id,omitempty"`
+			Username       string `json:"username,omitempty"`
+			Password       string `json:"password,omitempty"`
+			SaveCredential bool   `json:"save_credential,omitempty"`
+			CredentialName string `json:"credential_name,omitempty"`
+		} `json:"registry_credential,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -397,6 +421,46 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 	}
 
+	var registryLoginError string
+	if req.RegistryCredential != nil {
+		var username, password string
+
+		if req.RegistryCredential.CredentialID != "" {
+			cred, err := s.credentialsManager.GetCredential(req.RegistryCredential.CredentialID)
+			if err != nil {
+				registryLoginError = "Failed to load credential: " + err.Error()
+				log.Printf("Warning: failed to load credential %s: %v", req.RegistryCredential.CredentialID, err)
+			} else {
+				username = cred.Username
+				password = cred.Password
+			}
+		} else if req.RegistryCredential.Username != "" && req.RegistryCredential.Password != "" {
+			username = req.RegistryCredential.Username
+			password = req.RegistryCredential.Password
+
+			if req.RegistryCredential.SaveCredential && req.RegistryCredential.CredentialName != "" {
+				_, err := s.credentialsManager.CreateCredential(
+					req.RegistryCredential.CredentialName,
+					"docker-hub",
+					username,
+					password,
+					"",
+					true,
+				)
+				if err != nil {
+					log.Printf("Warning: failed to save credential: %v", err)
+				}
+			}
+		}
+
+		if username != "" && password != "" && registryLoginError == "" {
+			if err := credentials.DockerLogin("", username, password); err != nil {
+				registryLoginError = err.Error()
+				log.Printf("Warning: registry login failed: %v", err)
+			}
+		}
+	}
+
 	var startOutput string
 	var startError string
 	if req.AutoStart {
@@ -435,10 +499,11 @@ func (s *Server) createDeployment(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"message":      "Deployment created",
 		"name":         req.Name,
-		"proxy_result": proxyResult,
-		"auto_started": req.AutoStart,
-		"start_output": startOutput,
-		"start_error":  startError,
+		"proxy_result":         proxyResult,
+		"auto_started":         req.AutoStart,
+		"start_output":         startOutput,
+		"start_error":          startError,
+		"registry_login_error": registryLoginError,
 	})
 }
 
@@ -2718,7 +2783,8 @@ func (s *Server) removeImage(c *gin.Context) {
 
 func (s *Server) pullImage(c *gin.Context) {
 	var req struct {
-		Name string `json:"name" binding:"required"`
+		Name         string `json:"name" binding:"required"`
+		CredentialID string `json:"credential_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2728,16 +2794,41 @@ func (s *Server) pullImage(c *gin.Context) {
 		return
 	}
 
-	if err := s.networksManager.PullImage(req.Name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
+	var cred *models.RegistryCredential
+	var err error
+
+	if req.CredentialID != "" {
+		cred, err = s.credentialsManager.GetCredential(req.CredentialID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid credential_id: " + err.Error(),
+			})
+			return
+		}
+	} else {
+		cred = s.credentialsManager.FindCredentialForImage(req.Name)
+	}
+
+	if cred != nil {
+		if err := credentials.PullImageWithAuth(req.Name, cred); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+	} else {
+		if err := s.networksManager.PullImage(req.Name); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Image pulled",
-		"name":    req.Name,
+		"message":         "Image pulled",
+		"name":            req.Name,
+		"used_credential": cred != nil,
 	})
 }
 
@@ -3532,5 +3623,252 @@ func (s *Server) migrateToInfrastructure(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Deployment marked as infrastructure",
 		"name":    name,
+	})
+}
+
+func (s *Server) listRegistryTypes(c *gin.Context) {
+	types := s.credentialsManager.ListRegistryTypes()
+	c.JSON(http.StatusOK, gin.H{
+		"registry_types": types,
+	})
+}
+
+func (s *Server) getRegistryType(c *gin.Context) {
+	slug := c.Param("slug")
+
+	rt, err := s.credentialsManager.GetRegistryType(slug)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"registry_type": rt,
+	})
+}
+
+func (s *Server) createRegistryType(c *gin.Context) {
+	var req struct {
+		Name        string   `json:"name" binding:"required"`
+		URLPatterns []string `json:"url_patterns" binding:"required"`
+		AuthType    string   `json:"auth_type"`
+		LoginURL    string   `json:"login_url"`
+		DocsURL     string   `json:"docs_url"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	authType := models.AuthTypeBasic
+	if req.AuthType == "token" {
+		authType = models.AuthTypeToken
+	}
+
+	rt, err := s.credentialsManager.CreateRegistryType(req.Name, req.URLPatterns, authType, req.LoginURL, req.DocsURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":       "Registry type created",
+		"registry_type": rt,
+	})
+}
+
+func (s *Server) updateRegistryType(c *gin.Context) {
+	slug := c.Param("slug")
+
+	var req struct {
+		Name        string   `json:"name"`
+		URLPatterns []string `json:"url_patterns"`
+		AuthType    string   `json:"auth_type"`
+		LoginURL    string   `json:"login_url"`
+		DocsURL     string   `json:"docs_url"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var authType models.AuthType
+	if req.AuthType == "basic" {
+		authType = models.AuthTypeBasic
+	} else if req.AuthType == "token" {
+		authType = models.AuthTypeToken
+	}
+
+	rt, err := s.credentialsManager.UpdateRegistryType(slug, req.Name, req.URLPatterns, authType, req.LoginURL, req.DocsURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "Registry type updated",
+		"registry_type": rt,
+	})
+}
+
+func (s *Server) deleteRegistryType(c *gin.Context) {
+	slug := c.Param("slug")
+
+	if err := s.credentialsManager.DeleteRegistryType(slug); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Registry type deleted",
+		"slug":    slug,
+	})
+}
+
+func (s *Server) listCredentials(c *gin.Context) {
+	creds := s.credentialsManager.ListCredentials()
+	c.JSON(http.StatusOK, gin.H{
+		"credentials": creds,
+	})
+}
+
+func (s *Server) getCredential(c *gin.Context) {
+	id := c.Param("id")
+
+	cred, err := s.credentialsManager.GetCredential(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	rt, _ := s.credentialsManager.GetRegistryType(cred.RegistryTypeSlug)
+
+	c.JSON(http.StatusOK, gin.H{
+		"credential": models.RegistryCredentialWithType{
+			RegistryCredential: *cred,
+			RegistryType:       rt,
+		},
+	})
+}
+
+func (s *Server) createCredential(c *gin.Context) {
+	var req struct {
+		Name             string `json:"name" binding:"required"`
+		RegistryTypeSlug string `json:"registry_type_slug" binding:"required"`
+		Username         string `json:"username" binding:"required"`
+		Password         string `json:"password" binding:"required"`
+		Email            string `json:"email"`
+		IsDefault        bool   `json:"is_default"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	cred, err := s.credentialsManager.CreateCredential(req.Name, req.RegistryTypeSlug, req.Username, req.Password, req.Email, req.IsDefault)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	rt, _ := s.credentialsManager.GetRegistryType(cred.RegistryTypeSlug)
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Credential created",
+		"credential": models.RegistryCredentialWithType{
+			RegistryCredential: *cred,
+			RegistryType:       rt,
+		},
+	})
+}
+
+func (s *Server) updateCredential(c *gin.Context) {
+	id := c.Param("id")
+
+	var req struct {
+		Name      string `json:"name"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		Email     string `json:"email"`
+		IsDefault *bool  `json:"is_default"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	cred, err := s.credentialsManager.UpdateCredential(id, req.Name, req.Username, req.Password, req.Email, req.IsDefault)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	rt, _ := s.credentialsManager.GetRegistryType(cred.RegistryTypeSlug)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Credential updated",
+		"credential": models.RegistryCredentialWithType{
+			RegistryCredential: *cred,
+			RegistryType:       rt,
+		},
+	})
+}
+
+func (s *Server) deleteCredential(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := s.credentialsManager.DeleteCredential(id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Credential deleted",
+		"id":      id,
+	})
+}
+
+func (s *Server) testCredential(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := s.credentialsManager.TestCredential(id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   err.Error(),
+			"success": false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Credential test successful",
+		"success": true,
 	})
 }
