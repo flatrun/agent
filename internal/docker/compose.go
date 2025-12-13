@@ -56,8 +56,86 @@ func (c *ComposeExecutor) PS(deploymentPath string) (string, error) {
 	return c.runCompose(deploymentPath, "ps", "--format", "json")
 }
 
-func (c *ComposeExecutor) Pull(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "pull")
+type ImageInfo struct {
+	Service   string `json:"service"`
+	Image     string `json:"image"`
+	IsLatest  bool   `json:"is_latest"`
+	IsBuild   bool   `json:"is_build"`
+}
+
+func (c *ComposeExecutor) Pull(deploymentPath string, onlyLatest bool) (string, error) {
+	if onlyLatest {
+		services, err := c.getLatestTaggedServices(deploymentPath)
+		if err != nil || len(services) == 0 {
+			return "", err
+		}
+		args := []string{"pull", "--ignore-buildable", "--policy", "always"}
+		args = append(args, services...)
+		return c.runCompose(deploymentPath, args...)
+	}
+	return c.runCompose(deploymentPath, "pull", "--ignore-buildable", "--policy", "always")
+}
+
+func (c *ComposeExecutor) GetImageInfo(deploymentPath string) ([]ImageInfo, error) {
+	composePath := c.findComposeFile(deploymentPath)
+	if composePath == "" {
+		return nil, fmt.Errorf("no compose file found in %s", deploymentPath)
+	}
+
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var compose struct {
+		Services map[string]struct {
+			Image string      `yaml:"image"`
+			Build interface{} `yaml:"build"`
+		} `yaml:"services"`
+	}
+
+	if err := yaml.Unmarshal(data, &compose); err != nil {
+		return nil, err
+	}
+
+	var images []ImageInfo
+	for name, svc := range compose.Services {
+		info := ImageInfo{
+			Service: name,
+			Image:   svc.Image,
+			IsBuild: svc.Build != nil,
+		}
+		if svc.Image != "" {
+			info.IsLatest = isLatestTag(svc.Image)
+		}
+		images = append(images, info)
+	}
+
+	return images, nil
+}
+
+func (c *ComposeExecutor) getLatestTaggedServices(deploymentPath string) ([]string, error) {
+	images, err := c.GetImageInfo(deploymentPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var services []string
+	for _, img := range images {
+		if img.IsLatest && !img.IsBuild {
+			services = append(services, img.Service)
+		}
+	}
+	return services, nil
+}
+
+func isLatestTag(image string) bool {
+	if !strings.Contains(image, ":") {
+		return true
+	}
+	parts := strings.Split(image, ":")
+	tag := parts[len(parts)-1]
+	return tag == "latest"
 }
 
 func (c *ComposeExecutor) getProjectName(deploymentPath string) string {
@@ -244,4 +322,37 @@ func (c *ComposeExecutor) GetStatus(deploymentPath string) (string, error) {
 	}
 
 	return "unknown", nil
+}
+
+func (c *ComposeExecutor) ExecCommand(containerID string, command string) (string, error) {
+	shells := []string{"/bin/bash", "/bin/sh", "bash", "sh"}
+
+	for _, shell := range shells {
+		args := []string{"exec", containerID, shell, "-c", command}
+		cmd := exec.Command("docker", args...)
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+		output := stdout.String() + stderr.String()
+
+		if err != nil {
+			// Only try next shell if the shell itself wasn't found
+			lowerOutput := strings.ToLower(output)
+			shellNotFound := strings.Contains(lowerOutput, "oci runtime exec failed") ||
+				strings.Contains(lowerOutput, fmt.Sprintf("%s: not found", shell)) ||
+				strings.Contains(lowerOutput, fmt.Sprintf("%s: no such file", shell)) ||
+				strings.Contains(lowerOutput, "executable file not found in $path")
+			if shellNotFound {
+				continue
+			}
+			return output, fmt.Errorf("%w: %s", err, output)
+		}
+
+		return output, nil
+	}
+
+	return "", fmt.Errorf("no compatible shell found in container")
 }

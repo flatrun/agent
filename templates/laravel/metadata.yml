@@ -5,6 +5,27 @@ logo: https://cdn.simpleicons.org/laravel
 category: framework
 priority: 80
 container_port: 8000
+quick_actions:
+  - id: optimize
+    name: Optimize
+    command: php artisan optimize
+    description: Clear and rebuild all caches
+    icon: pi pi-bolt
+  - id: migrate
+    name: Run Migrations
+    command: php artisan migrate --force
+    description: Run database migrations
+    icon: pi pi-database
+  - id: cache-clear
+    name: Clear Cache
+    command: php artisan cache:clear
+    description: Flush the application cache
+    icon: pi pi-trash
+  - id: config-clear
+    name: Clear Config
+    command: php artisan config:clear
+    description: Remove the configuration cache file
+    icon: pi pi-cog
 mounts:
   - id: app
     name: Application
