@@ -56,8 +56,86 @@ func (c *ComposeExecutor) PS(deploymentPath string) (string, error) {
 	return c.runCompose(deploymentPath, "ps", "--format", "json")
 }
 
-func (c *ComposeExecutor) Pull(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "pull")
+type ImageInfo struct {
+	Service   string `json:"service"`
+	Image     string `json:"image"`
+	IsLatest  bool   `json:"is_latest"`
+	IsBuild   bool   `json:"is_build"`
+}
+
+func (c *ComposeExecutor) Pull(deploymentPath string, onlyLatest bool) (string, error) {
+	if onlyLatest {
+		services, err := c.getLatestTaggedServices(deploymentPath)
+		if err != nil || len(services) == 0 {
+			return "", err
+		}
+		args := []string{"pull", "--ignore-buildable", "--policy", "always"}
+		args = append(args, services...)
+		return c.runCompose(deploymentPath, args...)
+	}
+	return c.runCompose(deploymentPath, "pull", "--ignore-buildable", "--policy", "always")
+}
+
+func (c *ComposeExecutor) GetImageInfo(deploymentPath string) ([]ImageInfo, error) {
+	composePath := c.findComposeFile(deploymentPath)
+	if composePath == "" {
+		return nil, fmt.Errorf("no compose file found in %s", deploymentPath)
+	}
+
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var compose struct {
+		Services map[string]struct {
+			Image string      `yaml:"image"`
+			Build interface{} `yaml:"build"`
+		} `yaml:"services"`
+	}
+
+	if err := yaml.Unmarshal(data, &compose); err != nil {
+		return nil, err
+	}
+
+	var images []ImageInfo
+	for name, svc := range compose.Services {
+		info := ImageInfo{
+			Service: name,
+			Image:   svc.Image,
+			IsBuild: svc.Build != nil,
+		}
+		if svc.Image != "" {
+			info.IsLatest = isLatestTag(svc.Image)
+		}
+		images = append(images, info)
+	}
+
+	return images, nil
+}
+
+func (c *ComposeExecutor) getLatestTaggedServices(deploymentPath string) ([]string, error) {
+	images, err := c.GetImageInfo(deploymentPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var services []string
+	for _, img := range images {
+		if img.IsLatest && !img.IsBuild {
+			services = append(services, img.Service)
+		}
+	}
+	return services, nil
+}
+
+func isLatestTag(image string) bool {
+	if !strings.Contains(image, ":") {
+		return true
+	}
+	parts := strings.Split(image, ":")
+	tag := parts[len(parts)-1]
+	return tag == "latest"
 }
 
 func (c *ComposeExecutor) getProjectName(deploymentPath string) string {

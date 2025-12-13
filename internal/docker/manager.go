@@ -161,6 +161,30 @@ func (m *Manager) RestartDeployment(name string) (string, error) {
 	return m.executor.Restart(deployment.Path)
 }
 
+func (m *Manager) PullDeployment(name string, onlyLatest bool) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	return m.executor.Pull(deployment.Path, onlyLatest)
+}
+
+func (m *Manager) GetDeploymentImages(name string) ([]ImageInfo, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return m.executor.GetImageInfo(deployment.Path)
+}
+
 func (m *Manager) GetDeploymentLogs(name string, tail int) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)

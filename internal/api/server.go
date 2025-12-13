@@ -125,6 +125,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/start", s.startDeployment)
 			protected.POST("/deployments/:name/stop", s.stopDeployment)
 			protected.POST("/deployments/:name/restart", s.restartDeployment)
+			protected.POST("/deployments/:name/pull", s.pullDeploymentImage)
+			protected.GET("/deployments/:name/images", s.getDeploymentImages)
 			protected.GET("/deployments/:name/logs", s.getDeploymentLogs)
 			protected.GET("/deployments/:name/compose", s.getDeploymentCompose)
 			protected.GET("/networks", s.listNetworks)
@@ -852,6 +854,46 @@ func (s *Server) restartDeployment(c *gin.Context) {
 		"message": "Deployment restarted",
 		"name":    name,
 		"output":  output,
+	})
+}
+
+func (s *Server) pullDeploymentImage(c *gin.Context) {
+	name := c.Param("name")
+
+	var req struct {
+		OnlyLatest bool `json:"only_latest"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	output, err := s.manager.PullDeployment(name, req.OnlyLatest)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  err.Error(),
+			"output": output,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Images pulled successfully",
+		"name":    name,
+		"output":  output,
+	})
+}
+
+func (s *Server) getDeploymentImages(c *gin.Context) {
+	name := c.Param("name")
+
+	images, err := s.manager.GetDeploymentImages(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"images": images,
 	})
 }
 
