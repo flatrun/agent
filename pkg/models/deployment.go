@@ -24,11 +24,21 @@ type Service struct {
 }
 
 type ServiceMetadata struct {
-	Name        string            `yaml:"name" json:"name"`
-	Type        string            `yaml:"type" json:"type"`
-	Networking  NetworkingConfig  `yaml:"networking" json:"networking"`
-	SSL         SSLConfig         `yaml:"ssl" json:"ssl"`
-	HealthCheck HealthCheckConfig `yaml:"healthcheck" json:"healthcheck"`
+	Name         string            `yaml:"name" json:"name"`
+	Type         string            `yaml:"type" json:"type"`
+	Networking   NetworkingConfig  `yaml:"networking" json:"networking"`
+	SSL          SSLConfig         `yaml:"ssl" json:"ssl"`
+	HealthCheck  HealthCheckConfig `yaml:"healthcheck" json:"healthcheck"`
+	QuickActions []QuickAction     `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
+}
+
+type QuickAction struct {
+	ID          string `yaml:"id" json:"id"`
+	Name        string `yaml:"name" json:"name"`
+	Command     string `yaml:"command" json:"command"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Icon        string `yaml:"icon,omitempty" json:"icon,omitempty"`
+	Service     string `yaml:"service,omitempty" json:"service,omitempty"`
 }
 
 type NetworkingConfig struct {

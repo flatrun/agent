@@ -323,3 +323,36 @@ func (c *ComposeExecutor) GetStatus(deploymentPath string) (string, error) {
 
 	return "unknown", nil
 }
+
+func (c *ComposeExecutor) ExecCommand(containerID string, command string) (string, error) {
+	shells := []string{"/bin/bash", "/bin/sh", "bash", "sh"}
+
+	for _, shell := range shells {
+		args := []string{"exec", containerID, shell, "-c", command}
+		cmd := exec.Command("docker", args...)
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+		output := stdout.String() + stderr.String()
+
+		if err != nil {
+			// Only try next shell if the shell itself wasn't found
+			lowerOutput := strings.ToLower(output)
+			shellNotFound := strings.Contains(lowerOutput, "oci runtime exec failed") ||
+				strings.Contains(lowerOutput, fmt.Sprintf("%s: not found", shell)) ||
+				strings.Contains(lowerOutput, fmt.Sprintf("%s: no such file", shell)) ||
+				strings.Contains(lowerOutput, "executable file not found in $path")
+			if shellNotFound {
+				continue
+			}
+			return output, fmt.Errorf("%w: %s", err, output)
+		}
+
+		return output, nil
+	}
+
+	return "", fmt.Errorf("no compatible shell found in container")
+}

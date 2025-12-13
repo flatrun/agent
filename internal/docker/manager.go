@@ -2,6 +2,7 @@ package docker
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -77,16 +78,26 @@ func (m *Manager) populateContainerInfo(deployment *models.Deployment) {
 	}
 
 	var containers []composeContainer
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || line == "[]" {
-			continue
+	trimmed := strings.TrimSpace(output)
+
+	// Try parsing as JSON array first (newer docker compose versions)
+	if strings.HasPrefix(trimmed, "[") {
+		_ = json.Unmarshal([]byte(trimmed), &containers)
+	}
+
+	// Fallback: try newline-separated JSON objects (older versions)
+	if len(containers) == 0 {
+		for _, line := range strings.Split(output, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || line == "[]" {
+				continue
+			}
+			var container composeContainer
+			if err := json.Unmarshal([]byte(line), &container); err != nil {
+				continue
+			}
+			containers = append(containers, container)
 		}
-		var container composeContainer
-		if err := json.Unmarshal([]byte(line), &container); err != nil {
-			continue
-		}
-		containers = append(containers, container)
 	}
 
 	for i := range deployment.Services {
@@ -183,6 +194,65 @@ func (m *Manager) GetDeploymentImages(name string) ([]ImageInfo, error) {
 	}
 
 	return m.executor.GetImageInfo(deployment.Path)
+}
+
+func (m *Manager) ExecuteQuickAction(name string, actionID string) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	if deployment.Metadata == nil || len(deployment.Metadata.QuickActions) == 0 {
+		return "", fmt.Errorf("no quick actions defined for deployment")
+	}
+
+	var action *models.QuickAction
+	for _, a := range deployment.Metadata.QuickActions {
+		if a.ID == actionID {
+			actionCopy := a
+			action = &actionCopy
+			break
+		}
+	}
+
+	if action == nil {
+		return "", fmt.Errorf("quick action not found: %s", actionID)
+	}
+
+	m.populateContainerInfo(deployment)
+
+	var containerID string
+	serviceName := action.Service
+
+	if serviceName != "" {
+		for _, svc := range deployment.Services {
+			if svc.Name == serviceName && svc.ContainerID != "" {
+				containerID = svc.ContainerID
+				break
+			}
+		}
+	}
+
+	if containerID == "" {
+		for _, svc := range deployment.Services {
+			if svc.ContainerID != "" {
+				containerID = svc.ContainerID
+				break
+			}
+		}
+	}
+
+	if containerID == "" {
+		if serviceName != "" {
+			return "", fmt.Errorf("no running container found for service: %s", serviceName)
+		}
+		return "", fmt.Errorf("no running containers found in deployment")
+	}
+
+	return m.executor.ExecCommand(containerID, action.Command)
 }
 
 func (m *Manager) GetDeploymentLogs(name string, tail int) (string, error) {

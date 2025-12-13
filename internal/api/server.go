@@ -127,6 +127,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/restart", s.restartDeployment)
 			protected.POST("/deployments/:name/pull", s.pullDeploymentImage)
 			protected.GET("/deployments/:name/images", s.getDeploymentImages)
+			protected.POST("/deployments/:name/actions/:actionId", s.executeQuickAction)
 			protected.GET("/deployments/:name/logs", s.getDeploymentLogs)
 			protected.GET("/deployments/:name/compose", s.getDeploymentCompose)
 			protected.GET("/networks", s.listNetworks)
@@ -894,6 +895,26 @@ func (s *Server) getDeploymentImages(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"images": images,
+	})
+}
+
+func (s *Server) executeQuickAction(c *gin.Context) {
+	name := c.Param("name")
+	actionID := c.Param("actionId")
+
+	output, err := s.manager.ExecuteQuickAction(name, actionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  err.Error(),
+			"output": output,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Action executed successfully",
+		"action_id": actionID,
+		"output":    output,
 	})
 }
 
