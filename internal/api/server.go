@@ -24,6 +24,7 @@ import (
 	"github.com/flatrun/agent/internal/infra"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/proxy"
+	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
@@ -51,6 +52,7 @@ type Server struct {
 	databaseManager    *database.Manager
 	infraManager       *infra.Manager
 	credentialsManager *credentials.Manager
+	securityManager    *security.Manager
 }
 
 func New(cfg *config.Config, configPath string) *Server {
@@ -80,6 +82,15 @@ func New(cfg *config.Config, configPath string) *Server {
 	infraManager := infra.NewManager(cfg)
 	credentialsManager := credentials.NewManager(cfg.DeploymentsPath)
 
+	var securityManager *security.Manager
+	if cfg.Security.Enabled {
+		var err error
+		securityManager, err = security.NewManager(cfg.DeploymentsPath)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize security manager: %v", err)
+		}
+	}
+
 	s := &Server{
 		config:             cfg,
 		configPath:         configPath,
@@ -95,6 +106,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		databaseManager:    databaseManager,
 		infraManager:       infraManager,
 		credentialsManager: credentialsManager,
+		securityManager:    securityManager,
 	}
 
 	s.setupRoutes()
@@ -125,6 +137,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/start", s.startDeployment)
 			protected.POST("/deployments/:name/stop", s.stopDeployment)
 			protected.POST("/deployments/:name/restart", s.restartDeployment)
+			protected.POST("/deployments/:name/rebuild", s.rebuildDeployment)
 			protected.POST("/deployments/:name/pull", s.pullDeploymentImage)
 			protected.GET("/deployments/:name/images", s.getDeploymentImages)
 			protected.POST("/deployments/:name/actions/:actionId", s.executeQuickAction)
@@ -228,7 +241,27 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/credentials/:id", s.updateCredential)
 			protected.DELETE("/credentials/:id", s.deleteCredential)
 			protected.POST("/credentials/:id/test", s.testCredential)
+
+			// Security endpoints
+			protected.GET("/security/stats", s.getSecurityStats)
+			protected.GET("/security/events", s.listSecurityEvents)
+			protected.GET("/security/events/:id", s.getSecurityEvent)
+			protected.POST("/security/cleanup", s.cleanupSecurityEvents)
+			protected.GET("/security/blocked-ips", s.listBlockedIPs)
+			protected.POST("/security/blocked-ips", s.blockIP)
+			protected.DELETE("/security/blocked-ips/:ip", s.unblockIP)
+			protected.GET("/security/ips/:ip/events", s.getEventsByIP)
+			protected.GET("/security/protected-routes", s.listProtectedRoutes)
+			protected.POST("/security/protected-routes", s.addProtectedRoute)
+			protected.PUT("/security/protected-routes/:id", s.updateProtectedRoute)
+			protected.DELETE("/security/protected-routes/:id", s.deleteProtectedRoute)
+			protected.GET("/deployments/:name/security", s.getDeploymentSecurity)
+			protected.PUT("/deployments/:name/security", s.updateDeploymentSecurity)
+			protected.GET("/deployments/:name/security/events", s.getDeploymentSecurityEvents)
 		}
+
+		// Security event ingest endpoint (no auth - called by nginx Lua)
+		api.POST("/security/events/ingest", s.ingestSecurityEvent)
 	}
 }
 
@@ -853,6 +886,25 @@ func (s *Server) restartDeployment(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Deployment restarted",
+		"name":    name,
+		"output":  output,
+	})
+}
+
+func (s *Server) rebuildDeployment(c *gin.Context) {
+	name := c.Param("name")
+
+	output, err := s.manager.RebuildDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  err.Error(),
+			"output": output,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Deployment rebuilt",
 		"name":    name,
 		"output":  output,
 	})

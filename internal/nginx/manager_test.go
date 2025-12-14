@@ -577,6 +577,164 @@ func TestGenerateConfig_HealthPathRootNoDuplicate(t *testing.T) {
 	}
 }
 
+func TestOpenRestyCompatibility(t *testing.T) {
+	t.Run("Generated config is OpenResty compatible", func(t *testing.T) {
+		cfg := &config.NginxConfig{
+			ContainerWebrootPath: "/usr/share/nginx/html",
+		}
+		m := NewManager(cfg, "/deployments", "")
+
+		deployment := &models.Deployment{
+			Name: "openresty-test",
+			Metadata: &models.ServiceMetadata{
+				Networking: models.NetworkingConfig{
+					Expose:        true,
+					Domain:        "openresty.example.com",
+					ContainerPort: 8080,
+				},
+				SSL: models.SSLConfig{
+					Enabled: false,
+				},
+			},
+		}
+
+		configContent, err := m.generateConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateConfig failed: %v", err)
+		}
+
+		// OpenResty requires standard nginx directives - verify key ones
+		requiredDirectives := []string{
+			"server {",
+			"listen 80;",
+			"server_name openresty.example.com;",
+			"location",
+			"proxy_pass",
+			"proxy_http_version 1.1;",
+			"proxy_set_header",
+		}
+
+		for _, directive := range requiredDirectives {
+			if !strings.Contains(configContent, directive) {
+				t.Errorf("Config missing required directive: %s", directive)
+			}
+		}
+
+		// Verify no nginx-specific syntax that OpenResty doesn't support
+		incompatiblePatterns := []string{
+			"ngx_http_v2_module", // Only if not installed
+		}
+
+		for _, pattern := range incompatiblePatterns {
+			if strings.Contains(configContent, pattern) {
+				t.Errorf("Config contains potentially incompatible pattern: %s", pattern)
+			}
+		}
+	})
+
+	t.Run("SSL config is OpenResty compatible", func(t *testing.T) {
+		cfg := &config.NginxConfig{
+			ContainerWebrootPath: "/usr/share/nginx/html",
+		}
+		m := NewManager(cfg, "/deployments", "")
+
+		deployment := &models.Deployment{
+			Name: "openresty-ssl-test",
+			Metadata: &models.ServiceMetadata{
+				Networking: models.NetworkingConfig{
+					Expose:        true,
+					Domain:        "secure.example.com",
+					ContainerPort: 8080,
+				},
+				SSL: models.SSLConfig{
+					Enabled: true,
+				},
+			},
+		}
+
+		configContent, err := m.generateConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateConfig failed: %v", err)
+		}
+
+		// OpenResty SSL directives
+		sslDirectives := []string{
+			"listen 443 ssl;",
+			"ssl_certificate",
+			"ssl_certificate_key",
+			"ssl_protocols TLSv1.2 TLSv1.3;",
+			"ssl_prefer_server_ciphers",
+		}
+
+		for _, directive := range sslDirectives {
+			if !strings.Contains(configContent, directive) {
+				t.Errorf("SSL config missing directive: %s", directive)
+			}
+		}
+	})
+}
+
+func TestConfigImageCompatibility(t *testing.T) {
+	tests := []struct {
+		name        string
+		image       string
+		shouldWork  bool
+	}{
+		{
+			name:        "nginx:alpine works",
+			image:       "nginx:alpine",
+			shouldWork:  true,
+		},
+		{
+			name:        "openresty/openresty:alpine works",
+			image:       "openresty/openresty:alpine",
+			shouldWork:  true,
+		},
+		{
+			name:        "nginx:latest works",
+			image:       "nginx:latest",
+			shouldWork:  true,
+		},
+		{
+			name:        "openresty/openresty:latest works",
+			image:       "openresty/openresty:latest",
+			shouldWork:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.NginxConfig{
+				Image:                tt.image,
+				ContainerWebrootPath: "/usr/share/nginx/html",
+			}
+
+			m := NewManager(cfg, "/deployments", "")
+
+			deployment := &models.Deployment{
+				Name: "image-compat-test",
+				Metadata: &models.ServiceMetadata{
+					Networking: models.NetworkingConfig{
+						Expose:        true,
+						Domain:        "test.example.com",
+						ContainerPort: 3000,
+					},
+				},
+			}
+
+			configContent, err := m.generateConfig(deployment)
+			if tt.shouldWork {
+				if err != nil {
+					t.Errorf("Expected config generation to succeed for %s, got error: %v", tt.image, err)
+				}
+				if configContent == "" {
+					t.Errorf("Expected non-empty config for %s", tt.image)
+				}
+			}
+		})
+	}
+}
+
 func TestUpdateVirtualHost_PortChange(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "nginx-test-*")
 	if err != nil {

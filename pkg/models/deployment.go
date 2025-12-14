@@ -24,12 +24,13 @@ type Service struct {
 }
 
 type ServiceMetadata struct {
-	Name         string            `yaml:"name" json:"name"`
-	Type         string            `yaml:"type" json:"type"`
-	Networking   NetworkingConfig  `yaml:"networking" json:"networking"`
-	SSL          SSLConfig         `yaml:"ssl" json:"ssl"`
-	HealthCheck  HealthCheckConfig `yaml:"healthcheck" json:"healthcheck"`
-	QuickActions []QuickAction     `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
+	Name         string                     `yaml:"name" json:"name"`
+	Type         string                     `yaml:"type" json:"type"`
+	Networking   NetworkingConfig           `yaml:"networking" json:"networking"`
+	SSL          SSLConfig                  `yaml:"ssl" json:"ssl"`
+	HealthCheck  HealthCheckConfig          `yaml:"healthcheck" json:"healthcheck"`
+	QuickActions []QuickAction              `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
+	Security     *DeploymentSecurityConfig  `yaml:"security,omitempty" json:"security,omitempty"`
 }
 
 type QuickAction struct {
@@ -67,3 +68,20 @@ const (
 	StatusError   DeploymentStatus = "error"
 	StatusUnknown DeploymentStatus = "unknown"
 )
+
+type DeploymentSecurityConfig struct {
+	ProtectedPaths []ProtectedPath       `yaml:"protected_paths,omitempty" json:"protected_paths,omitempty"`
+	RateLimits     []DeploymentRateLimit `yaml:"rate_limits,omitempty" json:"rate_limits,omitempty"`
+}
+
+type ProtectedPath struct {
+	Pattern string `yaml:"pattern" json:"pattern"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+}
+
+type DeploymentRateLimit struct {
+	Path    string `yaml:"path" json:"path"`
+	Rate    int    `yaml:"rate" json:"rate"`
+	Burst   int    `yaml:"burst" json:"burst"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+}
