@@ -47,6 +47,11 @@ func (c *ComposeExecutor) Restart(deploymentPath string) (string, error) {
 	return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
 }
 
+func (c *ComposeExecutor) Rebuild(deploymentPath string) (string, error) {
+	_, _ = c.runCompose(deploymentPath, "down", "--remove-orphans")
+	return c.runCompose(deploymentPath, "up", "-d", "--build", "--remove-orphans")
+}
+
 func (c *ComposeExecutor) Logs(deploymentPath string, tail int) (string, error) {
 	tailStr := fmt.Sprintf("%d", tail)
 	return c.runCompose(deploymentPath, "logs", "--tail", tailStr)

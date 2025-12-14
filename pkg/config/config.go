@@ -18,6 +18,7 @@ type Config struct {
 	Logging         LoggingConfig        `yaml:"logging"`
 	Health          HealthConfig         `yaml:"health"`
 	Infrastructure  InfrastructureConfig `yaml:"infrastructure"`
+	Security        SecurityConfig       `yaml:"security"`
 }
 
 type DomainConfig struct {
@@ -107,6 +108,16 @@ type SharedRedisConfig struct {
 	Host      string `yaml:"host" json:"host"`
 	Port      int    `yaml:"port" json:"port"`
 	Password  string `yaml:"password" json:"password"`
+}
+
+type SecurityConfig struct {
+	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	ScanInterval       time.Duration `yaml:"scan_interval" json:"scan_interval"`
+	RetentionDays      int           `yaml:"retention_days" json:"retention_days"`
+	RateThreshold      int           `yaml:"rate_threshold" json:"rate_threshold"`
+	AutoBlockEnabled   bool          `yaml:"auto_block_enabled" json:"auto_block_enabled"`
+	AutoBlockThreshold int           `yaml:"auto_block_threshold" json:"auto_block_threshold"`
+	AutoBlockDuration  time.Duration `yaml:"auto_block_duration" json:"auto_block_duration"`
 }
 
 func FindConfigPath(providedPath string) string {
@@ -216,6 +227,22 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Certbot.Image == "" {
 		cfg.Certbot.Image = "certbot/certbot"
+	}
+	// Security defaults
+	if cfg.Security.ScanInterval == 0 {
+		cfg.Security.ScanInterval = 30 * time.Second
+	}
+	if cfg.Security.RetentionDays == 0 {
+		cfg.Security.RetentionDays = 30
+	}
+	if cfg.Security.RateThreshold == 0 {
+		cfg.Security.RateThreshold = 100
+	}
+	if cfg.Security.AutoBlockThreshold == 0 {
+		cfg.Security.AutoBlockThreshold = 50
+	}
+	if cfg.Security.AutoBlockDuration == 0 {
+		cfg.Security.AutoBlockDuration = 24 * time.Hour
 	}
 }
 

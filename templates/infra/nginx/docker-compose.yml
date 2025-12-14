@@ -1,7 +1,7 @@
 name: ${NAME}
 services:
   nginx:
-    image: nginx:alpine
+    image: openresty/openresty:alpine
     container_name: ${NAME}
     restart: unless-stopped
     ports:
@@ -11,6 +11,8 @@ services:
       - ./conf.d:/etc/nginx/conf.d:ro
       - ./certs:/etc/letsencrypt:ro
       - ./html:/usr/share/nginx/html:ro
+      - ./lua:/etc/nginx/lua:ro
+      - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
     networks:
       - proxy
 

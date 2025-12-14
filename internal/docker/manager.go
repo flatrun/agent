@@ -172,6 +172,18 @@ func (m *Manager) RestartDeployment(name string) (string, error) {
 	return m.executor.Restart(deployment.Path)
 }
 
+func (m *Manager) RebuildDeployment(name string) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	return m.executor.Rebuild(deployment.Path)
+}
+
 func (m *Manager) PullDeployment(name string, onlyLatest bool) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
