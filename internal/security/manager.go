@@ -7,9 +7,10 @@ import (
 )
 
 type Manager struct {
-	db       *DB
-	detector *Detector
-	mu       sync.RWMutex
+	db              *DB
+	detector        *Detector
+	deploymentsPath string
+	mu              sync.RWMutex
 }
 
 func NewManager(deploymentsPath string) (*Manager, error) {
@@ -19,9 +20,17 @@ func NewManager(deploymentsPath string) (*Manager, error) {
 	}
 
 	return &Manager{
-		db:       db,
-		detector: NewDetector(),
+		db:              db,
+		detector:        NewDetector(),
+		deploymentsPath: deploymentsPath,
 	}, nil
+}
+
+// InitNginxConfigs ensures the nginx security config files exist.
+// This should be called after manager initialization with the nginx config path.
+func (m *Manager) InitNginxConfigs(nginxConfigPath string) error {
+	generator := NewNginxConfigGenerator(m, nginxConfigPath)
+	return generator.EnsureSecurityConfigFiles()
 }
 
 func (m *Manager) Close() error {

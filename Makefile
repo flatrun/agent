@@ -1,4 +1,4 @@
-.PHONY: help build run test test-unit test-e2e test-e2e-docker test-e2e-setup test-e2e-run test-e2e-short test-e2e-cleanup test-coverage clean deps lint lint-install fmt vet
+.PHONY: help build run test test-unit test-e2e test-e2e-docker test-e2e-setup test-e2e-run test-e2e-short test-e2e-cleanup test-e2e-security test-e2e-security-setup test-e2e-security-cleanup test-e2e-lua test-e2e-lua-setup test-e2e-lua-cleanup test-coverage clean deps lint lint-install fmt vet
 
 BINARY_NAME=flatrun-agent
 VERSION?=$(shell cat VERSION 2>/dev/null || echo "dev")
@@ -8,6 +8,8 @@ LDFLAGS=-ldflags "-X github.com/flatrun/agent/pkg/version.Version=$(VERSION) -X 
 
 E2E_API_URL?=http://localhost:18090/api
 E2E_DEPLOYMENTS_PATH?=/tmp/flatrun-e2e-deployments
+E2E_SECURITY_PATH?=/tmp/flatrun-e2e-security
+E2E_LUA_PATH?=/tmp/flatrun-e2e-lua
 
 help:
 	@echo "FlatRun Agent - Build commands"
@@ -23,6 +25,8 @@ help:
 	@echo "make test-e2e-run       - Run E2E tests against Docker environment"
 	@echo "make test-e2e-short     - Run E2E tests (skip long-running)"
 	@echo "make test-e2e-cleanup   - Clean up Docker test environment"
+	@echo "make test-e2e-security  - Run security E2E tests (static configs)"
+	@echo "make test-e2e-lua       - Run Lua/OpenResty E2E tests (realtime capture)"
 	@echo "make test-coverage      - Run tests with coverage report"
 	@echo "make lint               - Run golangci-lint"
 	@echo "make lint-install       - Install golangci-lint"
@@ -80,12 +84,60 @@ test-e2e-short:
 	FLATRUN_API_URL=$(E2E_API_URL) FLATRUN_DEPLOYMENTS_PATH=$(E2E_DEPLOYMENTS_PATH) go test -v -short -timeout 5m ./test/e2e/...
 
 test-e2e-cleanup:
-	@echo "Cleaning up E2E test environment..."
+	@echo "Cleaning up all E2E test environments..."
 	cd test/e2e && docker compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
+	cd test/e2e && docker compose -f docker-compose.security.yml down -v --remove-orphans 2>/dev/null || true
+	cd test/e2e && docker compose -f docker-compose.lua.yml down -v --remove-orphans 2>/dev/null || true
 	@docker network rm proxy 2>/dev/null || true
 	@docker network rm database 2>/dev/null || true
 	@rm -rf $(E2E_DEPLOYMENTS_PATH)/* 2>/dev/null || true
+	@rm -rf $(E2E_SECURITY_PATH)/* 2>/dev/null || true
+	@rm -rf $(E2E_LUA_PATH)/* 2>/dev/null || true
 	@echo "Cleanup complete"
+
+test-e2e-security-setup:
+	@echo "Setting up Security E2E test environment..."
+	@mkdir -p $(E2E_SECURITY_PATH)/nginx/conf.d
+	@chmod -R 777 $(E2E_SECURITY_PATH) 2>/dev/null || true
+	@docker network create proxy 2>/dev/null || true
+	cd test/e2e && docker compose -f docker-compose.security.yml up -d --build
+	@echo "Waiting for services to be healthy..."
+	@timeout 120 bash -c 'until docker exec flatrun-e2e-security-agent wget -q -O /dev/null http://127.0.0.1:8090/api/health 2>/dev/null; do sleep 2; done' || (echo "Security agent failed to start" && exit 1)
+	@chmod -R 777 $(E2E_SECURITY_PATH) 2>/dev/null || true
+	@echo "Security E2E environment ready"
+
+test-e2e-security-cleanup:
+	@echo "Cleaning up Security E2E test environment..."
+	cd test/e2e && docker compose -f docker-compose.security.yml down -v --remove-orphans 2>/dev/null || true
+	@rm -rf $(E2E_SECURITY_PATH)/* 2>/dev/null || true
+	@echo "Security cleanup complete"
+
+test-e2e-security: test-e2e-security-setup
+	@echo "Running Security E2E tests..."
+	FLATRUN_SECURITY_TEST=true go test -v -timeout 5m ./test/e2e/... -run TestSecurityConfigFilesCreated
+	@$(MAKE) test-e2e-security-cleanup
+
+test-e2e-lua-setup:
+	@echo "Setting up Lua/OpenResty E2E test environment..."
+	@mkdir -p $(E2E_LUA_PATH)/nginx/conf.d
+	@chmod -R 777 $(E2E_LUA_PATH) 2>/dev/null || true
+	@docker network create proxy 2>/dev/null || true
+	cd test/e2e && docker compose -f docker-compose.lua.yml up -d --build
+	@echo "Waiting for services to be healthy..."
+	@timeout 120 bash -c 'until docker exec flatrun-e2e-lua-agent wget -q -O /dev/null http://127.0.0.1:8090/api/health 2>/dev/null; do sleep 2; done' || (echo "Lua agent failed to start" && exit 1)
+	@chmod -R 777 $(E2E_LUA_PATH) 2>/dev/null || true
+	@echo "Lua/OpenResty E2E environment ready"
+
+test-e2e-lua-cleanup:
+	@echo "Cleaning up Lua/OpenResty E2E test environment..."
+	cd test/e2e && docker compose -f docker-compose.lua.yml down -v --remove-orphans 2>/dev/null || true
+	@rm -rf $(E2E_LUA_PATH)/* 2>/dev/null || true
+	@echo "Lua cleanup complete"
+
+test-e2e-lua: test-e2e-lua-setup
+	@echo "Running Lua/OpenResty E2E tests..."
+	FLATRUN_LUA_TEST=true go test -v -timeout 5m ./test/e2e/... -run TestLuaRealtimeCapture
+	@$(MAKE) test-e2e-lua-cleanup
 
 test-coverage:
 	@echo "Running tests with coverage..."

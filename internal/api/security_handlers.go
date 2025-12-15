@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/security"
+	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
@@ -418,5 +419,43 @@ func (s *Server) getDeploymentSecurityEvents(c *gin.Context) {
 		"events":     events,
 		"total":      total,
 		"deployment": name,
+	})
+}
+
+// getRealtimeCaptureStatus returns the current realtime capture status
+func (s *Server) getRealtimeCaptureStatus(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"enabled":          s.config.Security.Enabled,
+		"realtime_capture": s.config.Security.RealtimeCapture,
+	})
+}
+
+// setRealtimeCaptureStatus enables or disables realtime capture
+func (s *Server) setRealtimeCaptureStatus(c *gin.Context) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.infraManager.SetNginxRealtimeCapture(req.Enabled); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.config.Security.RealtimeCapture = req.Enabled
+
+	if s.configPath != "" {
+		if err := config.Save(s.config, s.configPath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Config updated but failed to save: " + err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"realtime_capture": req.Enabled,
+		"message":          "Realtime capture " + map[bool]string{true: "enabled", false: "disabled"}[req.Enabled],
 	})
 }

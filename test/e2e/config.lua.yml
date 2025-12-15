@@ -1,0 +1,36 @@
+deployments_path: /tmp/flatrun-e2e-lua
+docker_socket: unix:///var/run/docker.sock
+
+infrastructure:
+  default_proxy_network: proxy
+  default_database_network: database
+
+api:
+  host: 0.0.0.0
+  port: 8090
+  enable_cors: true
+  allowed_origins:
+    - "*"
+
+auth:
+  enabled: false
+
+nginx:
+  container_name: flatrun-e2e-lua-openresty
+  config_path: /tmp/flatrun-e2e-lua/nginx/conf.d
+  reload_command: nginx -s reload
+
+security:
+  enabled: true
+  realtime_capture: true
+  scan_interval: 10s
+  retention_days: 7
+  rate_threshold: 100
+
+logging:
+  level: debug
+  format: text
+
+health:
+  check_interval: 30s
+  metrics_retention: 24h

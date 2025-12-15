@@ -58,3 +58,12 @@ infrastructure:
         host: ""
         port: 6379
         password: ""
+security:
+    enabled: true
+    realtime_capture: false
+    scan_interval: 30s
+    retention_days: 30
+    rate_threshold: 100
+    auto_block_enabled: false
+    auto_block_threshold: 50
+    auto_block_duration: 24h0m0s
