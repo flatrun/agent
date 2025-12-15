@@ -447,6 +447,9 @@ func (db *DB) GetStats() (*SecurityStats, error) {
 	// Last 24 hours
 	_ = db.conn.QueryRow("SELECT COUNT(*) FROM security_events WHERE created_at >= datetime('now', '-24 hours')").Scan(&stats.Last24Hours)
 
+	// Last 7 days
+	_ = db.conn.QueryRow("SELECT COUNT(*) FROM security_events WHERE created_at >= datetime('now', '-7 days')").Scan(&stats.Last7Days)
+
 	// Blocked IPs count
 	_ = db.conn.QueryRow("SELECT COUNT(*) FROM blocked_ips WHERE expires_at IS NULL OR expires_at > datetime('now')").Scan(&stats.BlockedIPsCount)
 
@@ -492,6 +495,43 @@ func (db *DB) GetStats() (*SecurityStats, error) {
 			var ip IPStats
 			if err := rows.Scan(&ip.IP, &ip.EventCount, &ip.LastSeen); err == nil {
 				stats.TopOffendingIPs = append(stats.TopOffendingIPs, ip)
+			}
+		}
+	}
+
+	// Top deployments by events
+	rows, err = db.conn.Query(`
+		SELECT deployment_name, COUNT(*) as cnt,
+			SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) as critical,
+			SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) as high
+		FROM security_events
+		WHERE deployment_name IS NOT NULL AND deployment_name != ''
+		GROUP BY deployment_name
+		ORDER BY cnt DESC
+		LIMIT 10`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var d DeploymentStats
+			if err := rows.Scan(&d.Name, &d.EventCount, &d.Critical, &d.High); err == nil {
+				stats.TopDeployments = append(stats.TopDeployments, d)
+			}
+		}
+	}
+
+	// Events trend (last 7 days)
+	rows, err = db.conn.Query(`
+		SELECT date(created_at) as dt, COUNT(*) as cnt
+		FROM security_events
+		WHERE created_at >= datetime('now', '-7 days')
+		GROUP BY dt
+		ORDER BY dt ASC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var t TrendPoint
+			if err := rows.Scan(&t.Date, &t.Count); err == nil {
+				stats.EventsTrend = append(stats.EventsTrend, t)
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import (
 
 //go:embed */metadata.yml */docker-compose.yml
 //go:embed infra/*/metadata.yml infra/*/docker-compose.yml
+//go:embed infra/nginx/nginx.conf infra/nginx/nginx.lua.conf infra/nginx/lua/*
 var FS embed.FS
 
 var Categories = []Category{
@@ -74,4 +75,15 @@ func GetCompose(name string) ([]byte, error) {
 
 func GetCategories() []Category {
 	return Categories
+}
+
+func GetNginxConfig(luaEnabled bool) ([]byte, error) {
+	if luaEnabled {
+		return FS.ReadFile("infra/nginx/nginx.lua.conf")
+	}
+	return FS.ReadFile("infra/nginx/nginx.conf")
+}
+
+func GetNginxSecurityLua() ([]byte, error) {
+	return FS.ReadFile("infra/nginx/lua/security.lua")
 }

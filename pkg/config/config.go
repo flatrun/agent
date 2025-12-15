@@ -112,6 +112,7 @@ type SharedRedisConfig struct {
 
 type SecurityConfig struct {
 	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	RealtimeCapture    bool          `yaml:"realtime_capture" json:"realtime_capture"`
 	ScanInterval       time.Duration `yaml:"scan_interval" json:"scan_interval"`
 	RetentionDays      int           `yaml:"retention_days" json:"retention_days"`
 	RateThreshold      int           `yaml:"rate_threshold" json:"rate_threshold"`

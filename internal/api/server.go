@@ -88,6 +88,14 @@ func New(cfg *config.Config, configPath string) *Server {
 		securityManager, err = security.NewManager(cfg.DeploymentsPath)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize security manager: %v", err)
+		} else {
+			nginxConfigPath := cfg.Nginx.ConfigPath
+			if nginxConfigPath == "" {
+				nginxConfigPath = filepath.Join(cfg.DeploymentsPath, "nginx", "conf.d")
+			}
+			if err := securityManager.InitNginxConfigs(nginxConfigPath); err != nil {
+				log.Printf("Warning: Failed to initialize security nginx configs: %v", err)
+			}
 		}
 	}
 
@@ -255,6 +263,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/security/protected-routes", s.addProtectedRoute)
 			protected.PUT("/security/protected-routes/:id", s.updateProtectedRoute)
 			protected.DELETE("/security/protected-routes/:id", s.deleteProtectedRoute)
+			protected.GET("/security/realtime-capture", s.getRealtimeCaptureStatus)
+			protected.PUT("/security/realtime-capture", s.setRealtimeCaptureStatus)
 			protected.GET("/deployments/:name/security", s.getDeploymentSecurity)
 			protected.PUT("/deployments/:name/security", s.updateDeploymentSecurity)
 			protected.GET("/deployments/:name/security/events", s.getDeploymentSecurityEvents)
@@ -1175,6 +1185,16 @@ func (s *Server) getSettings(c *gin.Context) {
 					"port":      s.config.Infrastructure.Redis.Port,
 				},
 			},
+			"security": gin.H{
+				"enabled":              s.config.Security.Enabled,
+				"realtime_capture":     s.config.Security.RealtimeCapture,
+				"scan_interval":        s.config.Security.ScanInterval.String(),
+				"retention_days":       s.config.Security.RetentionDays,
+				"rate_threshold":       s.config.Security.RateThreshold,
+				"auto_block_enabled":   s.config.Security.AutoBlockEnabled,
+				"auto_block_threshold": s.config.Security.AutoBlockThreshold,
+				"auto_block_duration":  s.config.Security.AutoBlockDuration.String(),
+			},
 		},
 	})
 }
@@ -1224,6 +1244,16 @@ func (s *Server) updateSettings(c *gin.Context) {
 				Password  string `json:"password"`
 			} `json:"redis,omitempty"`
 		} `json:"infrastructure,omitempty"`
+		Security *struct {
+			Enabled            bool   `json:"enabled"`
+			RealtimeCapture    bool   `json:"realtime_capture"`
+			ScanInterval       string `json:"scan_interval"`
+			RetentionDays      int    `json:"retention_days"`
+			RateThreshold      int    `json:"rate_threshold"`
+			AutoBlockEnabled   bool   `json:"auto_block_enabled"`
+			AutoBlockThreshold int    `json:"auto_block_threshold"`
+			AutoBlockDuration  string `json:"auto_block_duration"`
+		} `json:"security,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1312,6 +1342,38 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 	}
 
+	if req.Security != nil {
+		prevEnabled := s.config.Security.Enabled
+		prevRealtimeCapture := s.config.Security.RealtimeCapture
+		s.config.Security.Enabled = req.Security.Enabled
+		s.config.Security.RealtimeCapture = req.Security.RealtimeCapture
+		s.config.Security.AutoBlockEnabled = req.Security.AutoBlockEnabled
+		if req.Security.RetentionDays > 0 {
+			s.config.Security.RetentionDays = req.Security.RetentionDays
+		}
+		if req.Security.RateThreshold > 0 {
+			s.config.Security.RateThreshold = req.Security.RateThreshold
+		}
+		if req.Security.AutoBlockThreshold > 0 {
+			s.config.Security.AutoBlockThreshold = req.Security.AutoBlockThreshold
+		}
+		if req.Security.ScanInterval != "" {
+			if d, err := time.ParseDuration(req.Security.ScanInterval); err == nil {
+				s.config.Security.ScanInterval = d
+			}
+		}
+		if req.Security.AutoBlockDuration != "" {
+			if d, err := time.ParseDuration(req.Security.AutoBlockDuration); err == nil {
+				s.config.Security.AutoBlockDuration = d
+			}
+		}
+		if prevRealtimeCapture != s.config.Security.RealtimeCapture || prevEnabled != s.config.Security.Enabled {
+			if err := s.infraManager.SetNginxRealtimeCapture(s.config.Security.RealtimeCapture && s.config.Security.Enabled); err != nil {
+				log.Printf("Warning: failed to update nginx realtime capture: %v", err)
+			}
+		}
+	}
+
 	s.infraManager.UpdateConfig(s.config)
 	s.proxyOrchestrator.UpdateConfig(s.config)
 
@@ -1363,6 +1425,16 @@ func (s *Server) updateSettings(c *gin.Context) {
 					"host":      s.config.Infrastructure.Redis.Host,
 					"port":      s.config.Infrastructure.Redis.Port,
 				},
+			},
+			"security": gin.H{
+				"enabled":              s.config.Security.Enabled,
+				"realtime_capture":     s.config.Security.RealtimeCapture,
+				"scan_interval":        s.config.Security.ScanInterval.String(),
+				"retention_days":       s.config.Security.RetentionDays,
+				"rate_threshold":       s.config.Security.RateThreshold,
+				"auto_block_enabled":   s.config.Security.AutoBlockEnabled,
+				"auto_block_threshold": s.config.Security.AutoBlockThreshold,
+				"auto_block_duration":  s.config.Security.AutoBlockDuration.String(),
 			},
 		},
 	})

@@ -1,0 +1,190 @@
+package infra
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/flatrun/agent/pkg/config"
+)
+
+func TestSetNginxRealtimeCapture(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "infra-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	nginxDir := filepath.Join(tmpDir, "nginx")
+	confDir := filepath.Join(nginxDir, "conf.d")
+
+	cfg := &config.Config{
+		DeploymentsPath: tmpDir,
+		Nginx: config.NginxConfig{
+			ConfigPath: confDir,
+		},
+	}
+
+	m := NewManager(cfg)
+
+	t.Run("enable realtime capture creates lua config and files", func(t *testing.T) {
+		err := m.SetNginxRealtimeCapture(true)
+		if err != nil {
+			t.Fatalf("SetNginxRealtimeCapture(true) failed: %v", err)
+		}
+
+		nginxConfPath := filepath.Join(nginxDir, "nginx.conf")
+		content, err := os.ReadFile(nginxConfPath)
+		if err != nil {
+			t.Fatalf("failed to read nginx.conf: %v", err)
+		}
+
+		if !strings.Contains(string(content), "lua_package_path") {
+			t.Error("nginx.conf should contain lua_package_path when realtime capture is enabled")
+		}
+		if !strings.Contains(string(content), "init_by_lua_block") {
+			t.Error("nginx.conf should contain init_by_lua_block when realtime capture is enabled")
+		}
+
+		luaPath := filepath.Join(nginxDir, "lua", "security.lua")
+		if _, err := os.Stat(luaPath); os.IsNotExist(err) {
+			t.Error("security.lua should be created when realtime capture is enabled")
+		}
+
+		blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
+		if _, err := os.Stat(blockedIPsPath); os.IsNotExist(err) {
+			t.Error("blocked_ips.conf should be created")
+		}
+
+		rateLimitsPath := filepath.Join(confDir, "rate_limits.conf")
+		if _, err := os.Stat(rateLimitsPath); os.IsNotExist(err) {
+			t.Error("rate_limits.conf should be created")
+		}
+	})
+
+	t.Run("disable realtime capture removes lua directives from config", func(t *testing.T) {
+		err := m.SetNginxRealtimeCapture(false)
+		if err != nil {
+			t.Fatalf("SetNginxRealtimeCapture(false) failed: %v", err)
+		}
+
+		nginxConfPath := filepath.Join(nginxDir, "nginx.conf")
+		content, err := os.ReadFile(nginxConfPath)
+		if err != nil {
+			t.Fatalf("failed to read nginx.conf: %v", err)
+		}
+
+		if strings.Contains(string(content), "lua_package_path") {
+			t.Error("nginx.conf should NOT contain lua_package_path when realtime capture is disabled")
+		}
+		if strings.Contains(string(content), "init_by_lua_block") {
+			t.Error("nginx.conf should NOT contain init_by_lua_block when realtime capture is disabled")
+		}
+
+		blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
+		if _, err := os.Stat(blockedIPsPath); os.IsNotExist(err) {
+			t.Error("blocked_ips.conf should still exist after disabling realtime capture")
+		}
+
+		rateLimitsPath := filepath.Join(confDir, "rate_limits.conf")
+		if _, err := os.Stat(rateLimitsPath); os.IsNotExist(err) {
+			t.Error("rate_limits.conf should still exist after disabling realtime capture")
+		}
+	})
+
+	t.Run("basic config still has security headers", func(t *testing.T) {
+		err := m.SetNginxRealtimeCapture(false)
+		if err != nil {
+			t.Fatalf("SetNginxRealtimeCapture(false) failed: %v", err)
+		}
+
+		nginxConfPath := filepath.Join(nginxDir, "nginx.conf")
+		content, err := os.ReadFile(nginxConfPath)
+		if err != nil {
+			t.Fatalf("failed to read nginx.conf: %v", err)
+		}
+
+		if !strings.Contains(string(content), "X-Frame-Options") {
+			t.Error("basic nginx.conf should contain X-Frame-Options header")
+		}
+		if !strings.Contains(string(content), "X-Content-Type-Options") {
+			t.Error("basic nginx.conf should contain X-Content-Type-Options header")
+		}
+	})
+
+	t.Run("switching between configs preserves vhost configs", func(t *testing.T) {
+		if err := os.MkdirAll(confDir, 0755); err != nil {
+			t.Fatalf("failed to create conf.d: %v", err)
+		}
+
+		vhostContent := "server { listen 80; server_name test.example.com; }"
+		vhostPath := filepath.Join(confDir, "test-app.conf")
+		if err := os.WriteFile(vhostPath, []byte(vhostContent), 0644); err != nil {
+			t.Fatalf("failed to write vhost config: %v", err)
+		}
+
+		if err := m.SetNginxRealtimeCapture(true); err != nil {
+			t.Fatalf("SetNginxRealtimeCapture(true) failed: %v", err)
+		}
+
+		content, err := os.ReadFile(vhostPath)
+		if err != nil {
+			t.Fatalf("vhost config should still exist after enabling realtime capture: %v", err)
+		}
+		if string(content) != vhostContent {
+			t.Error("vhost config content should be preserved")
+		}
+
+		if err := m.SetNginxRealtimeCapture(false); err != nil {
+			t.Fatalf("SetNginxRealtimeCapture(false) failed: %v", err)
+		}
+
+		content, err = os.ReadFile(vhostPath)
+		if err != nil {
+			t.Fatalf("vhost config should still exist after disabling realtime capture: %v", err)
+		}
+		if string(content) != vhostContent {
+			t.Error("vhost config content should be preserved")
+		}
+	})
+}
+
+func TestGetNginxDir(t *testing.T) {
+	tests := []struct {
+		name        string
+		configPath  string
+		deployments string
+		expected    string
+	}{
+		{
+			name:        "uses parent of config_path",
+			configPath:  "/deployments/nginx/conf.d",
+			deployments: "/deployments",
+			expected:    "/deployments/nginx",
+		},
+		{
+			name:        "falls back to deployments/nginx when config_path empty",
+			configPath:  "",
+			deployments: "/var/flatrun",
+			expected:    "/var/flatrun/nginx",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				DeploymentsPath: tt.deployments,
+				Nginx: config.NginxConfig{
+					ConfigPath: tt.configPath,
+				},
+			}
+			m := NewManager(cfg)
+
+			result := m.getNginxDir()
+			if result != tt.expected {
+				t.Errorf("getNginxDir() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}

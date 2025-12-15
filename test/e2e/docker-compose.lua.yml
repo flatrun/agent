@@ -1,0 +1,48 @@
+name: flatrun-e2e-lua
+
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: test/e2e/Dockerfile.lua
+    container_name: flatrun-e2e-lua-agent
+    ports:
+      - "18092:8090"
+    volumes:
+      - /tmp/flatrun-e2e-lua:/tmp/flatrun-e2e-lua
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - proxy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/api/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  openresty:
+    image: ghcr.io/flatrun/openresty:latest
+    container_name: flatrun-e2e-lua-openresty
+    ports:
+      - "18082:80"
+    environment:
+      - FLATRUN_AGENT_URL=http://flatrun-e2e-lua-agent:8090
+    volumes:
+      - ./nginx/lua/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - ./nginx/lua/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/lua/security.lua:/etc/nginx/lua/security.lua:ro
+      - /tmp/flatrun-e2e-lua/nginx/conf.d:/tmp/flatrun-e2e-lua/nginx/conf.d:ro
+    networks:
+      - proxy
+    depends_on:
+      agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+networks:
+  proxy:
+    external: true

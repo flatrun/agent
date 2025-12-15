@@ -47,20 +47,35 @@ type ProtectedRoute struct {
 }
 
 type SecurityStats struct {
-	TotalEvents          int              `json:"total_events"`
-	Last24Hours          int              `json:"last_24_hours"`
-	BlockedIPsCount      int              `json:"blocked_ips_count"`
-	ProtectedRoutesCount int              `json:"protected_routes_count"`
-	BySeverity           map[string]int   `json:"by_severity"`
-	ByType               map[string]int   `json:"by_type"`
-	TopOffendingIPs      []IPStats        `json:"top_offending_ips"`
-	RecentCritical       []SecurityEvent  `json:"recent_critical"`
+	TotalEvents          int               `json:"total_events"`
+	Last24Hours          int               `json:"last_24_hours"`
+	Last7Days            int               `json:"last_7_days"`
+	BlockedIPsCount      int               `json:"blocked_ips_count"`
+	ProtectedRoutesCount int               `json:"protected_routes_count"`
+	BySeverity           map[string]int    `json:"by_severity"`
+	ByType               map[string]int    `json:"by_type"`
+	TopOffendingIPs      []IPStats         `json:"top_offending_ips"`
+	TopDeployments       []DeploymentStats `json:"top_deployments"`
+	RecentCritical       []SecurityEvent   `json:"recent_critical"`
+	EventsTrend          []TrendPoint      `json:"events_trend"`
 }
 
 type IPStats struct {
 	IP         string    `json:"ip"`
 	EventCount int       `json:"event_count"`
 	LastSeen   time.Time `json:"last_seen"`
+}
+
+type DeploymentStats struct {
+	Name       string `json:"name"`
+	EventCount int    `json:"event_count"`
+	Critical   int    `json:"critical"`
+	High       int    `json:"high"`
+}
+
+type TrendPoint struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
 }
 
 // Event types
