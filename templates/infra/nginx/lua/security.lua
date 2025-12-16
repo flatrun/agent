@@ -7,7 +7,7 @@ local http = require "resty.http"
 local _M = {}
 
 -- Configuration (will be set by the agent)
-local AGENT_URL = os.getenv("FLATRUN_AGENT_URL") or "http://host.docker.internal:8080"
+local AGENT_URL = os.getenv("FLATRUN_AGENT_URL") or "http://host.docker.internal:8090"
 
 -- Suspicious paths patterns
 local suspicious_patterns = {
