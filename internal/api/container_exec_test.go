@@ -71,9 +71,9 @@ func TestWebSocketUpgrader(t *testing.T) {
 
 func TestAuthMessageParsing(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		wantErr bool
+		name     string
+		input    string
+		wantErr  bool
 		wantType string
 	}{
 		{

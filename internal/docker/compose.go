@@ -62,10 +62,10 @@ func (c *ComposeExecutor) PS(deploymentPath string) (string, error) {
 }
 
 type ImageInfo struct {
-	Service   string `json:"service"`
-	Image     string `json:"image"`
-	IsLatest  bool   `json:"is_latest"`
-	IsBuild   bool   `json:"is_build"`
+	Service  string `json:"service"`
+	Image    string `json:"image"`
+	IsLatest bool   `json:"is_latest"`
+	IsBuild  bool   `json:"is_build"`
 }
 
 func (c *ComposeExecutor) Pull(deploymentPath string, onlyLatest bool) (string, error) {

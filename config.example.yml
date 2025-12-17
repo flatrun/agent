@@ -19,7 +19,7 @@ domain:
     auto_ssl: false
     subdomain_style: words
 nginx:
-    enabled: false
+    enabled: true
     image: nginx:alpine
     container_name: nginx
     config_path: ""

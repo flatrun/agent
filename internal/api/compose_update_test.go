@@ -69,8 +69,8 @@ services:
 			expectExpose: []string{"80"},
 		},
 		{
-			name: "invalid yaml returns unchanged",
-			inputCompose: `not valid yaml: [`,
+			name:           "invalid yaml returns unchanged",
+			inputCompose:   `not valid yaml: [`,
 			ports:          []PortConfig{{ContainerPort: 80, HostPort: ""}},
 			expectNoChange: true,
 		},

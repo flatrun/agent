@@ -676,29 +676,29 @@ func TestOpenRestyCompatibility(t *testing.T) {
 
 func TestConfigImageCompatibility(t *testing.T) {
 	tests := []struct {
-		name        string
-		image       string
-		shouldWork  bool
+		name       string
+		image      string
+		shouldWork bool
 	}{
 		{
-			name:        "nginx:alpine works",
-			image:       "nginx:alpine",
-			shouldWork:  true,
+			name:       "nginx:alpine works",
+			image:      "nginx:alpine",
+			shouldWork: true,
 		},
 		{
-			name:        "openresty/openresty:alpine works",
-			image:       "openresty/openresty:alpine",
-			shouldWork:  true,
+			name:       "openresty/openresty:alpine works",
+			image:      "openresty/openresty:alpine",
+			shouldWork: true,
 		},
 		{
-			name:        "nginx:latest works",
-			image:       "nginx:latest",
-			shouldWork:  true,
+			name:       "nginx:latest works",
+			image:      "nginx:latest",
+			shouldWork: true,
 		},
 		{
-			name:        "openresty/openresty:latest works",
-			image:       "openresty/openresty:latest",
-			shouldWork:  true,
+			name:       "openresty/openresty:latest works",
+			image:      "openresty/openresty:latest",
+			shouldWork: true,
 		},
 	}
 
@@ -793,5 +793,740 @@ func TestUpdateVirtualHost_PortChange(t *testing.T) {
 
 	if strings.Contains(string(content), "test-deployment:3000") {
 		t.Error("updated config should not contain old port 3000")
+	}
+}
+
+func TestGenerateConfig_SecurityEnabled(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	tests := []struct {
+		name            string
+		securityEnabled bool
+		sslEnabled      bool
+	}{
+		{
+			name:            "HTTP without security",
+			securityEnabled: false,
+			sslEnabled:      false,
+		},
+		{
+			name:            "HTTP with security",
+			securityEnabled: true,
+			sslEnabled:      false,
+		},
+		{
+			name:            "SSL without security",
+			securityEnabled: false,
+			sslEnabled:      true,
+		},
+		{
+			name:            "SSL with security",
+			securityEnabled: true,
+			sslEnabled:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var security *models.DeploymentSecurityConfig
+			if tt.securityEnabled {
+				security = &models.DeploymentSecurityConfig{
+					Enabled: true,
+				}
+			}
+
+			deployment := &models.Deployment{
+				Name: "security-test",
+				Metadata: &models.ServiceMetadata{
+					Networking: models.NetworkingConfig{
+						Expose:        true,
+						Domain:        "secure.example.com",
+						ContainerPort: 8080,
+					},
+					SSL: models.SSLConfig{
+						Enabled: tt.sslEnabled,
+					},
+					Security: security,
+				},
+			}
+
+			configContent, err := m.generateConfig(deployment)
+			if err != nil {
+				t.Fatalf("generateConfig failed: %v", err)
+			}
+
+			luaBlockPresent := strings.Contains(configContent, "log_by_lua_block")
+			securityCapturePresent := strings.Contains(configContent, "security.capture_event()")
+
+			if tt.securityEnabled {
+				if !luaBlockPresent {
+					t.Errorf("Config should contain log_by_lua_block when security is enabled\nConfig:\n%s", configContent)
+				}
+				if !securityCapturePresent {
+					t.Errorf("Config should contain security.capture_event() when security is enabled\nConfig:\n%s", configContent)
+				}
+			} else {
+				if luaBlockPresent {
+					t.Errorf("Config should NOT contain log_by_lua_block when security is disabled\nConfig:\n%s", configContent)
+				}
+				if securityCapturePresent {
+					t.Errorf("Config should NOT contain security.capture_event() when security is disabled\nConfig:\n%s", configContent)
+				}
+			}
+
+			// Verify config remains structurally valid
+			if !strings.Contains(configContent, "server {") {
+				t.Error("Config missing server block")
+			}
+			if !strings.Contains(configContent, "location / {") {
+				t.Error("Config missing main location block")
+			}
+			if !strings.Contains(configContent, "proxy_pass") {
+				t.Error("Config missing proxy_pass directive")
+			}
+		})
+	}
+}
+
+func TestGenerateConfig_PerDeploymentBlockedIPs(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	tests := []struct {
+		name       string
+		blockedIPs []string
+		sslEnabled bool
+	}{
+		{
+			name:       "HTTP with no blocked IPs",
+			blockedIPs: nil,
+			sslEnabled: false,
+		},
+		{
+			name:       "HTTP with single blocked IP",
+			blockedIPs: []string{"192.168.1.100"},
+			sslEnabled: false,
+		},
+		{
+			name:       "HTTP with multiple blocked IPs",
+			blockedIPs: []string{"192.168.1.100", "10.0.0.50", "172.16.0.1"},
+			sslEnabled: false,
+		},
+		{
+			name:       "SSL with blocked IPs",
+			blockedIPs: []string{"192.168.1.100", "10.0.0.50"},
+			sslEnabled: true,
+		},
+		{
+			name:       "HTTP with CIDR blocked",
+			blockedIPs: []string{"192.168.1.0/24"},
+			sslEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deployment := &models.Deployment{
+				Name: "blocked-ip-test",
+				Metadata: &models.ServiceMetadata{
+					Networking: models.NetworkingConfig{
+						Expose:        true,
+						Domain:        "blocked.example.com",
+						ContainerPort: 8080,
+					},
+					SSL: models.SSLConfig{
+						Enabled: tt.sslEnabled,
+					},
+					Security: &models.DeploymentSecurityConfig{
+						Enabled:    true,
+						BlockedIPs: tt.blockedIPs,
+					},
+				},
+			}
+
+			configContent, err := m.generateConfig(deployment)
+			if err != nil {
+				t.Fatalf("generateConfig failed: %v", err)
+			}
+
+			for _, ip := range tt.blockedIPs {
+				expectedDeny := "deny " + ip + ";"
+				if !strings.Contains(configContent, expectedDeny) {
+					t.Errorf("Config should contain '%s'\nConfig:\n%s", expectedDeny, configContent)
+				}
+			}
+
+			denyCount := strings.Count(configContent, "deny ")
+			if denyCount != len(tt.blockedIPs) {
+				t.Errorf("Expected %d deny directives, got %d\nConfig:\n%s", len(tt.blockedIPs), denyCount, configContent)
+			}
+
+			// Verify config structure remains valid
+			if !strings.Contains(configContent, "server {") {
+				t.Error("Config missing server block")
+			}
+			if !strings.Contains(configContent, "location / {") {
+				t.Error("Config missing main location block")
+			}
+		})
+	}
+}
+
+func TestGenerateConfig_PerDeploymentRateLimits(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	tests := []struct {
+		name       string
+		rateLimits []models.DeploymentRateLimit
+		sslEnabled bool
+	}{
+		{
+			name:       "HTTP with no rate limits",
+			rateLimits: nil,
+			sslEnabled: false,
+		},
+		{
+			name: "HTTP with single rate limit",
+			rateLimits: []models.DeploymentRateLimit{
+				{Path: "/api", Rate: 60, Burst: 10, Enabled: true},
+			},
+			sslEnabled: false,
+		},
+		{
+			name: "HTTP with multiple rate limits",
+			rateLimits: []models.DeploymentRateLimit{
+				{Path: "/api", Rate: 60, Burst: 10, Enabled: true},
+				{Path: "/login", Rate: 10, Burst: 5, Enabled: true},
+			},
+			sslEnabled: false,
+		},
+		{
+			name: "SSL with rate limits",
+			rateLimits: []models.DeploymentRateLimit{
+				{Path: "/api", Rate: 100, Burst: 20, Enabled: true},
+			},
+			sslEnabled: true,
+		},
+		{
+			name: "Mixed enabled and disabled rate limits",
+			rateLimits: []models.DeploymentRateLimit{
+				{Path: "/api", Rate: 60, Burst: 10, Enabled: true},
+				{Path: "/public", Rate: 1000, Burst: 100, Enabled: false},
+			},
+			sslEnabled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deployment := &models.Deployment{
+				Name: "rate-limit-test",
+				Metadata: &models.ServiceMetadata{
+					Networking: models.NetworkingConfig{
+						Expose:        true,
+						Domain:        "ratelimit.example.com",
+						ContainerPort: 8080,
+					},
+					SSL: models.SSLConfig{
+						Enabled: tt.sslEnabled,
+					},
+					Security: &models.DeploymentSecurityConfig{
+						Enabled:    true,
+						RateLimits: tt.rateLimits,
+					},
+				},
+			}
+
+			configContent, err := m.generateConfig(deployment)
+			if err != nil {
+				t.Fatalf("generateConfig failed: %v", err)
+			}
+
+			enabledCount := 0
+			for _, rl := range tt.rateLimits {
+				if rl.Enabled {
+					enabledCount++
+					expectedLocation := "location " + rl.Path + " {"
+					if !strings.Contains(configContent, expectedLocation) {
+						t.Errorf("Config should contain location block for '%s'\nConfig:\n%s", rl.Path, configContent)
+					}
+					if !strings.Contains(configContent, "limit_req zone=") {
+						t.Errorf("Config should contain limit_req directive\nConfig:\n%s", configContent)
+					}
+					if !strings.Contains(configContent, "limit_req_status 429;") {
+						t.Errorf("Config should contain limit_req_status 429\nConfig:\n%s", configContent)
+					}
+				} else {
+					// Disabled rate limits should not appear
+					expectedLocation := "location " + rl.Path + " {"
+					if strings.Contains(configContent, expectedLocation) {
+						t.Errorf("Config should NOT contain location block for disabled rate limit '%s'\nConfig:\n%s", rl.Path, configContent)
+					}
+				}
+			}
+
+			// Verify config structure remains valid
+			if !strings.Contains(configContent, "server {") {
+				t.Error("Config missing server block")
+			}
+			if !strings.Contains(configContent, "location / {") {
+				t.Error("Config missing main location block")
+			}
+		})
+	}
+}
+
+func TestGenerateConfig_SecurityWithBlockedIPsAndRateLimits(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	deployment := &models.Deployment{
+		Name: "full-security-test",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "fullsecurity.example.com",
+				ContainerPort: 8080,
+			},
+			SSL: models.SSLConfig{
+				Enabled: true,
+			},
+			Security: &models.DeploymentSecurityConfig{
+				Enabled:    true,
+				BlockedIPs: []string{"192.168.1.100", "10.0.0.50"},
+				RateLimits: []models.DeploymentRateLimit{
+					{Path: "/api", Rate: 60, Burst: 10, Enabled: true},
+					{Path: "/login", Rate: 10, Burst: 5, Enabled: true},
+				},
+			},
+		},
+	}
+
+	configContent, err := m.generateConfig(deployment)
+	if err != nil {
+		t.Fatalf("generateConfig failed: %v", err)
+	}
+
+	// Verify Lua security hook
+	if !strings.Contains(configContent, "log_by_lua_block") {
+		t.Error("Config should contain log_by_lua_block")
+	}
+	if !strings.Contains(configContent, "security.capture_event()") {
+		t.Error("Config should contain security.capture_event()")
+	}
+
+	// Verify blocked IPs
+	if !strings.Contains(configContent, "deny 192.168.1.100;") {
+		t.Error("Config should contain deny for 192.168.1.100")
+	}
+	if !strings.Contains(configContent, "deny 10.0.0.50;") {
+		t.Error("Config should contain deny for 10.0.0.50")
+	}
+
+	// Verify rate limit locations
+	if !strings.Contains(configContent, "location /api {") {
+		t.Error("Config should contain /api rate limit location")
+	}
+	if !strings.Contains(configContent, "location /login {") {
+		t.Error("Config should contain /login rate limit location")
+	}
+	if !strings.Contains(configContent, "limit_req zone=") {
+		t.Error("Config should contain limit_req directive")
+	}
+
+	// Verify SSL directives
+	if !strings.Contains(configContent, "listen 443 ssl;") {
+		t.Error("Config should contain SSL listen directive")
+	}
+	if !strings.Contains(configContent, "ssl_certificate") {
+		t.Error("Config should contain ssl_certificate")
+	}
+
+	// Count server blocks (should be 2 for SSL: port 80 redirect + port 443)
+	serverCount := strings.Count(configContent, "server {")
+	if serverCount != 2 {
+		t.Errorf("SSL config should have 2 server blocks, got %d\nConfig:\n%s", serverCount, configContent)
+	}
+}
+
+func TestGenerateConfig_DisabledSecurityNoLuaDirectives(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	deployment := &models.Deployment{
+		Name: "disabled-security-test",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "nosecurity.example.com",
+				ContainerPort: 8080,
+			},
+			SSL: models.SSLConfig{
+				Enabled: false,
+			},
+			Security: &models.DeploymentSecurityConfig{
+				Enabled:    false,
+				BlockedIPs: []string{"192.168.1.100"},
+				RateLimits: []models.DeploymentRateLimit{
+					{Path: "/api", Rate: 60, Burst: 10, Enabled: true},
+				},
+			},
+		},
+	}
+
+	configContent, err := m.generateConfig(deployment)
+	if err != nil {
+		t.Fatalf("generateConfig failed: %v", err)
+	}
+
+	// When security is disabled, no security features should be present
+	if strings.Contains(configContent, "log_by_lua_block") {
+		t.Errorf("Config should NOT contain log_by_lua_block when security is disabled\nConfig:\n%s", configContent)
+	}
+	if strings.Contains(configContent, "security.capture_event()") {
+		t.Errorf("Config should NOT contain security.capture_event() when security is disabled\nConfig:\n%s", configContent)
+	}
+	if strings.Contains(configContent, "deny 192.168.1.100;") {
+		t.Errorf("Config should NOT contain deny directives when security is disabled\nConfig:\n%s", configContent)
+	}
+	if strings.Contains(configContent, "limit_req zone=") {
+		t.Errorf("Config should NOT contain limit_req when security is disabled\nConfig:\n%s", configContent)
+	}
+
+	// Basic structure should still be valid
+	if !strings.Contains(configContent, "server {") {
+		t.Error("Config missing server block")
+	}
+	if !strings.Contains(configContent, "location / {") {
+		t.Error("Config missing main location block")
+	}
+	if !strings.Contains(configContent, "proxy_pass") {
+		t.Error("Config missing proxy_pass directive")
+	}
+}
+
+func TestGenerateConfig_NilSecurityConfig(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	deployment := &models.Deployment{
+		Name: "nil-security-test",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "nilsecurity.example.com",
+				ContainerPort: 8080,
+			},
+			SSL: models.SSLConfig{
+				Enabled: false,
+			},
+			Security: nil,
+		},
+	}
+
+	configContent, err := m.generateConfig(deployment)
+	if err != nil {
+		t.Fatalf("generateConfig failed: %v", err)
+	}
+
+	// No security features should be present
+	if strings.Contains(configContent, "log_by_lua_block") {
+		t.Errorf("Config should NOT contain log_by_lua_block when security is nil\nConfig:\n%s", configContent)
+	}
+	if strings.Contains(configContent, "deny ") {
+		t.Errorf("Config should NOT contain deny directives when security is nil\nConfig:\n%s", configContent)
+	}
+	if strings.Contains(configContent, "limit_req") {
+		t.Errorf("Config should NOT contain limit_req when security is nil\nConfig:\n%s", configContent)
+	}
+
+	// Basic structure should be valid
+	if !strings.Contains(configContent, "server {") {
+		t.Error("Config missing server block")
+	}
+	if !strings.Contains(configContent, "proxy_pass") {
+		t.Error("Config missing proxy_pass directive")
+	}
+}
+
+func TestCreateVirtualHost_WithSecurity(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-security-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, tmpDir, "")
+
+	deployment := &models.Deployment{
+		Name: "security-deployment",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "security.example.com",
+				ContainerPort: 3000,
+			},
+			SSL: models.SSLConfig{
+				Enabled: false,
+			},
+			Security: &models.DeploymentSecurityConfig{
+				Enabled:    true,
+				BlockedIPs: []string{"192.168.1.100"},
+				RateLimits: []models.DeploymentRateLimit{
+					{Path: "/api", Rate: 60, Burst: 10, Enabled: true},
+				},
+			},
+		},
+	}
+
+	err = m.CreateVirtualHost(deployment)
+	if err != nil {
+		t.Fatalf("CreateVirtualHost failed: %v", err)
+	}
+
+	configFile := filepath.Join(tmpDir, "nginx", "conf.d", "security-deployment.conf")
+	content, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config file: %v", err)
+	}
+
+	// Verify security features in written file
+	if !strings.Contains(string(content), "log_by_lua_block") {
+		t.Error("Written config should contain log_by_lua_block")
+	}
+	if !strings.Contains(string(content), "deny 192.168.1.100;") {
+		t.Error("Written config should contain deny directive")
+	}
+	if !strings.Contains(string(content), "limit_req zone=") {
+		t.Error("Written config should contain limit_req directive")
+	}
+
+	// Verify rate_limits.conf was created
+	rateLimitsFile := filepath.Join(tmpDir, "nginx", "conf.d", "rate_limits.conf")
+	rateLimitsContent, err := os.ReadFile(rateLimitsFile)
+	if err != nil {
+		t.Fatalf("failed to read rate_limits.conf: %v", err)
+	}
+	if !strings.Contains(string(rateLimitsContent), "security-deployment") {
+		t.Error("rate_limits.conf should contain deployment name")
+	}
+	if !strings.Contains(string(rateLimitsContent), "limit_req_zone") {
+		t.Error("rate_limits.conf should contain limit_req_zone")
+	}
+}
+
+func TestUpdateVirtualHost_ToggleSecurity(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-toggle-security-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, tmpDir, "")
+
+	// Create without security
+	deployment := &models.Deployment{
+		Name: "toggle-security",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "toggle.example.com",
+				ContainerPort: 3000,
+			},
+			SSL: models.SSLConfig{
+				Enabled: false,
+			},
+			Security: nil,
+		},
+	}
+
+	err = m.CreateVirtualHost(deployment)
+	if err != nil {
+		t.Fatalf("CreateVirtualHost failed: %v", err)
+	}
+
+	configFile := filepath.Join(tmpDir, "nginx", "conf.d", "toggle-security.conf")
+	content, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config file: %v", err)
+	}
+
+	if strings.Contains(string(content), "log_by_lua_block") {
+		t.Error("Initial config should NOT contain log_by_lua_block")
+	}
+
+	// Enable security
+	deployment.Metadata.Security = &models.DeploymentSecurityConfig{
+		Enabled:    true,
+		BlockedIPs: []string{"10.0.0.1"},
+	}
+
+	err = m.UpdateVirtualHost(deployment)
+	if err != nil {
+		t.Fatalf("UpdateVirtualHost failed: %v", err)
+	}
+
+	content, err = os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read updated config file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "log_by_lua_block") {
+		t.Error("Updated config should contain log_by_lua_block after enabling security")
+	}
+	if !strings.Contains(string(content), "deny 10.0.0.1;") {
+		t.Error("Updated config should contain deny directive after enabling security")
+	}
+
+	// Disable security
+	deployment.Metadata.Security.Enabled = false
+
+	err = m.UpdateVirtualHost(deployment)
+	if err != nil {
+		t.Fatalf("UpdateVirtualHost (disable) failed: %v", err)
+	}
+
+	content, err = os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read re-updated config file: %v", err)
+	}
+
+	if strings.Contains(string(content), "log_by_lua_block") {
+		t.Error("Config should NOT contain log_by_lua_block after disabling security")
+	}
+	if strings.Contains(string(content), "deny 10.0.0.1;") {
+		t.Error("Config should NOT contain deny directive after disabling security")
+	}
+}
+
+func TestSanitizeZoneName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"/api", "api"},
+		{"/api/v1", "api_v1"},
+		{"/api/v1/users", "api_v1_users"},
+		{"/", "default"},
+		{"", "default"},
+		{"/api*", "api"},
+		{"/api.json", "api_json"},
+		{"/very/long/path/that/exceeds/twenty/characters", "very_long_path_that_"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := sanitizeZoneName(tt.input)
+			if result != tt.expected {
+				t.Errorf("sanitizeZoneName(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestUpdateDeploymentRateLimits(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-rate-limits-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	confDir := filepath.Join(tmpDir, "nginx", "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("failed to create conf.d: %v", err)
+	}
+
+	cfg := &config.NginxConfig{}
+	m := NewManager(cfg, tmpDir, "")
+
+	// Add rate limits for first deployment
+	rateLimits1 := []models.DeploymentRateLimit{
+		{Path: "/api", Rate: 60, Burst: 10, Enabled: true},
+		{Path: "/login", Rate: 10, Burst: 5, Enabled: true},
+	}
+
+	err = m.UpdateDeploymentRateLimits("app1", rateLimits1)
+	if err != nil {
+		t.Fatalf("UpdateDeploymentRateLimits failed: %v", err)
+	}
+
+	rateLimitsFile := filepath.Join(confDir, "rate_limits.conf")
+	content, err := os.ReadFile(rateLimitsFile)
+	if err != nil {
+		t.Fatalf("failed to read rate_limits.conf: %v", err)
+	}
+
+	if !strings.Contains(string(content), "# Deployment: app1") {
+		t.Error("rate_limits.conf should contain deployment header")
+	}
+	if !strings.Contains(string(content), "zone=app1_api") {
+		t.Error("rate_limits.conf should contain app1_api zone")
+	}
+	if !strings.Contains(string(content), "zone=app1_login") {
+		t.Error("rate_limits.conf should contain app1_login zone")
+	}
+
+	// Add rate limits for second deployment
+	rateLimits2 := []models.DeploymentRateLimit{
+		{Path: "/webhook", Rate: 100, Burst: 20, Enabled: true},
+	}
+
+	err = m.UpdateDeploymentRateLimits("app2", rateLimits2)
+	if err != nil {
+		t.Fatalf("UpdateDeploymentRateLimits for app2 failed: %v", err)
+	}
+
+	content, err = os.ReadFile(rateLimitsFile)
+	if err != nil {
+		t.Fatalf("failed to read rate_limits.conf: %v", err)
+	}
+
+	// Both deployments should be present
+	if !strings.Contains(string(content), "# Deployment: app1") {
+		t.Error("rate_limits.conf should still contain app1")
+	}
+	if !strings.Contains(string(content), "# Deployment: app2") {
+		t.Error("rate_limits.conf should contain app2")
+	}
+	if !strings.Contains(string(content), "zone=app2_webhook") {
+		t.Error("rate_limits.conf should contain app2_webhook zone")
+	}
+
+	// Remove rate limits for app1
+	err = m.RemoveDeploymentRateLimits("app1")
+	if err != nil {
+		t.Fatalf("RemoveDeploymentRateLimits failed: %v", err)
+	}
+
+	content, err = os.ReadFile(rateLimitsFile)
+	if err != nil {
+		t.Fatalf("failed to read rate_limits.conf after removal: %v", err)
+	}
+
+	if strings.Contains(string(content), "# Deployment: app1") {
+		t.Error("rate_limits.conf should NOT contain app1 after removal")
+	}
+	if !strings.Contains(string(content), "# Deployment: app2") {
+		t.Error("rate_limits.conf should still contain app2")
 	}
 }
