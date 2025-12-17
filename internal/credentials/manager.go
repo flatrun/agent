@@ -15,12 +15,12 @@ import (
 )
 
 type Manager struct {
-	mu              sync.RWMutex
-	registryTypes   map[string]*models.RegistryType
-	credentials     map[string]*models.RegistryCredential
-	storagePath     string
-	typesFilePath   string
-	credsFilePath   string
+	mu            sync.RWMutex
+	registryTypes map[string]*models.RegistryType
+	credentials   map[string]*models.RegistryCredential
+	storagePath   string
+	typesFilePath string
+	credsFilePath string
 }
 
 func NewManager(deploymentsPath string) *Manager {

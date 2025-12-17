@@ -19,6 +19,23 @@ func TestSetNginxRealtimeCapture(t *testing.T) {
 	nginxDir := filepath.Join(tmpDir, "nginx")
 	confDir := filepath.Join(nginxDir, "conf.d")
 
+	if err := os.MkdirAll(nginxDir, 0755); err != nil {
+		t.Fatalf("failed to create nginx dir: %v", err)
+	}
+
+	// Create a minimal docker-compose.yml for nginx
+	composeContent := `services:
+  nginx:
+    image: openresty/openresty:alpine
+    container_name: flatrun-nginx
+    volumes:
+      - ./conf.d:/etc/nginx/conf.d
+`
+	composePath := filepath.Join(nginxDir, "docker-compose.yml")
+	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
+		t.Fatalf("failed to write docker-compose.yml: %v", err)
+	}
+
 	cfg := &config.Config{
 		DeploymentsPath: tmpDir,
 		Nginx: config.NginxConfig{
@@ -63,25 +80,25 @@ func TestSetNginxRealtimeCapture(t *testing.T) {
 		}
 	})
 
-	t.Run("disable realtime capture removes lua directives from config", func(t *testing.T) {
+	t.Run("disable realtime capture removes nginx.conf and lua directory", func(t *testing.T) {
 		err := m.SetNginxRealtimeCapture(false)
 		if err != nil {
 			t.Fatalf("SetNginxRealtimeCapture(false) failed: %v", err)
 		}
 
+		// nginx.conf should be deleted - container will use default from image
 		nginxConfPath := filepath.Join(nginxDir, "nginx.conf")
-		content, err := os.ReadFile(nginxConfPath)
-		if err != nil {
-			t.Fatalf("failed to read nginx.conf: %v", err)
+		if _, err := os.Stat(nginxConfPath); !os.IsNotExist(err) {
+			t.Error("nginx.conf should be deleted when realtime capture is disabled")
 		}
 
-		if strings.Contains(string(content), "lua_package_path") {
-			t.Error("nginx.conf should NOT contain lua_package_path when realtime capture is disabled")
-		}
-		if strings.Contains(string(content), "init_by_lua_block") {
-			t.Error("nginx.conf should NOT contain init_by_lua_block when realtime capture is disabled")
+		// lua directory should be removed
+		luaDir := filepath.Join(nginxDir, "lua")
+		if _, err := os.Stat(luaDir); !os.IsNotExist(err) {
+			t.Error("lua directory should be removed when realtime capture is disabled")
 		}
 
+		// conf.d files should still exist (they may be used for blocking IPs etc)
 		blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
 		if _, err := os.Stat(blockedIPsPath); os.IsNotExist(err) {
 			t.Error("blocked_ips.conf should still exist after disabling realtime capture")
@@ -93,23 +110,39 @@ func TestSetNginxRealtimeCapture(t *testing.T) {
 		}
 	})
 
-	t.Run("basic config still has security headers", func(t *testing.T) {
-		err := m.SetNginxRealtimeCapture(false)
+	t.Run("security volume mounts are added and removed correctly", func(t *testing.T) {
+		// Enable to add volume mounts
+		if err := m.SetNginxRealtimeCapture(true); err != nil {
+			t.Fatalf("SetNginxRealtimeCapture(true) failed: %v", err)
+		}
+
+		composeContent, err := os.ReadFile(composePath)
 		if err != nil {
+			t.Fatalf("failed to read docker-compose.yml: %v", err)
+		}
+
+		if !strings.Contains(string(composeContent), "./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro") {
+			t.Error("compose should contain nginx.conf volume mount after enabling")
+		}
+		if !strings.Contains(string(composeContent), "./lua:/etc/nginx/lua:ro") {
+			t.Error("compose should contain lua volume mount after enabling")
+		}
+
+		// Disable to remove volume mounts
+		if err := m.SetNginxRealtimeCapture(false); err != nil {
 			t.Fatalf("SetNginxRealtimeCapture(false) failed: %v", err)
 		}
 
-		nginxConfPath := filepath.Join(nginxDir, "nginx.conf")
-		content, err := os.ReadFile(nginxConfPath)
+		composeContent, err = os.ReadFile(composePath)
 		if err != nil {
-			t.Fatalf("failed to read nginx.conf: %v", err)
+			t.Fatalf("failed to read docker-compose.yml: %v", err)
 		}
 
-		if !strings.Contains(string(content), "X-Frame-Options") {
-			t.Error("basic nginx.conf should contain X-Frame-Options header")
+		if strings.Contains(string(composeContent), "./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro") {
+			t.Error("compose should NOT contain nginx.conf volume mount after disabling")
 		}
-		if !strings.Contains(string(content), "X-Content-Type-Options") {
-			t.Error("basic nginx.conf should contain X-Content-Type-Options header")
+		if strings.Contains(string(composeContent), "./lua:/etc/nginx/lua:ro") {
+			t.Error("compose should NOT contain lua volume mount after disabling")
 		}
 	})
 

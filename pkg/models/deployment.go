@@ -24,13 +24,13 @@ type Service struct {
 }
 
 type ServiceMetadata struct {
-	Name         string                     `yaml:"name" json:"name"`
-	Type         string                     `yaml:"type" json:"type"`
-	Networking   NetworkingConfig           `yaml:"networking" json:"networking"`
-	SSL          SSLConfig                  `yaml:"ssl" json:"ssl"`
-	HealthCheck  HealthCheckConfig          `yaml:"healthcheck" json:"healthcheck"`
-	QuickActions []QuickAction              `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
-	Security     *DeploymentSecurityConfig  `yaml:"security,omitempty" json:"security,omitempty"`
+	Name         string                    `yaml:"name" json:"name"`
+	Type         string                    `yaml:"type" json:"type"`
+	Networking   NetworkingConfig          `yaml:"networking" json:"networking"`
+	SSL          SSLConfig                 `yaml:"ssl" json:"ssl"`
+	HealthCheck  HealthCheckConfig         `yaml:"healthcheck" json:"healthcheck"`
+	QuickActions []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
+	Security     *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
 }
 
 type QuickAction struct {
@@ -70,6 +70,8 @@ const (
 )
 
 type DeploymentSecurityConfig struct {
+	Enabled        bool                  `yaml:"enabled" json:"enabled"`
+	BlockedIPs     []string              `yaml:"blocked_ips,omitempty" json:"blocked_ips,omitempty"`
 	ProtectedPaths []ProtectedPath       `yaml:"protected_paths,omitempty" json:"protected_paths,omitempty"`
 	RateLimits     []DeploymentRateLimit `yaml:"rate_limits,omitempty" json:"rate_limits,omitempty"`
 }

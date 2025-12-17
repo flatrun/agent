@@ -107,6 +107,13 @@ func (m *Manager) CreateVirtualHost(deployment *models.Deployment) error {
 		return fmt.Errorf("failed to write nginx config: %w", err)
 	}
 
+	// Update per-deployment rate limits if security is enabled
+	if deployment.Metadata.Security != nil && deployment.Metadata.Security.Enabled {
+		if err := m.updateRateLimitsInternal(deployment.Name, deployment.Metadata.Security.RateLimits); err != nil {
+			return fmt.Errorf("failed to update rate limits: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -118,6 +125,9 @@ func (m *Manager) DeleteVirtualHost(deploymentName string) error {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		return nil
 	}
+
+	// Remove deployment rate limits
+	_ = m.updateRateLimitsInternal(deploymentName, nil)
 
 	return os.Remove(configFile)
 }
@@ -251,6 +261,35 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 		healthPath = ""
 	}
 
+	securityEnabled := false
+	var blockedIPs []string
+	var rateLimits []rateLimitData
+
+	if deployment.Metadata.Security != nil && deployment.Metadata.Security.Enabled {
+		securityEnabled = true
+		blockedIPs = deployment.Metadata.Security.BlockedIPs
+
+		for _, rl := range deployment.Metadata.Security.RateLimits {
+			if !rl.Enabled {
+				continue
+			}
+			zone := fmt.Sprintf("%s_%s", deployment.Name, sanitizeZoneName(rl.Path))
+			burst := rl.Burst
+			if burst <= 0 {
+				burst = rl.Rate / 2
+				if burst < 1 {
+					burst = 1
+				}
+			}
+			rateLimits = append(rateLimits, rateLimitData{
+				Path:  rl.Path,
+				Zone:  zone,
+				Rate:  rl.Rate,
+				Burst: burst,
+			})
+		}
+	}
+
 	data := templateData{
 		DeploymentName:       deployment.Name,
 		Domain:               net.Domain,
@@ -260,6 +299,9 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 		SSLEnabled:           ssl.Enabled,
 		HealthPath:           healthPath,
 		ContainerWebrootPath: m.containerWebrootPath,
+		SecurityEnabled:      securityEnabled,
+		BlockedIPs:           blockedIPs,
+		RateLimits:           rateLimits,
 	}
 
 	if data.ContainerPort == 0 {
@@ -308,6 +350,16 @@ type templateData struct {
 	SSLEnabled           bool
 	HealthPath           string
 	ContainerWebrootPath string
+	SecurityEnabled      bool
+	BlockedIPs           []string
+	RateLimits           []rateLimitData
+}
+
+type rateLimitData struct {
+	Path  string
+	Zone  string
+	Rate  int
+	Burst int
 }
 
 const httpTemplate = `server {
@@ -315,6 +367,9 @@ const httpTemplate = `server {
     server_name {{.Domain}};
 
     resolver 127.0.0.11 valid=30s ipv6=off;
+{{- range .BlockedIPs}}
+    deny {{.}};
+{{- end}}
 
     location / {
         set $upstream {{.DeploymentName}}:{{.ContainerPort}};
@@ -329,6 +384,11 @@ const httpTemplate = `server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
+{{- if .SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
     }
 {{if .HealthPath}}
     location {{.HealthPath}} {
@@ -337,6 +397,22 @@ const httpTemplate = `server {
         proxy_set_header Host $host;
     }
 {{end}}
+{{- range .RateLimits}}
+    location {{.Path}} {
+        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
+        limit_req_status 429;
+        set $upstream {{$.DeploymentName}}:{{$.ContainerPort}};
+        proxy_pass {{$.Protocol}}://$upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
     location /.well-known/acme-challenge/ {
         root {{.ContainerWebrootPath}};
     }
@@ -375,6 +451,9 @@ server {
     add_header Strict-Transport-Security "max-age=63072000" always;
 
     resolver 127.0.0.11 valid=30s ipv6=off;
+{{- range .BlockedIPs}}
+    deny {{.}};
+{{- end}}
 
     location / {
         set $upstream {{.DeploymentName}}:{{.ContainerPort}};
@@ -389,6 +468,11 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
+{{- if .SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
     }
 {{if .HealthPath}}
     location {{.HealthPath}} {
@@ -397,5 +481,128 @@ server {
         proxy_set_header Host $host;
     }
 {{end}}
+{{- range .RateLimits}}
+    location {{.Path}} {
+        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
+        limit_req_status 429;
+        set $upstream {{$.DeploymentName}}:{{$.ContainerPort}};
+        proxy_pass {{$.Protocol}}://$upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
 }
 `
+
+func sanitizeZoneName(path string) string {
+	name := strings.ReplaceAll(path, "/", "_")
+	name = strings.ReplaceAll(name, "*", "")
+	name = strings.ReplaceAll(name, ".", "_")
+	name = strings.Trim(name, "_")
+	if name == "" {
+		name = "default"
+	}
+	if len(name) > 20 {
+		name = name[:20]
+	}
+	return name
+}
+
+// UpdateDeploymentRateLimits writes per-deployment rate limit zones to rate_limits.conf
+func (m *Manager) UpdateDeploymentRateLimits(deploymentName string, rateLimits []models.DeploymentRateLimit) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.updateRateLimitsInternal(deploymentName, rateLimits)
+}
+
+func (m *Manager) updateRateLimitsInternal(deploymentName string, rateLimits []models.DeploymentRateLimit) error {
+	rateLimitsPath := filepath.Join(m.configPath, "rate_limits.conf")
+
+	// Read existing content
+	existingContent, err := os.ReadFile(rateLimitsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read rate_limits.conf: %w", err)
+	}
+
+	// Parse existing zones, keeping non-deployment zones
+	var globalZones []string
+	deploymentZones := make(map[string][]string)
+
+	if len(existingContent) > 0 {
+		lines := strings.Split(string(existingContent), "\n")
+		currentDeployment := ""
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "# Deployment:") {
+				currentDeployment = strings.TrimPrefix(line, "# Deployment:")
+				currentDeployment = strings.TrimSpace(currentDeployment)
+			} else if strings.HasPrefix(line, "limit_req_zone") {
+				if currentDeployment != "" {
+					if currentDeployment != deploymentName {
+						deploymentZones[currentDeployment] = append(deploymentZones[currentDeployment], line)
+					}
+				} else {
+					globalZones = append(globalZones, line)
+				}
+			} else if line == "" || strings.HasPrefix(line, "#") {
+				if !strings.HasPrefix(line, "# Deployment:") && currentDeployment == "" {
+					continue
+				}
+			}
+		}
+	}
+
+	// Add new zones for this deployment
+	if len(rateLimits) > 0 {
+		var newZones []string
+		for _, rl := range rateLimits {
+			if !rl.Enabled {
+				continue
+			}
+			zoneName := fmt.Sprintf("%s_%s", deploymentName, sanitizeZoneName(rl.Path))
+			zone := fmt.Sprintf("limit_req_zone $binary_remote_addr zone=%s:10m rate=%dr/m;", zoneName, rl.Rate)
+			newZones = append(newZones, zone)
+		}
+		if len(newZones) > 0 {
+			deploymentZones[deploymentName] = newZones
+		}
+	}
+
+	// Write updated content
+	var buf bytes.Buffer
+	buf.WriteString("# Auto-generated by FlatRun Security\n")
+	buf.WriteString("# Do not edit manually - changes will be overwritten\n\n")
+
+	if len(globalZones) > 0 {
+		buf.WriteString("# Global rate limit zones\n")
+		for _, zone := range globalZones {
+			buf.WriteString(zone + "\n")
+		}
+		buf.WriteString("\n")
+	}
+
+	for depName, zones := range deploymentZones {
+		buf.WriteString(fmt.Sprintf("# Deployment: %s\n", depName))
+		for _, zone := range zones {
+			buf.WriteString(zone + "\n")
+		}
+		buf.WriteString("\n")
+	}
+
+	if len(globalZones) == 0 && len(deploymentZones) == 0 {
+		buf.WriteString("# No rate limit zones defined\n")
+	}
+
+	return os.WriteFile(rateLimitsPath, buf.Bytes(), 0644)
+}
+
+// RemoveDeploymentRateLimits removes rate limit zones for a deployment
+func (m *Manager) RemoveDeploymentRateLimits(deploymentName string) error {
+	return m.UpdateDeploymentRateLimits(deploymentName, nil)
+}

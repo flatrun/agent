@@ -354,9 +354,12 @@ func (s *Server) getDeploymentSecurity(c *gin.Context) {
 		return
 	}
 
-	securityConfig := deployment.Metadata.Security
-	if securityConfig == nil {
+	var securityConfig *models.DeploymentSecurityConfig
+	if deployment.Metadata != nil && deployment.Metadata.Security != nil {
+		securityConfig = deployment.Metadata.Security
+	} else {
 		securityConfig = &models.DeploymentSecurityConfig{
+			Enabled:        false,
 			ProtectedPaths: []models.ProtectedPath{},
 			RateLimits:     []models.DeploymentRateLimit{},
 		}
@@ -391,7 +394,41 @@ func (s *Server) updateDeploymentSecurity(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"security": securityConfig})
+	vhostUpdated := false
+	if s.proxyOrchestrator != nil && s.proxyOrchestrator.NginxManager().VirtualHostExists(name) {
+		if err := s.proxyOrchestrator.NginxManager().UpdateVirtualHost(deployment); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"security":      securityConfig,
+				"vhost_updated": false,
+				"warning":       "Security config saved but vhost update failed: " + err.Error(),
+			})
+			return
+		}
+
+		if err := s.proxyOrchestrator.NginxManager().TestConfig(); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"security":      securityConfig,
+				"vhost_updated": false,
+				"warning":       "Security config saved but nginx config test failed: " + err.Error(),
+			})
+			return
+		}
+
+		if err := s.proxyOrchestrator.NginxManager().Reload(); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"security":      securityConfig,
+				"vhost_updated": true,
+				"warning":       "Nginx reload failed (may need manual reload): " + err.Error(),
+			})
+			return
+		}
+		vhostUpdated = true
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"security":      securityConfig,
+		"vhost_updated": vhostUpdated,
+	})
 }
 
 // getDeploymentSecurityEvents returns security events for a deployment
@@ -440,8 +477,35 @@ func (s *Server) setRealtimeCaptureStatus(c *gin.Context) {
 		return
 	}
 
-	if err := s.infraManager.SetNginxRealtimeCapture(req.Enabled); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// Check prerequisites before attempting to enable
+	if req.Enabled {
+		if s.config.Nginx.ContainerName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":            "Nginx container name not configured",
+				"realtime_capture": s.config.Security.RealtimeCapture,
+				"details":          "Set nginx.container_name in config to enable realtime capture",
+			})
+			return
+		}
+
+		// Check if nginx container is running
+		if !s.infraManager.IsNginxRunning() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":            "Nginx container is not running",
+				"realtime_capture": s.config.Security.RealtimeCapture,
+				"details":          "Start the nginx/proxy infrastructure before enabling realtime capture",
+			})
+			return
+		}
+	}
+
+	result, err := s.infraManager.SetNginxRealtimeCaptureWithStatus(req.Enabled)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":            err.Error(),
+			"realtime_capture": s.config.Security.RealtimeCapture,
+			"details":          result,
+		})
 		return
 	}
 
@@ -449,7 +513,10 @@ func (s *Server) setRealtimeCaptureStatus(c *gin.Context) {
 
 	if s.configPath != "" {
 		if err := config.Save(s.config, s.configPath); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Config updated but failed to save: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":            "Lua configs updated but failed to save agent config: " + err.Error(),
+				"realtime_capture": req.Enabled,
+			})
 			return
 		}
 	}
@@ -457,5 +524,154 @@ func (s *Server) setRealtimeCaptureStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"realtime_capture": req.Enabled,
 		"message":          "Realtime capture " + map[bool]string{true: "enabled", false: "disabled"}[req.Enabled],
+		"details":          result,
 	})
+}
+
+// getSecurityHealth returns the health status of the security setup
+func (s *Server) getSecurityHealth(c *gin.Context) {
+	if s.securityManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"status": "disabled",
+			"error":  "Security module not enabled",
+			"checks": map[string]bool{},
+			"issues": []string{"Security is not enabled in agent configuration"},
+			"recommendations": []string{
+				"Set security.enabled: true in config.yml",
+				"Restart the agent after updating config",
+			},
+		})
+		return
+	}
+
+	health := s.infraManager.CheckSecurityHealth()
+	c.JSON(http.StatusOK, health)
+}
+
+// updateSecuritySettings handles dedicated security settings updates
+func (s *Server) updateSecuritySettings(c *gin.Context) {
+	var req struct {
+		Enabled            *bool  `json:"enabled"`
+		RealtimeCapture    *bool  `json:"realtime_capture"`
+		ScanInterval       string `json:"scan_interval"`
+		RetentionDays      int    `json:"retention_days"`
+		RateThreshold      int    `json:"rate_threshold"`
+		AutoBlockEnabled   *bool  `json:"auto_block_enabled"`
+		AutoBlockThreshold int    `json:"auto_block_threshold"`
+		AutoBlockDuration  string `json:"auto_block_duration"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := gin.H{
+		"updated_fields": []string{},
+	}
+	var updatedFields []string
+
+	// Track previous enabled state for nginx action
+	prevEnabled := s.config.Security.Enabled
+
+	// Update enabled state - this controls nginx Lua setup
+	if req.Enabled != nil && *req.Enabled != s.config.Security.Enabled {
+		s.config.Security.Enabled = *req.Enabled
+		updatedFields = append(updatedFields, "enabled")
+	}
+
+	// Update realtime capture (kept for config compatibility)
+	if req.RealtimeCapture != nil && *req.RealtimeCapture != s.config.Security.RealtimeCapture {
+		s.config.Security.RealtimeCapture = *req.RealtimeCapture
+		updatedFields = append(updatedFields, "realtime_capture")
+	}
+
+	// Nginx action only when enabled state changes
+	needsNginxAction := s.config.Security.Enabled != prevEnabled
+
+	// Update other settings
+	if req.ScanInterval != "" {
+		if d, err := time.ParseDuration(req.ScanInterval); err == nil {
+			s.config.Security.ScanInterval = d
+			updatedFields = append(updatedFields, "scan_interval")
+		}
+	}
+	if req.RetentionDays > 0 {
+		s.config.Security.RetentionDays = req.RetentionDays
+		updatedFields = append(updatedFields, "retention_days")
+	}
+	if req.RateThreshold > 0 {
+		s.config.Security.RateThreshold = req.RateThreshold
+		updatedFields = append(updatedFields, "rate_threshold")
+	}
+	if req.AutoBlockEnabled != nil {
+		s.config.Security.AutoBlockEnabled = *req.AutoBlockEnabled
+		updatedFields = append(updatedFields, "auto_block_enabled")
+	}
+	if req.AutoBlockThreshold > 0 {
+		s.config.Security.AutoBlockThreshold = req.AutoBlockThreshold
+		updatedFields = append(updatedFields, "auto_block_threshold")
+	}
+	if req.AutoBlockDuration != "" {
+		if d, err := time.ParseDuration(req.AutoBlockDuration); err == nil {
+			s.config.Security.AutoBlockDuration = d
+			updatedFields = append(updatedFields, "auto_block_duration")
+		}
+	}
+
+	result["updated_fields"] = updatedFields
+
+	// Perform nginx action if needed
+	if needsNginxAction {
+		// Check prerequisites when enabling
+		if s.config.Security.Enabled {
+			if s.config.Nginx.ContainerName == "" {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":   "Nginx container name not configured",
+					"details": "Set nginx.container_name in config to enable security",
+				})
+				return
+			}
+			if !s.infraManager.IsNginxRunning() {
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error":   "Nginx container is not running",
+					"details": "Start the nginx/proxy infrastructure before enabling security",
+				})
+				return
+			}
+		}
+
+		actionResult, err := s.infraManager.SetNginxRealtimeCaptureWithStatus(s.config.Security.Enabled)
+		result["nginx_action"] = actionResult
+
+		if err != nil {
+			result["nginx_error"] = err.Error()
+		}
+	}
+
+	// Save config
+	if s.configPath != "" {
+		if err := config.Save(s.config, s.configPath); err != nil {
+			result["config_save_error"] = err.Error()
+		} else {
+			result["config_saved"] = true
+		}
+	}
+
+	// Update dependent managers
+	s.infraManager.UpdateConfig(s.config)
+
+	// Return current security settings
+	result["security"] = gin.H{
+		"enabled":              s.config.Security.Enabled,
+		"realtime_capture":     s.config.Security.RealtimeCapture,
+		"scan_interval":        s.config.Security.ScanInterval.String(),
+		"retention_days":       s.config.Security.RetentionDays,
+		"rate_threshold":       s.config.Security.RateThreshold,
+		"auto_block_enabled":   s.config.Security.AutoBlockEnabled,
+		"auto_block_threshold": s.config.Security.AutoBlockThreshold,
+		"auto_block_duration":  s.config.Security.AutoBlockDuration.String(),
+	}
+
+	c.JSON(http.StatusOK, result)
 }

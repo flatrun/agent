@@ -170,6 +170,7 @@ func (s *Server) setupRoutes() {
 
 			protected.GET("/settings", s.getSettings)
 			protected.PUT("/settings", s.updateSettings)
+			protected.PUT("/settings/security", s.updateSecuritySettings)
 			protected.GET("/subdomain/generate", s.generateSubdomain)
 			protected.GET("/plugins", s.listPlugins)
 			protected.GET("/plugins/:name", s.getPlugin)
@@ -265,6 +266,7 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/security/protected-routes/:id", s.deleteProtectedRoute)
 			protected.GET("/security/realtime-capture", s.getRealtimeCaptureStatus)
 			protected.PUT("/security/realtime-capture", s.setRealtimeCaptureStatus)
+			protected.GET("/security/health", s.getSecurityHealth)
 			protected.GET("/deployments/:name/security", s.getDeploymentSecurity)
 			protected.PUT("/deployments/:name/security", s.updateDeploymentSecurity)
 			protected.GET("/deployments/:name/security/events", s.getDeploymentSecurityEvents)
@@ -351,7 +353,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 		AutoStart                 bool                    `json:"auto_start"`
 		UseSharedDatabase         bool                    `json:"use_shared_database"`
 		ExistingDatabaseContainer string                  `json:"existing_database_container,omitempty"`
-		RegistryCredential *struct {
+		RegistryCredential        *struct {
 			CredentialID   string `json:"credential_id,omitempty"`
 			Username       string `json:"username,omitempty"`
 			Password       string `json:"password,omitempty"`
@@ -543,8 +545,8 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message":      "Deployment created",
-		"name":         req.Name,
+		"message":              "Deployment created",
+		"name":                 req.Name,
 		"proxy_result":         proxyResult,
 		"auto_started":         req.AutoStart,
 		"start_output":         startOutput,
@@ -2722,12 +2724,12 @@ func (s *Server) syncAllProxies(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "Proxy sync completed",
-		"synced":   synced,
-		"skipped":  skipped,
-		"failed":   failed,
-		"total":    len(results),
-		"results":  results,
+		"message": "Proxy sync completed",
+		"synced":  synced,
+		"skipped": skipped,
+		"failed":  failed,
+		"total":   len(results),
+		"results": results,
 	})
 }
 

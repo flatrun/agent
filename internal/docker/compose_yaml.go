@@ -204,6 +204,134 @@ func EnsureContainerName(content string, deploymentName string) (string, error) 
 	return strings.TrimSpace(string(result)), nil
 }
 
+// HasVolumeMount checks if a service has a specific volume mount
+func HasVolumeMount(content string, serviceName string, volumeMount string) bool {
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		return false
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	service, ok := services[serviceName].(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	switch v := service["volumes"].(type) {
+	case []interface{}:
+		for _, vol := range v {
+			if volStr, ok := vol.(string); ok {
+				if volStr == volumeMount {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// AddVolumeToService adds a volume mount to a specific service in the compose file
+func AddVolumeToService(content string, serviceName string, volumeMount string) (string, error) {
+	if HasVolumeMount(content, serviceName, volumeMount) {
+		return content, nil
+	}
+
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		return content, err
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return content, nil
+	}
+
+	service, ok := services[serviceName].(map[string]interface{})
+	if !ok {
+		return content, nil
+	}
+
+	var volumes []string
+	if v, ok := service["volumes"].([]interface{}); ok {
+		for _, vol := range v {
+			if volStr, ok := vol.(string); ok {
+				volumes = append(volumes, volStr)
+			}
+		}
+	}
+
+	volumes = append(volumes, volumeMount)
+	volumesList := make([]interface{}, len(volumes))
+	for i, v := range volumes {
+		volumesList[i] = v
+	}
+	service["volumes"] = volumesList
+	services[serviceName] = service
+
+	result, err := MarshalComposeYAML(compose)
+	if err != nil {
+		return content, err
+	}
+
+	return strings.TrimSpace(string(result)), nil
+}
+
+// RemoveVolumeFromService removes a volume mount from a specific service in the compose file
+func RemoveVolumeFromService(content string, serviceName string, volumeMount string) (string, error) {
+	if !HasVolumeMount(content, serviceName, volumeMount) {
+		return content, nil
+	}
+
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		return content, err
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return content, nil
+	}
+
+	service, ok := services[serviceName].(map[string]interface{})
+	if !ok {
+		return content, nil
+	}
+
+	var volumes []string
+	if v, ok := service["volumes"].([]interface{}); ok {
+		for _, vol := range v {
+			if volStr, ok := vol.(string); ok {
+				if volStr != volumeMount {
+					volumes = append(volumes, volStr)
+				}
+			}
+		}
+	}
+
+	if len(volumes) == 0 {
+		delete(service, "volumes")
+	} else {
+		volumesList := make([]interface{}, len(volumes))
+		for i, v := range volumes {
+			volumesList[i] = v
+		}
+		service["volumes"] = volumesList
+	}
+	services[serviceName] = service
+
+	result, err := MarshalComposeYAML(compose)
+	if err != nil {
+		return content, err
+	}
+
+	return strings.TrimSpace(string(result)), nil
+}
+
 func AddNetworkToCompose(content string, networkName string) (string, error) {
 	if networkName == "" {
 		return content, nil
