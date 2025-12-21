@@ -221,6 +221,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/databases/list", s.listDatabasesInServer)
 			protected.POST("/databases/tables", s.listDatabaseTables)
 			protected.POST("/databases/tables/data", s.queryTableData)
+			protected.POST("/databases/tables/schema", s.describeTable)
 			protected.POST("/databases/query", s.executeDatabaseQuery)
 			protected.POST("/databases/users", s.listDatabaseUsers)
 			protected.POST("/databases/create", s.createDatabaseInServer)
@@ -3618,6 +3619,30 @@ func (s *Server) queryTableData(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) describeTable(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Database string `json:"database" binding:"required"`
+		Table    string `json:"table" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	schema, err := s.databaseManager.DescribeTable(&req.ConnectionConfig, req.Database, req.Table)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, schema)
 }
 
 func (s *Server) executeDatabaseQuery(c *gin.Context) {
