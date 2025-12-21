@@ -711,3 +711,250 @@ func (m *Manager) ExecuteQuery(cfg *ConnectionConfig, database, query string) (*
 	result.Count = len(result.Rows)
 	return result, nil
 }
+
+type ColumnSchema struct {
+	Name     string      `json:"name"`
+	Type     string      `json:"type"`
+	Nullable bool        `json:"nullable"`
+	Default  interface{} `json:"default"`
+	Key      string      `json:"key"`
+	Extra    string      `json:"extra"`
+}
+
+type IndexSchema struct {
+	Name    string   `json:"name"`
+	Columns []string `json:"columns"`
+	Unique  bool     `json:"unique"`
+	Primary bool     `json:"primary"`
+}
+
+type TableSchema struct {
+	Columns []ColumnSchema `json:"columns"`
+	Indexes []IndexSchema  `json:"indexes"`
+}
+
+func (m *Manager) DescribeTable(cfg *ConnectionConfig, database, table string) (*TableSchema, error) {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	cfgCopy := *cfg
+	cfgCopy.Database = database
+
+	dsn, err := m.buildDSN(&cfgCopy)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	table = strings.ReplaceAll(table, "`", "")
+	table = strings.ReplaceAll(table, "'", "")
+	table = strings.ReplaceAll(table, "\"", "")
+	table = strings.ReplaceAll(table, ";", "")
+
+	schema := &TableSchema{
+		Columns: []ColumnSchema{},
+		Indexes: []IndexSchema{},
+	}
+
+	switch cfg.Type {
+	case "mysql", "mariadb":
+		if err := m.describeMySQLTable(db, table, schema); err != nil {
+			return nil, err
+		}
+	case "postgresql":
+		if err := m.describePostgresTable(db, table, schema); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	return schema, nil
+}
+
+func (m *Manager) describeMySQLTable(db *sql.DB, table string, schema *TableSchema) error {
+	rows, err := db.Query(fmt.Sprintf("DESCRIBE `%s`", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var field, colType, null, key string
+		var defaultVal, extra sql.NullString
+
+		if err := rows.Scan(&field, &colType, &null, &key, &defaultVal, &extra); err != nil {
+			continue
+		}
+
+		col := ColumnSchema{
+			Name:     field,
+			Type:     colType,
+			Nullable: null == "YES",
+			Key:      key,
+			Extra:    extra.String,
+		}
+		if defaultVal.Valid {
+			col.Default = defaultVal.String
+		}
+		schema.Columns = append(schema.Columns, col)
+	}
+
+	indexRows, err := db.Query(fmt.Sprintf("SHOW INDEX FROM `%s`", table))
+	if err != nil {
+		return nil
+	}
+	defer indexRows.Close()
+
+	indexMap := make(map[string]*IndexSchema)
+	for indexRows.Next() {
+		var tableName, keyName, columnName string
+		var nonUnique int
+		var seqInIndex, cardinality sql.NullInt64
+		var collation, subPart, packed, null, indexType, comment, indexComment sql.NullString
+		var visible sql.NullString
+
+		cols, _ := indexRows.Columns()
+		var scanArgs []interface{}
+		if len(cols) >= 15 {
+			scanArgs = []interface{}{&tableName, &nonUnique, &keyName, &seqInIndex, &columnName,
+				&collation, &cardinality, &subPart, &packed, &null, &indexType, &comment, &indexComment, &visible}
+			if len(cols) > 14 {
+				var extra sql.NullString
+				scanArgs = append(scanArgs, &extra)
+			}
+		} else {
+			scanArgs = []interface{}{&tableName, &nonUnique, &keyName, &seqInIndex, &columnName,
+				&collation, &cardinality, &subPart, &packed, &null, &indexType, &comment, &indexComment}
+		}
+
+		if err := indexRows.Scan(scanArgs[:len(cols)]...); err != nil {
+			continue
+		}
+
+		if _, exists := indexMap[keyName]; !exists {
+			indexMap[keyName] = &IndexSchema{
+				Name:    keyName,
+				Columns: []string{},
+				Unique:  nonUnique == 0,
+				Primary: keyName == "PRIMARY",
+			}
+		}
+		indexMap[keyName].Columns = append(indexMap[keyName].Columns, columnName)
+	}
+
+	for _, idx := range indexMap {
+		schema.Indexes = append(schema.Indexes, *idx)
+	}
+
+	return nil
+}
+
+func (m *Manager) describePostgresTable(db *sql.DB, table string, schema *TableSchema) error {
+	query := `
+		SELECT
+			c.column_name,
+			c.data_type || COALESCE('(' || c.character_maximum_length::text || ')', '') as full_type,
+			c.is_nullable,
+			c.column_default,
+			CASE
+				WHEN pk.column_name IS NOT NULL THEN 'PRI'
+				WHEN uq.column_name IS NOT NULL THEN 'UNI'
+				ELSE ''
+			END as key_type
+		FROM information_schema.columns c
+		LEFT JOIN (
+			SELECT kcu.column_name
+			FROM information_schema.table_constraints tc
+			JOIN information_schema.key_column_usage kcu
+				ON tc.constraint_name = kcu.constraint_name
+				AND tc.table_schema = kcu.table_schema
+			WHERE tc.constraint_type = 'PRIMARY KEY'
+				AND tc.table_name = $1
+		) pk ON c.column_name = pk.column_name
+		LEFT JOIN (
+			SELECT kcu.column_name
+			FROM information_schema.table_constraints tc
+			JOIN information_schema.key_column_usage kcu
+				ON tc.constraint_name = kcu.constraint_name
+				AND tc.table_schema = kcu.table_schema
+			WHERE tc.constraint_type = 'UNIQUE'
+				AND tc.table_name = $1
+		) uq ON c.column_name = uq.column_name
+		WHERE c.table_name = $1
+		ORDER BY c.ordinal_position
+	`
+
+	rows, err := db.Query(query, table)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name, colType, nullable, key string
+		var defaultVal sql.NullString
+
+		if err := rows.Scan(&name, &colType, &nullable, &defaultVal, &key); err != nil {
+			continue
+		}
+
+		col := ColumnSchema{
+			Name:     name,
+			Type:     colType,
+			Nullable: nullable == "YES",
+			Key:      key,
+			Extra:    "",
+		}
+		if defaultVal.Valid {
+			col.Default = defaultVal.String
+		}
+		schema.Columns = append(schema.Columns, col)
+	}
+
+	indexQuery := `
+		SELECT indexname, indexdef
+		FROM pg_indexes
+		WHERE tablename = $1
+	`
+	indexRows, err := db.Query(indexQuery, table)
+	if err != nil {
+		return nil
+	}
+	defer indexRows.Close()
+
+	for indexRows.Next() {
+		var indexName, indexDef string
+		if err := indexRows.Scan(&indexName, &indexDef); err != nil {
+			continue
+		}
+
+		idx := IndexSchema{
+			Name:    indexName,
+			Columns: []string{},
+			Unique:  strings.Contains(indexDef, "UNIQUE"),
+			Primary: strings.HasSuffix(indexName, "_pkey"),
+		}
+
+		start := strings.Index(indexDef, "(")
+		end := strings.LastIndex(indexDef, ")")
+		if start != -1 && end != -1 && end > start {
+			colStr := indexDef[start+1 : end]
+			cols := strings.Split(colStr, ",")
+			for _, c := range cols {
+				idx.Columns = append(idx.Columns, strings.TrimSpace(c))
+			}
+		}
+
+		schema.Indexes = append(schema.Indexes, idx)
+	}
+
+	return nil
+}
