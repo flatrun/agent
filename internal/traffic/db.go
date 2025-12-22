@@ -284,20 +284,20 @@ func (db *DB) GetStats(deploymentName string, since time.Duration) (*TrafficStat
 		}
 	}
 
-	// Top paths
+	// Top paths with deployment context
 	rows, err = db.conn.Query(`
-		SELECT request_path, COUNT(*) as cnt, AVG(response_time_ms) as avg_time,
+		SELECT deployment_name, request_path, COUNT(*) as cnt, AVG(response_time_ms) as avg_time,
 			SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as errors
 		FROM traffic_logs
 		WHERE created_at >= ?`+deploymentFilter+`
-		GROUP BY request_path
-		ORDER BY cnt DESC
+		GROUP BY deployment_name, request_path
+		ORDER BY avg_time DESC
 		LIMIT 10`, args...)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var p PathStats
-			if err := rows.Scan(&p.Path, &p.RequestCount, &p.AvgTimeMs, &p.ErrorCount); err == nil {
+			if err := rows.Scan(&p.Deployment, &p.Path, &p.RequestCount, &p.AvgTimeMs, &p.ErrorCount); err == nil {
 				stats.TopPaths = append(stats.TopPaths, p)
 			}
 		}

@@ -44,6 +44,7 @@ type TrafficStats struct {
 
 type PathStats struct {
 	Path         string  `json:"path"`
+	Deployment   string  `json:"deployment"`
 	RequestCount int64   `json:"request_count"`
 	AvgTimeMs    float64 `json:"avg_time_ms"`
 	ErrorCount   int64   `json:"error_count"`
