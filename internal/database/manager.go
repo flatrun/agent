@@ -347,6 +347,65 @@ func (m *Manager) ListUsers(cfg *ConnectionConfig) ([]UserInfo, error) {
 	return users, nil
 }
 
+func (m *Manager) ListDatabaseUsers(cfg *ConnectionConfig, database string) ([]UserInfo, error) {
+	driver := m.getDriver(cfg.Type)
+	if driver == "" {
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	dsn, err := m.buildDSN(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	database = strings.ReplaceAll(database, "'", "")
+	database = strings.ReplaceAll(database, "\"", "")
+	database = strings.ReplaceAll(database, ";", "")
+
+	var query string
+	switch cfg.Type {
+	case "mysql", "mariadb":
+		query = fmt.Sprintf(`
+			SELECT DISTINCT User, Host FROM mysql.db WHERE Db = '%s'
+			UNION
+			SELECT DISTINCT User, Host FROM mysql.tables_priv WHERE Db = '%s'
+			UNION
+			SELECT DISTINCT User, Host FROM mysql.columns_priv WHERE Db = '%s'
+		`, database, database, database)
+	case "postgresql":
+		query = fmt.Sprintf(`
+			SELECT DISTINCT grantee, '' as host
+			FROM information_schema.role_table_grants
+			WHERE table_catalog = '%s'
+		`, database)
+	default:
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []UserInfo
+	for rows.Next() {
+		var u UserInfo
+		if err := rows.Scan(&u.Name, &u.Host); err != nil {
+			continue
+		}
+		users = append(users, u)
+	}
+
+	return users, nil
+}
+
 func (m *Manager) CreateDatabase(cfg *ConnectionConfig, dbName string) error {
 	driver := m.getDriver(cfg.Type)
 	if driver == "" {

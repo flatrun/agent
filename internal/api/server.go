@@ -224,6 +224,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/databases/tables/schema", s.describeTable)
 			protected.POST("/databases/query", s.executeDatabaseQuery)
 			protected.POST("/databases/users", s.listDatabaseUsers)
+			protected.POST("/databases/users/by-database", s.listUsersByDatabase)
 			protected.POST("/databases/create", s.createDatabaseInServer)
 			protected.POST("/databases/delete", s.deleteDatabaseInServer)
 			protected.POST("/databases/users/create", s.createDatabaseUser)
@@ -3452,6 +3453,31 @@ func (s *Server) listDatabaseUsers(c *gin.Context) {
 	}
 
 	users, err := s.databaseManager.ListUsers(&cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"users": users,
+	})
+}
+
+func (s *Server) listUsersByDatabase(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Database string `json:"database" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	users, err := s.databaseManager.ListDatabaseUsers(&req.ConnectionConfig, req.Database)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
