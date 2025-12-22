@@ -395,8 +395,12 @@ func (s *Server) updateDeploymentSecurity(c *gin.Context) {
 	}
 
 	vhostUpdated := false
+	var hookStatus interface{}
+
 	if s.proxyOrchestrator != nil && s.proxyOrchestrator.NginxManager().VirtualHostExists(name) {
-		if err := s.proxyOrchestrator.NginxManager().UpdateVirtualHost(deployment); err != nil {
+		nginxMgr := s.proxyOrchestrator.NginxManager()
+
+		if err := nginxMgr.UpdateVirtualHost(deployment); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"security":      securityConfig,
 				"vhost_updated": false,
@@ -405,19 +409,33 @@ func (s *Server) updateDeploymentSecurity(c *gin.Context) {
 			return
 		}
 
-		if err := s.proxyOrchestrator.NginxManager().TestConfig(); err != nil {
+		if err := nginxMgr.ValidateSecurityHooks(name, securityConfig.Enabled); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"security":         securityConfig,
+				"vhost_updated":    true,
+				"validation_error": err.Error(),
+				"warning":          "Vhost updated but security hook validation failed",
+			})
+			return
+		}
+
+		hookStatus, _ = nginxMgr.GetSecurityHookStatus(name)
+
+		if err := nginxMgr.TestConfig(); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"security":      securityConfig,
-				"vhost_updated": false,
+				"vhost_updated": true,
+				"hook_status":   hookStatus,
 				"warning":       "Security config saved but nginx config test failed: " + err.Error(),
 			})
 			return
 		}
 
-		if err := s.proxyOrchestrator.NginxManager().Reload(); err != nil {
+		if err := nginxMgr.Reload(); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"security":      securityConfig,
 				"vhost_updated": true,
+				"hook_status":   hookStatus,
 				"warning":       "Nginx reload failed (may need manual reload): " + err.Error(),
 			})
 			return
@@ -425,10 +443,15 @@ func (s *Server) updateDeploymentSecurity(c *gin.Context) {
 		vhostUpdated = true
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"security":      securityConfig,
 		"vhost_updated": vhostUpdated,
-	})
+	}
+	if hookStatus != nil {
+		response["hook_status"] = hookStatus
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // getDeploymentSecurityEvents returns security events for a deployment
@@ -671,6 +694,34 @@ func (s *Server) updateSecuritySettings(c *gin.Context) {
 		"auto_block_enabled":   s.config.Security.AutoBlockEnabled,
 		"auto_block_threshold": s.config.Security.AutoBlockThreshold,
 		"auto_block_duration":  s.config.Security.AutoBlockDuration.String(),
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// refreshSecurityScripts regenerates Lua scripts with correct agent IP and reloads nginx
+func (s *Server) refreshSecurityScripts(c *gin.Context) {
+	if !s.config.Security.Enabled {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Security module not enabled",
+		})
+		return
+	}
+
+	if !s.infraManager.IsNginxRunning() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Nginx container is not running",
+		})
+		return
+	}
+
+	result, err := s.infraManager.RefreshSecurityScripts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  err.Error(),
+			"result": result,
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, result)

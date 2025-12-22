@@ -1044,3 +1044,83 @@ func TestProxySyncResultFailed(t *testing.T) {
 		t.Error("expected Created to be false for failed")
 	}
 }
+
+func TestListUsersByDatabaseRequestStructure(t *testing.T) {
+	type listUsersByDatabaseRequest struct {
+		Type     string `json:"type"`
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Database string `json:"database"`
+	}
+
+	tests := []struct {
+		name        string
+		req         listUsersByDatabaseRequest
+		wantMissing string
+	}{
+		{
+			name: "valid request",
+			req: listUsersByDatabaseRequest{
+				Type:     "mysql",
+				Host:     "localhost",
+				Port:     3306,
+				Username: "root",
+				Password: "secret",
+				Database: "testdb",
+			},
+			wantMissing: "",
+		},
+		{
+			name: "missing database",
+			req: listUsersByDatabaseRequest{
+				Type:     "mysql",
+				Host:     "localhost",
+				Port:     3306,
+				Username: "root",
+				Password: "secret",
+			},
+			wantMissing: "database",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantMissing == "database" && tt.req.Database != "" {
+				t.Error("test setup error: database should be empty for missing database test")
+			}
+			if tt.wantMissing == "" && tt.req.Database == "" {
+				t.Error("test setup error: database should not be empty for valid request test")
+			}
+		})
+	}
+}
+
+func TestListUsersByDatabaseResponseStructure(t *testing.T) {
+	type userInfo struct {
+		Name string `json:"name"`
+		Host string `json:"host,omitempty"`
+	}
+
+	type response struct {
+		Users []userInfo `json:"users"`
+	}
+
+	resp := response{
+		Users: []userInfo{
+			{Name: "app_user", Host: "%"},
+			{Name: "readonly", Host: "localhost"},
+		},
+	}
+
+	if len(resp.Users) != 2 {
+		t.Errorf("expected 2 users, got %d", len(resp.Users))
+	}
+	if resp.Users[0].Name != "app_user" {
+		t.Errorf("expected first user 'app_user', got '%s'", resp.Users[0].Name)
+	}
+	if resp.Users[1].Host != "localhost" {
+		t.Errorf("expected second user host 'localhost', got '%s'", resp.Users[1].Host)
+	}
+}

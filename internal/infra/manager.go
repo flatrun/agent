@@ -368,11 +368,16 @@ func (m *Manager) SetNginxRealtimeCaptureWithStatus(enabled bool) (map[string]in
 			}
 		}
 
-		// Create lua directory and write security.lua
+		// Create lua directory and write security.lua with injected agent IP
 		if err := os.MkdirAll(luaDir, 0755); err != nil {
 			errors = append(errors, fmt.Sprintf("failed to create lua directory: %v", err))
 		} else {
-			securityLua, err := templates.GetNginxSecurityLua()
+			agentIP := m.GetDockerHostIP()
+			agentPort := m.GetAgentPort()
+			result["agent_ip"] = agentIP
+			result["agent_port"] = agentPort
+
+			securityLua, err := templates.GetNginxSecurityLuaWithConfig(agentIP, agentPort)
 			if err != nil {
 				errors = append(errors, fmt.Sprintf("failed to get security.lua template: %v", err))
 			} else {
@@ -381,6 +386,16 @@ func (m *Manager) SetNginxRealtimeCaptureWithStatus(enabled bool) (map[string]in
 					errors = append(errors, fmt.Sprintf("failed to write security.lua: %v", err))
 				} else {
 					result["lua_files_written"] = true
+				}
+			}
+
+			trafficLua, err := templates.GetNginxTrafficLuaWithConfig(agentIP, agentPort)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("failed to get traffic.lua template: %v", err))
+			} else {
+				luaPath := filepath.Join(luaDir, "traffic.lua")
+				if err := os.WriteFile(luaPath, trafficLua, 0644); err != nil {
+					errors = append(errors, fmt.Sprintf("failed to write traffic.lua: %v", err))
 				}
 			}
 		}
@@ -472,7 +487,58 @@ func (m *Manager) IsNginxRunning() bool {
 	return strings.TrimSpace(string(output)) == "true"
 }
 
+// GetDockerHostIP returns the IP address that containers can use to reach the host.
+// It tries multiple methods and falls back to the default Docker bridge gateway.
+func (m *Manager) GetDockerHostIP() string {
+	// Method 1: Try to get host.docker.internal from nginx container's /etc/hosts
+	if m.config.Nginx.ContainerName != "" && m.IsNginxRunning() {
+		cmd := exec.Command("docker", "exec", m.config.Nginx.ContainerName, "sh", "-c",
+			"getent hosts host.docker.internal 2>/dev/null | awk '{print $1}'")
+		if output, err := cmd.Output(); err == nil {
+			ip := strings.TrimSpace(string(output))
+			if ip != "" && ip != "host.docker.internal" {
+				return ip
+			}
+		}
+
+		// Also try grepping /etc/hosts
+		cmd = exec.Command("docker", "exec", m.config.Nginx.ContainerName, "sh", "-c",
+			"grep host.docker.internal /etc/hosts 2>/dev/null | awk '{print $1}'")
+		if output, err := cmd.Output(); err == nil {
+			ip := strings.TrimSpace(string(output))
+			if ip != "" {
+				return ip
+			}
+		}
+	}
+
+	// Method 2: Try to get the Docker bridge gateway IP
+	cmd := exec.Command("docker", "network", "inspect", "bridge", "-f",
+		"{{range .IPAM.Config}}{{.Gateway}}{{end}}")
+	if output, err := cmd.Output(); err == nil {
+		ip := strings.TrimSpace(string(output))
+		if ip != "" {
+			return ip
+		}
+	}
+
+	// Fallback: Default Docker bridge gateway
+	return "172.17.0.1"
+}
+
+// GetAgentPort returns the port the agent API is listening on
+func (m *Manager) GetAgentPort() int {
+	if m.config.API.Port > 0 {
+		return m.config.API.Port
+	}
+	return 8090
+}
+
 func (m *Manager) reloadNginx() error {
+	if err := m.waitForContainerReady(5); err != nil {
+		return fmt.Errorf("container not ready: %w", err)
+	}
+
 	reloadCmd := m.config.Nginx.ReloadCommand
 	if reloadCmd == "" {
 		reloadCmd = "nginx -s reload"
@@ -484,6 +550,31 @@ func (m *Manager) reloadNginx() error {
 		return fmt.Errorf("%s: %w", string(output), err)
 	}
 	return nil
+}
+
+func (m *Manager) waitForContainerReady(maxRetries int) error {
+	containerName := m.config.Nginx.ContainerName
+	for i := 0; i < maxRetries; i++ {
+		cmd := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", containerName)
+		output, err := cmd.Output()
+		if err != nil {
+			return fmt.Errorf("failed to get container status: %w", err)
+		}
+
+		status := strings.TrimSpace(string(output))
+		if status == "running" {
+			cmd = exec.Command("docker", "inspect", "-f", "{{.State.Restarting}}", containerName)
+			output, err = cmd.Output()
+			if err == nil && strings.TrimSpace(string(output)) == "false" {
+				return nil
+			}
+		}
+
+		if i < maxRetries-1 {
+			time.Sleep(time.Second)
+		}
+	}
+	return fmt.Errorf("container %s not ready after %d attempts", containerName, maxRetries)
 }
 
 func (m *Manager) getNginxDir() string {
@@ -520,15 +611,56 @@ func (m *Manager) CheckSecurityHealth() *SecurityHealthCheck {
 	result.Details["nginx_dir"] = nginxDir
 	result.Details["nginx_container"] = m.config.Nginx.ContainerName
 
-	// Check 1: security.lua exists
-	luaPath := filepath.Join(nginxDir, "lua", "security.lua")
-	if _, err := os.Stat(luaPath); err == nil {
+	// Check 1: security.lua exists and has correct agent IP
+	securityLuaPath := filepath.Join(nginxDir, "lua", "security.lua")
+	if content, err := os.ReadFile(securityLuaPath); err == nil {
 		result.Checks["security_lua_exists"] = true
-		result.Details["security_lua_path"] = luaPath
+		result.Details["security_lua_path"] = securityLuaPath
+
+		// Check if agent IP is properly configured
+		if strings.Contains(string(content), "host.docker.internal") {
+			result.Checks["security_lua_ip_injected"] = false
+			result.Issues = append(result.Issues, "Agent connection not configured in security module")
+			result.Recommendations = append(result.Recommendations, "Click 'Regenerate Scripts' in Security settings to configure agent connection")
+		} else {
+			result.Checks["security_lua_ip_injected"] = true
+		}
 	} else {
 		result.Checks["security_lua_exists"] = false
-		result.Issues = append(result.Issues, "security.lua does not exist at "+luaPath)
+		result.Checks["security_lua_ip_injected"] = false
+		result.Issues = append(result.Issues, "security.lua does not exist at "+securityLuaPath)
 		result.Recommendations = append(result.Recommendations, "Enable realtime capture in Security settings to deploy security.lua")
+	}
+
+	// Check 1b: traffic.lua exists and has correct agent IP
+	trafficLuaPath := filepath.Join(nginxDir, "lua", "traffic.lua")
+	if content, err := os.ReadFile(trafficLuaPath); err == nil {
+		result.Checks["traffic_lua_exists"] = true
+		result.Details["traffic_lua_path"] = trafficLuaPath
+
+		if strings.Contains(string(content), "host.docker.internal") {
+			result.Checks["traffic_lua_ip_injected"] = false
+			result.Issues = append(result.Issues, "Agent connection not configured in traffic module")
+			result.Recommendations = append(result.Recommendations, "Click 'Regenerate Scripts' in Security settings to configure agent connection")
+		} else {
+			result.Checks["traffic_lua_ip_injected"] = true
+		}
+	} else {
+		result.Checks["traffic_lua_exists"] = false
+		result.Checks["traffic_lua_ip_injected"] = false
+		result.Issues = append(result.Issues, "traffic.lua does not exist at "+trafficLuaPath)
+		result.Recommendations = append(result.Recommendations, "Enable realtime capture to deploy traffic.lua for request logging")
+	}
+
+	// Check 1c: Agent IP detection works
+	agentIP := m.GetDockerHostIP()
+	result.Details["detected_agent_ip"] = agentIP
+	result.Details["agent_port"] = m.GetAgentPort()
+	if agentIP != "" {
+		result.Checks["agent_ip_detected"] = true
+	} else {
+		result.Checks["agent_ip_detected"] = false
+		result.Issues = append(result.Issues, "Unable to detect agent network address")
 	}
 
 	// Check 2: nginx.conf exists and has Lua initialization
@@ -536,16 +668,37 @@ func (m *Manager) CheckSecurityHealth() *SecurityHealthCheck {
 	result.Details["nginx_conf_path"] = nginxConfPath
 	if content, err := os.ReadFile(nginxConfPath); err == nil {
 		result.Checks["nginx_conf_exists"] = true
-		if strings.Contains(string(content), "init_by_lua_block") {
+		contentStr := string(content)
+
+		if strings.Contains(contentStr, "init_by_lua_block") {
 			result.Checks["nginx_conf_has_lua_init"] = true
 		} else {
 			result.Checks["nginx_conf_has_lua_init"] = false
 			result.Issues = append(result.Issues, "nginx.conf does not have init_by_lua_block directive")
 			result.Recommendations = append(result.Recommendations, "Enable realtime capture to generate Lua-enabled nginx.conf")
 		}
+
+		// Check for traffic module loading
+		if strings.Contains(contentStr, "traffic = require") || strings.Contains(contentStr, "traffic.log_request") {
+			result.Checks["nginx_conf_has_traffic_module"] = true
+		} else {
+			result.Checks["nginx_conf_has_traffic_module"] = false
+			result.Issues = append(result.Issues, "nginx.conf does not load traffic module for request logging")
+			result.Recommendations = append(result.Recommendations, "Use POST /api/security/refresh to regenerate nginx.conf with traffic logging")
+		}
+
+		// Check for global traffic logging
+		if strings.Contains(contentStr, "log_by_lua_block") && strings.Contains(contentStr, "traffic.log_request") {
+			result.Checks["nginx_conf_has_global_traffic_logging"] = true
+		} else {
+			result.Checks["nginx_conf_has_global_traffic_logging"] = false
+			result.Issues = append(result.Issues, "nginx.conf does not have global traffic logging enabled")
+		}
 	} else {
 		result.Checks["nginx_conf_exists"] = false
 		result.Checks["nginx_conf_has_lua_init"] = false
+		result.Checks["nginx_conf_has_traffic_module"] = false
+		result.Checks["nginx_conf_has_global_traffic_logging"] = false
 		result.Issues = append(result.Issues, "nginx.conf does not exist at "+nginxConfPath)
 		result.Recommendations = append(result.Recommendations, "Enable realtime capture in Security settings")
 	}
@@ -596,13 +749,13 @@ func (m *Manager) CheckSecurityHealth() *SecurityHealthCheck {
 					"Add volume mount to nginx docker-compose: "+nginxConfPath+":/usr/local/openresty/nginx/conf/nginx.conf:ro")
 			}
 
-			// Check if extra_hosts is configured (for Linux)
+			// Check if nginx can reach the agent
 			hasExtraHosts := m.checkNginxExtraHosts()
 			result.Checks["nginx_extra_hosts_configured"] = hasExtraHosts
 			if !hasExtraHosts {
-				result.Issues = append(result.Issues, "Nginx container may not be able to reach host.docker.internal")
+				result.Issues = append(result.Issues, "Nginx container cannot reach the agent")
 				result.Recommendations = append(result.Recommendations,
-					"Add extra_hosts to nginx docker-compose: - \"host.docker.internal:host-gateway\"")
+					"Configure network access in your nginx docker-compose file")
 			}
 		}
 	} else {
@@ -610,21 +763,43 @@ func (m *Manager) CheckSecurityHealth() *SecurityHealthCheck {
 		result.Issues = append(result.Issues, "Nginx container name not configured")
 	}
 
-	// Check 6: Vhosts have log_by_lua_block directive
+	// Check 6: Vhosts with security enabled have log_by_lua_block directive
 	vhostsWithHook, vhostsWithoutHook := m.checkVhostsSecurityHook()
+	deploymentsWithSecurityEnabled := m.getDeploymentsWithSecurityEnabled()
+
 	result.Details["vhosts_with_security_hook"] = vhostsWithHook
 	result.Details["vhosts_without_security_hook"] = vhostsWithoutHook
-	if len(vhostsWithoutHook) > 0 {
+	result.Details["deployments_with_security_enabled"] = deploymentsWithSecurityEnabled
+
+	// Find vhosts that SHOULD have hooks but don't
+	var missingHooks []string
+	for _, dep := range deploymentsWithSecurityEnabled {
+		hasHook := false
+		for _, v := range vhostsWithHook {
+			if v == dep {
+				hasHook = true
+				break
+			}
+		}
+		if !hasHook {
+			missingHooks = append(missingHooks, dep)
+		}
+	}
+
+	result.Details["vhosts_missing_required_hooks"] = missingHooks
+
+	if len(missingHooks) > 0 {
 		result.Checks["vhosts_have_security_hook"] = false
 		result.Issues = append(result.Issues,
-			fmt.Sprintf("%d vhost(s) missing log_by_lua_block: %v", len(vhostsWithoutHook), vhostsWithoutHook))
+			fmt.Sprintf("%d deployment(s) have security enabled but vhost missing hooks: %v", len(missingHooks), missingHooks))
 		result.Recommendations = append(result.Recommendations,
-			"Add log_by_lua_block { security.capture_event() } to vhost server blocks, or use the regenerate vhosts API")
-	} else if len(vhostsWithHook) > 0 {
+			"Use PUT /api/deployments/:name/security to regenerate vhost with security hooks")
+	} else if len(deploymentsWithSecurityEnabled) > 0 {
 		result.Checks["vhosts_have_security_hook"] = true
 	} else {
-		result.Checks["vhosts_have_security_hook"] = false
-		result.Issues = append(result.Issues, "No vhost configurations found")
+		// No deployments have security enabled - that's fine, hooks not required
+		result.Checks["vhosts_have_security_hook"] = true
+		result.Details["note"] = "No deployments have per-deployment security enabled (traffic logging still works globally)"
 	}
 
 	// Check 7: Lua directory is mounted in nginx container
@@ -638,15 +813,40 @@ func (m *Manager) CheckSecurityHealth() *SecurityHealthCheck {
 		}
 	}
 
+	// Check 8: DNS/Connectivity - Can nginx reach the agent?
+	if m.config.Nginx.ContainerName != "" && result.Checks["nginx_container_running"] {
+		agentIP := m.GetDockerHostIP()
+		agentPort := m.GetAgentPort()
+		canReachAgent := m.checkNginxCanReachAgent(agentIP, agentPort)
+		result.Checks["nginx_can_reach_agent"] = canReachAgent
+		result.Details["connectivity_test_ip"] = agentIP
+		result.Details["connectivity_test_port"] = agentPort
+
+		if !canReachAgent {
+			result.Issues = append(result.Issues,
+				fmt.Sprintf("Nginx container cannot reach agent at %s:%d - Lua scripts will fail to send events", agentIP, agentPort))
+			result.Recommendations = append(result.Recommendations,
+				"1. Check if agent is running and listening on the correct port")
+			result.Recommendations = append(result.Recommendations,
+				"2. Ensure nginx container has network access to host (extra_hosts or host network mode)")
+			result.Recommendations = append(result.Recommendations,
+				"3. Use POST /api/security/refresh to regenerate scripts with correct IP")
+		}
+	}
+
 	// Determine overall status
 	criticalChecks := []string{
 		"security_lua_exists",
+		"security_lua_ip_injected",
+		"traffic_lua_exists",
+		"traffic_lua_ip_injected",
 		"nginx_conf_has_lua_init",
 		"nginx_container_running",
 		"nginx_lua_module_loaded",
 		"nginx_conf_mounted",
-		"vhosts_have_security_hook",
 		"lua_directory_mounted",
+		"nginx_can_reach_agent",
+		"vhosts_have_security_hook",
 	}
 
 	failedCritical := 0
@@ -717,6 +917,36 @@ func (m *Manager) checkNginxExtraHosts() bool {
 	return err == nil
 }
 
+// getDeploymentsWithSecurityEnabled reads deployment metadata to find which have security enabled
+func (m *Manager) getDeploymentsWithSecurityEnabled() []string {
+	var enabled []string
+
+	entries, err := os.ReadDir(m.config.DeploymentsPath)
+	if err != nil {
+		return enabled
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		metadataPath := filepath.Join(m.config.DeploymentsPath, entry.Name(), "service.yml")
+		content, err := os.ReadFile(metadataPath)
+		if err != nil {
+			continue
+		}
+
+		contentStr := string(content)
+		if strings.Contains(contentStr, "security:") &&
+			(strings.Contains(contentStr, "enabled: true") || strings.Contains(contentStr, "enabled: \"true\"")) {
+			enabled = append(enabled, entry.Name())
+		}
+	}
+
+	return enabled
+}
+
 func (m *Manager) checkVhostsSecurityHook() (withHook []string, withoutHook []string) {
 	nginxDir := m.getNginxDir()
 	confDir := filepath.Join(nginxDir, "conf.d")
@@ -754,12 +984,30 @@ func (m *Manager) checkVhostsSecurityHook() (withHook []string, withoutHook []st
 
 func (m *Manager) checkNginxLuaDirectoryMounted() bool {
 	cmd := exec.Command("docker", "exec", m.config.Nginx.ContainerName, "sh", "-c",
-		"test -f /etc/nginx/lua/security.lua && echo yes")
+		"test -f /etc/nginx/lua/security.lua && test -f /etc/nginx/lua/traffic.lua && echo yes")
 	output, err := cmd.Output()
 	if err != nil {
 		return false
 	}
 	return strings.TrimSpace(string(output)) == "yes"
+}
+
+// checkNginxCanReachAgent tests if nginx container can reach the agent API
+func (m *Manager) checkNginxCanReachAgent(agentIP string, agentPort int) bool {
+	// Try to connect to agent health endpoint from nginx container
+	// Use wget or curl depending on what's available in the container
+	testCmd := fmt.Sprintf(
+		"wget -q -O /dev/null --timeout=2 http://%s:%d/api/health 2>/dev/null && echo yes || "+
+			"curl -s --connect-timeout 2 http://%s:%d/api/health >/dev/null 2>&1 && echo yes || "+
+			"echo no",
+		agentIP, agentPort, agentIP, agentPort)
+
+	cmd := exec.Command("docker", "exec", m.config.Nginx.ContainerName, "sh", "-c", testCmd)
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(output), "yes")
 }
 
 // securityVolumeMounts are added when security is enabled and removed when disabled
@@ -877,4 +1125,139 @@ func (m *Manager) removeSecurityVolumeMountsInternal() (bool, error) {
 	}
 
 	return modified, nil
+}
+
+// RefreshSecurityScriptsResult contains the result of refreshing security scripts
+type RefreshSecurityScriptsResult struct {
+	Success            bool     `json:"success"`
+	AgentIP            string   `json:"agent_ip"`
+	AgentPort          int      `json:"agent_port"`
+	NginxConfWritten   bool     `json:"nginx_conf_written"`
+	LuaWritten         bool     `json:"lua_written"`
+	VolumesModified    bool     `json:"volumes_modified"`
+	ContainerRecreated bool     `json:"container_recreated"`
+	NginxReloaded      bool     `json:"nginx_reloaded"`
+	VhostsUpdated      []string `json:"vhosts_updated,omitempty"`
+	Errors             []string `json:"errors,omitempty"`
+}
+
+// RefreshSecurityScripts regenerates all security configs: nginx.conf, Lua scripts, and vhosts
+func (m *Manager) RefreshSecurityScripts() (*RefreshSecurityScriptsResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	result := &RefreshSecurityScriptsResult{
+		Success:       true,
+		Errors:        []string{},
+		VhostsUpdated: []string{},
+	}
+
+	// Get agent IP and port
+	agentIP := m.GetDockerHostIP()
+	agentPort := m.GetAgentPort()
+	result.AgentIP = agentIP
+	result.AgentPort = agentPort
+
+	nginxDir := m.getNginxDir()
+	if nginxDir == "" {
+		result.Errors = append(result.Errors, "nginx config path not configured")
+		result.Success = false
+		return result, fmt.Errorf("nginx config path not configured")
+	}
+
+	luaDir := filepath.Join(nginxDir, "lua")
+	confPath := filepath.Join(nginxDir, "nginx.conf")
+
+	// Create directories
+	if err := os.MkdirAll(luaDir, 0755); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to create lua directory: %v", err))
+		result.Success = false
+		return result, err
+	}
+
+	confDir := filepath.Join(nginxDir, "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to create conf.d directory: %v", err))
+	}
+
+	// Write nginx.conf with Lua support
+	nginxConf, err := templates.GetNginxConfig(true)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to get nginx lua config template: %v", err))
+	} else {
+		if err := os.WriteFile(confPath, nginxConf, 0644); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to write nginx.conf: %v", err))
+		} else {
+			result.NginxConfWritten = true
+		}
+	}
+
+	// Generate and write security.lua with injected IP
+	securityLua, err := templates.GetNginxSecurityLuaWithConfig(agentIP, agentPort)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to generate security.lua: %v", err))
+		result.Success = false
+		return result, err
+	}
+
+	securityLuaPath := filepath.Join(luaDir, "security.lua")
+	if err := os.WriteFile(securityLuaPath, securityLua, 0644); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to write security.lua: %v", err))
+		result.Success = false
+		return result, err
+	}
+	result.LuaWritten = true
+
+	// Generate and write traffic.lua with injected IP
+	trafficLua, err := templates.GetNginxTrafficLuaWithConfig(agentIP, agentPort)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to generate traffic.lua: %v", err))
+	} else {
+		trafficLuaPath := filepath.Join(luaDir, "traffic.lua")
+		if err := os.WriteFile(trafficLuaPath, trafficLua, 0644); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to write traffic.lua: %v", err))
+		}
+	}
+
+	// Ensure blocked_ips.conf exists
+	blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
+	if _, err := os.Stat(blockedIPsPath); os.IsNotExist(err) {
+		content := "# Auto-generated - No blocked IPs\n"
+		if err := os.WriteFile(blockedIPsPath, []byte(content), 0644); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to create blocked_ips.conf: %v", err))
+		}
+	}
+
+	// Ensure rate_limits.conf exists
+	rateLimitsPath := filepath.Join(confDir, "rate_limits.conf")
+	if _, err := os.Stat(rateLimitsPath); os.IsNotExist(err) {
+		content := "# Auto-generated - No rate limit zones\n"
+		if err := os.WriteFile(rateLimitsPath, []byte(content), 0644); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to create rate_limits.conf: %v", err))
+		}
+	}
+
+	// Add volume mounts to docker-compose if needed
+	volumesModified, volumeErr := m.addSecurityVolumeMountsInternal()
+	if volumeErr != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to modify volume mounts: %v", volumeErr))
+	}
+	result.VolumesModified = volumesModified
+
+	// Recreate or reload nginx container
+	if volumesModified {
+		if err := m.recreateNginxContainer(); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to recreate nginx container: %v", err))
+		} else {
+			result.ContainerRecreated = true
+		}
+	} else if m.IsNginxRunning() {
+		if err := m.reloadNginx(); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to reload nginx: %v", err))
+		} else {
+			result.NginxReloaded = true
+		}
+	}
+
+	return result, nil
 }

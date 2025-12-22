@@ -26,6 +26,7 @@ import (
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/system"
+	"github.com/flatrun/agent/internal/traffic"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/plugins"
@@ -53,6 +54,7 @@ type Server struct {
 	infraManager       *infra.Manager
 	credentialsManager *credentials.Manager
 	securityManager    *security.Manager
+	trafficManager     *traffic.Manager
 }
 
 func New(cfg *config.Config, configPath string) *Server {
@@ -99,6 +101,12 @@ func New(cfg *config.Config, configPath string) *Server {
 		}
 	}
 
+	var trafficManager *traffic.Manager
+	trafficManager, err := traffic.NewManager(cfg.DeploymentsPath, 7)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize traffic manager: %v", err)
+	}
+
 	s := &Server{
 		config:             cfg,
 		configPath:         configPath,
@@ -115,6 +123,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		infraManager:       infraManager,
 		credentialsManager: credentialsManager,
 		securityManager:    securityManager,
+		trafficManager:     trafficManager,
 	}
 
 	s.setupRoutes()
@@ -224,6 +233,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/databases/tables/schema", s.describeTable)
 			protected.POST("/databases/query", s.executeDatabaseQuery)
 			protected.POST("/databases/users", s.listDatabaseUsers)
+			protected.POST("/databases/users/by-database", s.listUsersByDatabase)
 			protected.POST("/databases/create", s.createDatabaseInServer)
 			protected.POST("/databases/delete", s.deleteDatabaseInServer)
 			protected.POST("/databases/users/create", s.createDatabaseUser)
@@ -268,13 +278,21 @@ func (s *Server) setupRoutes() {
 			protected.GET("/security/realtime-capture", s.getRealtimeCaptureStatus)
 			protected.PUT("/security/realtime-capture", s.setRealtimeCaptureStatus)
 			protected.GET("/security/health", s.getSecurityHealth)
+			protected.POST("/security/refresh", s.refreshSecurityScripts)
 			protected.GET("/deployments/:name/security", s.getDeploymentSecurity)
 			protected.PUT("/deployments/:name/security", s.updateDeploymentSecurity)
 			protected.GET("/deployments/:name/security/events", s.getDeploymentSecurityEvents)
+
+			// Traffic endpoints
+			protected.GET("/traffic/logs", s.getTrafficLogs)
+			protected.GET("/traffic/stats", s.getTrafficStats)
+			protected.POST("/traffic/cleanup", s.cleanupTrafficLogs)
+			protected.GET("/deployments/:name/traffic", s.getDeploymentTrafficStats)
 		}
 
-		// Security event ingest endpoint (no auth - called by nginx Lua)
+		// Ingest endpoints (no auth - called by nginx Lua)
 		api.POST("/security/events/ingest", s.ingestSecurityEvent)
+		api.POST("/traffic/ingest", s.ingestTrafficLog)
 	}
 }
 
@@ -3452,6 +3470,31 @@ func (s *Server) listDatabaseUsers(c *gin.Context) {
 	}
 
 	users, err := s.databaseManager.ListUsers(&cfg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"users": users,
+	})
+}
+
+func (s *Server) listUsersByDatabase(c *gin.Context) {
+	var req struct {
+		database.ConnectionConfig
+		Database string `json:"database" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	users, err := s.databaseManager.ListDatabaseUsers(&req.ConnectionConfig, req.Database)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

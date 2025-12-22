@@ -293,3 +293,54 @@ func TestBuildDSN(t *testing.T) {
 		})
 	}
 }
+
+func TestListDatabaseUsers_UnsupportedType(t *testing.T) {
+	m := NewManager()
+
+	cfg := &ConnectionConfig{
+		Type:     "mongodb",
+		Host:     "localhost",
+		Port:     27017,
+		Username: "admin",
+		Password: "secret",
+	}
+
+	_, err := m.ListDatabaseUsers(cfg, "testdb")
+	if err == nil {
+		t.Error("expected error for unsupported database type")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("error should mention 'unsupported', got: %v", err)
+	}
+}
+
+func TestListDatabaseUsers_SanitizesDatabaseName(t *testing.T) {
+	m := NewManager()
+
+	tests := []struct {
+		name     string
+		database string
+	}{
+		{"single quotes", "test'db"},
+		{"double quotes", "test\"db"},
+		{"semicolon", "test;db"},
+		{"multiple special chars", "test';\"db"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &ConnectionConfig{
+				Type:     "mysql",
+				Host:     "localhost",
+				Port:     3306,
+				Username: "root",
+				Password: "secret",
+			}
+
+			_, err := m.ListDatabaseUsers(cfg, tt.database)
+			if err != nil && strings.Contains(err.Error(), "syntax") {
+				t.Errorf("SQL injection should be prevented, got syntax error: %v", err)
+			}
+		})
+	}
+}

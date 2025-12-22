@@ -243,7 +243,9 @@ const LuaSecurityScript = `-- FlatRun Security Event Capture
 local cjson = require "cjson"
 local http = require "resty.http"
 
-local AGENT_URL = "{{.AgentURL}}"
+-- Configuration (injected by agent during deployment)
+local AGENT_IP = "{{.AgentIP}}"
+local AGENT_PORT = {{.AgentPort}}
 
 -- Suspicious paths patterns
 local suspicious_patterns = {
@@ -301,9 +303,6 @@ local function capture_event()
 
     -- Send event to agent API (non-blocking)
     ngx.timer.at(0, function()
-        local httpc = http.new()
-        httpc:set_timeout(5000)
-
         local body = cjson.encode({
             source_ip = ip,
             request_path = uri,
@@ -314,10 +313,27 @@ local function capture_event()
             timestamp = ngx.time()
         })
 
-        local res, err = httpc:request_uri(AGENT_URL .. "/api/security/events/ingest", {
+        local httpc = http.new()
+        httpc:set_timeout(2000)
+
+        -- Connect directly using injected IP and port
+        local conn_ok, conn_err = httpc:connect({
+            host = AGENT_IP,
+            port = AGENT_PORT,
+            scheme = "http",
+        })
+
+        if not conn_ok then
+            ngx.log(ngx.ERR, "Failed to connect to agent: ", conn_err)
+            return
+        end
+
+        local res, err = httpc:request({
             method = "POST",
+            path = "/api/security/events/ingest",
             body = body,
             headers = {
+                ["Host"] = AGENT_IP .. ":" .. AGENT_PORT,
                 ["Content-Type"] = "application/json",
             }
         })
@@ -336,8 +352,8 @@ return {
 }
 `
 
-// GenerateLuaScript generates the security.lua file
-func GenerateLuaScript(agentURL string) (string, error) {
+// GenerateLuaScript generates the security.lua file with injected agent IP and port
+func GenerateLuaScript(agentIP string, agentPort int) (string, error) {
 	tmpl, err := template.New("lua").Parse(LuaSecurityScript)
 	if err != nil {
 		return "", err
@@ -345,9 +361,11 @@ func GenerateLuaScript(agentURL string) (string, error) {
 
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, struct {
-		AgentURL string
+		AgentIP   string
+		AgentPort int
 	}{
-		AgentURL: agentURL,
+		AgentIP:   agentIP,
+		AgentPort: agentPort,
 	})
 	if err != nil {
 		return "", err

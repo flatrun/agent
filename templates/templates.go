@@ -1,9 +1,11 @@
 package templates
 
 import (
+	"bytes"
 	"embed"
 	"io/fs"
 	"path/filepath"
+	"text/template"
 )
 
 //go:embed */metadata.yml */docker-compose.yml
@@ -86,4 +88,60 @@ func GetNginxConfig(luaEnabled bool) ([]byte, error) {
 
 func GetNginxSecurityLua() ([]byte, error) {
 	return FS.ReadFile("infra/nginx/lua/security.lua")
+}
+
+// LuaTemplateData contains the data for Lua template processing
+type LuaTemplateData struct {
+	AgentIP   string
+	AgentPort int
+}
+
+// GetNginxSecurityLuaWithConfig returns the security.lua template processed with agent config
+func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int) ([]byte, error) {
+	content, err := FS.ReadFile("infra/nginx/lua/security.lua")
+	if err != nil {
+		return nil, err
+	}
+
+	tmpl, err := template.New("security.lua").Parse(string(content))
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	data := LuaTemplateData{
+		AgentIP:   agentIP,
+		AgentPort: agentPort,
+	}
+
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// GetNginxTrafficLuaWithConfig returns the traffic.lua template processed with agent config
+func GetNginxTrafficLuaWithConfig(agentIP string, agentPort int) ([]byte, error) {
+	content, err := FS.ReadFile("infra/nginx/lua/traffic.lua")
+	if err != nil {
+		return nil, err
+	}
+
+	tmpl, err := template.New("traffic.lua").Parse(string(content))
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	data := LuaTemplateData{
+		AgentIP:   agentIP,
+		AgentPort: agentPort,
+	}
+
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
