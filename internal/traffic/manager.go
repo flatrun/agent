@@ -2,14 +2,12 @@ package traffic
 
 import (
 	"log"
-	"sync"
 	"time"
 )
 
 type Manager struct {
 	db            *DB
 	retentionDays int
-	mu            sync.RWMutex
 }
 
 func NewManager(deploymentsPath string, retentionDays int) (*Manager, error) {
