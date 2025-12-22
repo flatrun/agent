@@ -992,13 +992,10 @@ func (m *Manager) checkNginxLuaDirectoryMounted() bool {
 	return strings.TrimSpace(string(output)) == "yes"
 }
 
-// checkNginxCanReachAgent tests if nginx container can reach the agent API
 func (m *Manager) checkNginxCanReachAgent(agentIP string, agentPort int) bool {
-	// Try to connect to agent health endpoint from nginx container
-	// Use wget or curl depending on what's available in the container
 	testCmd := fmt.Sprintf(
-		"wget -q -O /dev/null --timeout=2 http://%s:%d/api/health 2>/dev/null && echo yes || "+
-			"curl -s --connect-timeout 2 http://%s:%d/api/health >/dev/null 2>&1 && echo yes || "+
+		"curl -s --connect-timeout 2 --max-time 5 http://%s:%d/api/health >/dev/null 2>&1 && echo yes || "+
+			"timeout 5 wget -q -O /dev/null http://%s:%d/api/health 2>/dev/null && echo yes || "+
 			"echo no",
 		agentIP, agentPort, agentIP, agentPort)
 
