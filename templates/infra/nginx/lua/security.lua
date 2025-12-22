@@ -6,8 +6,9 @@ local http = require "resty.http"
 
 local _M = {}
 
--- Configuration (will be set by the agent)
-local AGENT_URL = os.getenv("FLATRUN_AGENT_URL") or "http://host.docker.internal:8090"
+-- Configuration (injected by agent during deployment)
+local AGENT_IP = "{{.AgentIP}}"
+local AGENT_PORT = {{.AgentPort}}
 
 -- Suspicious paths patterns
 local suspicious_patterns = {
@@ -120,9 +121,6 @@ function _M.capture_event()
     local ok, err = ngx.timer.at(0, function(premature)
         if premature then return end
 
-        local httpc = http.new()
-        httpc:set_timeout(5000)
-
         local body, encode_err = cjson.encode({
             source_ip = ip,
             request_path = uri,
@@ -138,10 +136,27 @@ function _M.capture_event()
             return
         end
 
-        local res, req_err = httpc:request_uri(AGENT_URL .. "/api/security/events/ingest", {
+        local httpc = http.new()
+        httpc:set_timeout(2000)
+
+        -- Connect directly using injected IP and port
+        local conn_ok, conn_err = httpc:connect({
+            host = AGENT_IP,
+            port = AGENT_PORT,
+            scheme = "http",
+        })
+
+        if not conn_ok then
+            ngx.log(ngx.ERR, "Failed to connect to agent: ", conn_err)
+            return
+        end
+
+        local res, req_err = httpc:request({
             method = "POST",
+            path = "/api/security/events/ingest",
             body = body,
             headers = {
+                ["Host"] = AGENT_IP .. ":" .. AGENT_PORT,
                 ["Content-Type"] = "application/json",
             }
         })
