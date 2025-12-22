@@ -32,20 +32,7 @@ func TestSecurityConfigFilesCreated(t *testing.T) {
 		t.Fatalf("Security agent failed to start: %v", err)
 	}
 
-	// Test 1: Verify blocked_ips.conf exists and has valid content
-	t.Run("blocked_ips.conf exists", func(t *testing.T) {
-		blockedIPsPath := filepath.Join(securityDeploymentsPath, "nginx", "conf.d", "blocked_ips.conf")
-		content, err := os.ReadFile(blockedIPsPath)
-		if err != nil {
-			t.Fatalf("blocked_ips.conf should exist: %v", err)
-		}
-		if len(content) == 0 {
-			t.Error("blocked_ips.conf should not be empty")
-		}
-		t.Logf("blocked_ips.conf content:\n%s", string(content))
-	})
-
-	// Test 2: Verify rate_limits.conf exists and has valid content
+	// Test 1: Verify rate_limits.conf exists and has valid content
 	t.Run("rate_limits.conf exists", func(t *testing.T) {
 		rateLimitsPath := filepath.Join(securityDeploymentsPath, "nginx", "conf.d", "rate_limits.conf")
 		content, err := os.ReadFile(rateLimitsPath)

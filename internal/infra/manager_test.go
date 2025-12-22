@@ -69,11 +69,6 @@ func TestSetNginxRealtimeCapture(t *testing.T) {
 			t.Error("security.lua should be created when realtime capture is enabled")
 		}
 
-		blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
-		if _, err := os.Stat(blockedIPsPath); os.IsNotExist(err) {
-			t.Error("blocked_ips.conf should be created")
-		}
-
 		rateLimitsPath := filepath.Join(confDir, "rate_limits.conf")
 		if _, err := os.Stat(rateLimitsPath); os.IsNotExist(err) {
 			t.Error("rate_limits.conf should be created")
@@ -98,12 +93,7 @@ func TestSetNginxRealtimeCapture(t *testing.T) {
 			t.Error("lua directory should be removed when realtime capture is disabled")
 		}
 
-		// conf.d files should still exist (they may be used for blocking IPs etc)
-		blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
-		if _, err := os.Stat(blockedIPsPath); os.IsNotExist(err) {
-			t.Error("blocked_ips.conf should still exist after disabling realtime capture")
-		}
-
+		// conf.d files should still exist (they may be used for rate limiting etc)
 		rateLimitsPath := filepath.Join(confDir, "rate_limits.conf")
 		if _, err := os.Stat(rateLimitsPath); os.IsNotExist(err) {
 			t.Error("rate_limits.conf should still exist after disabling realtime capture")
