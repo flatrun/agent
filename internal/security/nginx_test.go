@@ -26,26 +26,9 @@ func TestEnsureSecurityConfigFiles(t *testing.T) {
 			t.Fatalf("EnsureSecurityConfigFiles failed: %v", err)
 		}
 
-		blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
-		if _, err := os.Stat(blockedIPsPath); os.IsNotExist(err) {
-			t.Error("blocked_ips.conf should be created")
-		}
-
 		rateLimitsPath := filepath.Join(confDir, "rate_limits.conf")
 		if _, err := os.Stat(rateLimitsPath); os.IsNotExist(err) {
 			t.Error("rate_limits.conf should be created")
-		}
-	})
-
-	t.Run("blocked_ips.conf has valid nginx content", func(t *testing.T) {
-		blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
-		content, err := os.ReadFile(blockedIPsPath)
-		if err != nil {
-			t.Fatalf("failed to read blocked_ips.conf: %v", err)
-		}
-
-		if !strings.Contains(string(content), "# Auto-generated") {
-			t.Error("blocked_ips.conf should contain auto-generated comment")
 		}
 	})
 
@@ -62,9 +45,9 @@ func TestEnsureSecurityConfigFiles(t *testing.T) {
 	})
 
 	t.Run("does not overwrite existing files", func(t *testing.T) {
-		blockedIPsPath := filepath.Join(confDir, "blocked_ips.conf")
-		customContent := "# Custom blocked IPs\ndeny 1.2.3.4;\n"
-		if err := os.WriteFile(blockedIPsPath, []byte(customContent), 0644); err != nil {
+		rateLimitsPath := filepath.Join(confDir, "rate_limits.conf")
+		customContent := "# Custom rate limits\nlimit_req_zone $binary_remote_addr zone=test:10m rate=1r/s;\n"
+		if err := os.WriteFile(rateLimitsPath, []byte(customContent), 0644); err != nil {
 			t.Fatalf("failed to write custom content: %v", err)
 		}
 
@@ -73,9 +56,9 @@ func TestEnsureSecurityConfigFiles(t *testing.T) {
 			t.Fatalf("EnsureSecurityConfigFiles failed: %v", err)
 		}
 
-		content, err := os.ReadFile(blockedIPsPath)
+		content, err := os.ReadFile(rateLimitsPath)
 		if err != nil {
-			t.Fatalf("failed to read blocked_ips.conf: %v", err)
+			t.Fatalf("failed to read rate_limits.conf: %v", err)
 		}
 
 		if string(content) != customContent {

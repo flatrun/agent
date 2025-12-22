@@ -10,6 +10,11 @@ local _M = {}
 local AGENT_IP = "{{.AgentIP}}"
 local AGENT_PORT = {{.AgentPort}}
 
+-- Blocked IPs cache settings
+local BLOCKED_IPS_CACHE_TTL = 30  -- seconds
+local BLOCKED_IPS_CACHE_KEY = "blocked_ips_list"
+local BLOCKED_IPS_LAST_FETCH = "blocked_ips_last_fetch"
+
 -- Suspicious paths patterns
 local suspicious_patterns = {
     "%.env",
@@ -56,6 +61,101 @@ local scanner_patterns = {
     "nessus",
     "zgrab",
 }
+
+-- Check if an IP is blocked (with caching)
+function _M.is_blocked(ip)
+    if not ip then return false end
+
+    local dict = ngx.shared.blocked_ips
+    if not dict then return false end
+
+    -- Check if this specific IP is marked as blocked
+    local is_blocked = dict:get("ip:" .. ip)
+    if is_blocked ~= nil then
+        return is_blocked
+    end
+
+    -- Check if we need to refresh the cache
+    local last_fetch = dict:get(BLOCKED_IPS_LAST_FETCH) or 0
+    local now = ngx.time()
+
+    if now - last_fetch > BLOCKED_IPS_CACHE_TTL then
+        -- Refresh in background to not block the request
+        ngx.timer.at(0, function()
+            _M.refresh_blocked_ips()
+        end)
+    end
+
+    return false
+end
+
+-- Fetch blocked IPs from agent API and cache them
+function _M.refresh_blocked_ips()
+    local dict = ngx.shared.blocked_ips
+    if not dict then return end
+
+    local httpc = http.new()
+    httpc:set_timeout(3000)
+
+    local conn_ok, conn_err = httpc:connect({
+        host = AGENT_IP,
+        port = AGENT_PORT,
+        scheme = "http",
+    })
+
+    if not conn_ok then
+        ngx.log(ngx.ERR, "Failed to connect to agent for blocked IPs: ", conn_err)
+        return
+    end
+
+    local res, req_err = httpc:request({
+        method = "GET",
+        path = "/api/security/blocked-ips",
+        headers = {
+            ["Host"] = AGENT_IP .. ":" .. AGENT_PORT,
+        }
+    })
+
+    if not res then
+        ngx.log(ngx.ERR, "Failed to fetch blocked IPs: ", req_err)
+        httpc:close()
+        return
+    end
+
+    local body = res:read_body()
+    httpc:close()
+
+    if res.status ~= 200 then
+        ngx.log(ngx.ERR, "Blocked IPs API returned status: ", res.status)
+        return
+    end
+
+    local data, decode_err = cjson.decode(body)
+    if not data then
+        ngx.log(ngx.ERR, "Failed to decode blocked IPs response: ", decode_err)
+        return
+    end
+
+    -- Clear old entries and set new ones
+    dict:flush_all()
+    dict:set(BLOCKED_IPS_LAST_FETCH, ngx.time())
+
+    local blocked_ips = data.blocked_ips or {}
+    for _, entry in ipairs(blocked_ips) do
+        if entry.ip then
+            dict:set("ip:" .. entry.ip, true, BLOCKED_IPS_CACHE_TTL * 2)
+        end
+    end
+
+    ngx.log(ngx.INFO, "Refreshed blocked IPs cache: ", #blocked_ips, " IPs")
+end
+
+-- Initialize blocked IPs cache on worker start
+function _M.init_blocked_ips()
+    ngx.timer.at(0, function()
+        _M.refresh_blocked_ips()
+    end)
+end
 
 function _M.is_suspicious_path(uri)
     if not uri then return false end

@@ -35,11 +35,6 @@ func TestLuaRealtimeCapture(t *testing.T) {
 	cleanupSecurityState(t)
 
 	t.Run("security config files created", func(t *testing.T) {
-		blockedIPsPath := filepath.Join(luaDeploymentsPath, "nginx", "conf.d", "blocked_ips.conf")
-		if _, err := os.Stat(blockedIPsPath); os.IsNotExist(err) {
-			t.Fatalf("blocked_ips.conf should exist")
-		}
-
 		rateLimitsPath := filepath.Join(luaDeploymentsPath, "nginx", "conf.d", "rate_limits.conf")
 		if _, err := os.Stat(rateLimitsPath); os.IsNotExist(err) {
 			t.Fatalf("rate_limits.conf should exist")
