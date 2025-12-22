@@ -1444,6 +1444,195 @@ func TestSanitizeZoneName(t *testing.T) {
 	}
 }
 
+func TestValidateSecurityHooks(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-validate-hooks-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	confDir := filepath.Join(tmpDir, "nginx", "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("failed to create conf.d: %v", err)
+	}
+
+	cfg := &config.NginxConfig{}
+	m := NewManager(cfg, tmpDir, "")
+
+	t.Run("returns error when vhost does not exist", func(t *testing.T) {
+		err := m.ValidateSecurityHooks("nonexistent", true)
+		if err == nil {
+			t.Error("expected error for nonexistent vhost")
+		}
+	})
+
+	t.Run("validates hooks are present when expected", func(t *testing.T) {
+		configWithHook := `server {
+    listen 80;
+    server_name test.example.com;
+
+    location / {
+        proxy_pass http://test:8080;
+        log_by_lua_block {
+            security.capture_event()
+        }
+    }
+}`
+		if err := os.WriteFile(filepath.Join(confDir, "with-hook.conf"), []byte(configWithHook), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		err := m.ValidateSecurityHooks("with-hook", true)
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("returns error when hooks missing but expected", func(t *testing.T) {
+		configWithoutHook := `server {
+    listen 80;
+    server_name test.example.com;
+
+    location / {
+        proxy_pass http://test:8080;
+    }
+}`
+		if err := os.WriteFile(filepath.Join(confDir, "without-hook.conf"), []byte(configWithoutHook), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		err := m.ValidateSecurityHooks("without-hook", true)
+		if err == nil {
+			t.Error("expected error when hooks are missing but expected")
+		}
+	})
+
+	t.Run("validates hooks are absent when not expected", func(t *testing.T) {
+		configWithoutHook := `server {
+    listen 80;
+    server_name test.example.com;
+
+    location / {
+        proxy_pass http://test:8080;
+    }
+}`
+		if err := os.WriteFile(filepath.Join(confDir, "clean.conf"), []byte(configWithoutHook), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		err := m.ValidateSecurityHooks("clean", false)
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("returns error when hooks present but not expected", func(t *testing.T) {
+		configWithHook := `server {
+    listen 80;
+    server_name test.example.com;
+
+    location / {
+        proxy_pass http://test:8080;
+        log_by_lua_block {
+            security.capture_event()
+        }
+    }
+}`
+		if err := os.WriteFile(filepath.Join(confDir, "unwanted-hook.conf"), []byte(configWithHook), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		err := m.ValidateSecurityHooks("unwanted-hook", false)
+		if err == nil {
+			t.Error("expected error when hooks present but not expected")
+		}
+	})
+}
+
+func TestGetSecurityHookStatus(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-hook-status-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	confDir := filepath.Join(tmpDir, "nginx", "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("failed to create conf.d: %v", err)
+	}
+
+	cfg := &config.NginxConfig{}
+	m := NewManager(cfg, tmpDir, "")
+
+	t.Run("returns status for vhost with hooks", func(t *testing.T) {
+		configWithHook := `server {
+    listen 80;
+    server_name test.example.com;
+
+    location / {
+        proxy_pass http://test:8080;
+        log_by_lua_block {
+            security.capture_event()
+        }
+    }
+
+    location /api {
+        proxy_pass http://test:8080;
+        log_by_lua_block {
+            security.capture_event()
+        }
+    }
+}`
+		if err := os.WriteFile(filepath.Join(confDir, "multi-hook.conf"), []byte(configWithHook), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		status, err := m.GetSecurityHookStatus("multi-hook")
+		if err != nil {
+			t.Fatalf("GetSecurityHookStatus failed: %v", err)
+		}
+
+		if !status.HasHooks {
+			t.Error("expected HasHooks to be true")
+		}
+		if len(status.HookLocations) != 2 {
+			t.Errorf("expected 2 hook locations, got %d", len(status.HookLocations))
+		}
+		if !status.ProperlyConfigured {
+			t.Error("expected ProperlyConfigured to be true")
+		}
+	})
+
+	t.Run("returns status for vhost without hooks", func(t *testing.T) {
+		configWithoutHook := `server {
+    listen 80;
+    server_name test.example.com;
+
+    location / {
+        proxy_pass http://test:8080;
+    }
+}`
+		if err := os.WriteFile(filepath.Join(confDir, "no-hook.conf"), []byte(configWithoutHook), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		status, err := m.GetSecurityHookStatus("no-hook")
+		if err != nil {
+			t.Fatalf("GetSecurityHookStatus failed: %v", err)
+		}
+
+		if status.HasHooks {
+			t.Error("expected HasHooks to be false")
+		}
+		if len(status.HookLocations) != 0 {
+			t.Errorf("expected 0 hook locations, got %d", len(status.HookLocations))
+		}
+		if status.ProperlyConfigured {
+			t.Error("expected ProperlyConfigured to be false")
+		}
+	})
+}
+
 func TestUpdateDeploymentRateLimits(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "nginx-rate-limits-test-*")
 	if err != nil {

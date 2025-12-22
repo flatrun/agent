@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+	"time"
 
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
@@ -224,6 +225,10 @@ func (m *Manager) Reload() error {
 		return fmt.Errorf("nginx container name not configured")
 	}
 
+	if err := m.waitForContainerReady(5); err != nil {
+		return fmt.Errorf("container not ready: %w", err)
+	}
+
 	reloadCmd := m.config.ReloadCommand
 	if reloadCmd == "" {
 		reloadCmd = "nginx -s reload"
@@ -243,6 +248,10 @@ func (m *Manager) TestConfig() error {
 		return fmt.Errorf("nginx container name not configured")
 	}
 
+	if err := m.waitForContainerReady(5); err != nil {
+		return fmt.Errorf("container not ready: %w", err)
+	}
+
 	cmd := exec.Command("docker", "exec", m.config.ContainerName, "nginx", "-t")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -250,6 +259,31 @@ func (m *Manager) TestConfig() error {
 	}
 
 	return nil
+}
+
+func (m *Manager) waitForContainerReady(maxRetries int) error {
+	for i := 0; i < maxRetries; i++ {
+		cmd := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", m.config.ContainerName)
+		output, err := cmd.Output()
+		if err != nil {
+			return fmt.Errorf("failed to get container status: %w", err)
+		}
+
+		status := strings.TrimSpace(string(output))
+		if status == "running" {
+			// Also check it's not in a restart loop
+			cmd = exec.Command("docker", "inspect", "-f", "{{.State.Restarting}}", m.config.ContainerName)
+			output, err = cmd.Output()
+			if err == nil && strings.TrimSpace(string(output)) == "false" {
+				return nil
+			}
+		}
+
+		if i < maxRetries-1 {
+			time.Sleep(time.Second)
+		}
+	}
+	return fmt.Errorf("container not ready after %d attempts", maxRetries)
 }
 
 func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) {
@@ -605,4 +639,106 @@ func (m *Manager) updateRateLimitsInternal(deploymentName string, rateLimits []m
 // RemoveDeploymentRateLimits removes rate limit zones for a deployment
 func (m *Manager) RemoveDeploymentRateLimits(deploymentName string) error {
 	return m.UpdateDeploymentRateLimits(deploymentName, nil)
+}
+
+// ValidateSecurityHooks checks that a vhost has the correct security hooks based on the expected state
+func (m *Manager) ValidateSecurityHooks(deploymentName string, shouldHaveHooks bool) error {
+	content, err := m.GetVirtualHost(deploymentName)
+	if err != nil {
+		return fmt.Errorf("failed to read vhost: %w", err)
+	}
+
+	hasHooks := strings.Contains(content, "security.capture_event()")
+	hasLogByLua := strings.Contains(content, "log_by_lua_block")
+
+	if shouldHaveHooks {
+		if !hasHooks {
+			return fmt.Errorf("security enabled but vhost missing security.capture_event() call")
+		}
+		if !hasLogByLua {
+			return fmt.Errorf("security enabled but vhost missing log_by_lua_block")
+		}
+
+		// Check hooks are inside location blocks
+		lines := strings.Split(content, "\n")
+		inLocation := false
+		foundHookInLocation := false
+
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "location ") {
+				inLocation = true
+			}
+			if inLocation && strings.Contains(trimmed, "security.capture_event()") {
+				foundHookInLocation = true
+			}
+			if trimmed == "}" && inLocation {
+				inLocation = false
+			}
+		}
+
+		if !foundHookInLocation {
+			return fmt.Errorf("security hook not properly placed inside location block")
+		}
+	} else {
+		if hasHooks {
+			return fmt.Errorf("security disabled but vhost still contains security.capture_event()")
+		}
+	}
+
+	return nil
+}
+
+// SecurityHookStatus returns details about security hooks in a vhost
+type SecurityHookStatus struct {
+	HasHooks           bool     `json:"has_hooks"`
+	HookLocations      []string `json:"hook_locations"`
+	ProperlyConfigured bool     `json:"properly_configured"`
+}
+
+// GetSecurityHookStatus returns detailed info about security hooks in a vhost
+func (m *Manager) GetSecurityHookStatus(deploymentName string) (*SecurityHookStatus, error) {
+	content, err := m.GetVirtualHost(deploymentName)
+	if err != nil {
+		return nil, err
+	}
+
+	status := &SecurityHookStatus{
+		HasHooks:      strings.Contains(content, "security.capture_event()"),
+		HookLocations: []string{},
+	}
+
+	lines := strings.Split(content, "\n")
+	currentLocation := ""
+	inLocation := false
+	depth := 0
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "location ") {
+			inLocation = true
+			depth = 1
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 {
+				currentLocation = parts[1]
+			}
+		}
+
+		if inLocation {
+			depth += strings.Count(trimmed, "{") - strings.Count(trimmed, "}")
+			if strings.Contains(trimmed, "security.capture_event()") {
+				status.HookLocations = append(status.HookLocations, currentLocation)
+			}
+			if depth <= 0 {
+				inLocation = false
+				currentLocation = ""
+			}
+		}
+	}
+
+	// Properly configured if hooks are present and all found in location blocks
+	status.ProperlyConfigured = status.HasHooks && len(status.HookLocations) > 0
+
+	return status, nil
 }
