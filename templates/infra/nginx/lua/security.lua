@@ -292,4 +292,123 @@ function _M.check_rate_limit(key, limit, window)
     return false
 end
 
+-- Internal API handlers for immediate IP blocking
+
+local function json_response(status, data)
+    ngx.status = status
+    ngx.header["Content-Type"] = "application/json"
+    ngx.say(cjson.encode(data))
+end
+
+-- Handle block IP request from agent
+function _M.handle_block_ip_request()
+    local client_ip = ngx.var.remote_addr
+
+    if ngx.req.get_method() ~= "POST" then
+        ngx.log(ngx.WARN, "block-ip: method not allowed from ", client_ip)
+        json_response(405, {error = "Method not allowed"})
+        return
+    end
+
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data()
+    if not body then
+        ngx.log(ngx.ERR, "block-ip: no body from ", client_ip)
+        json_response(400, {error = "No body provided"})
+        return
+    end
+
+    local data, err = cjson.decode(body)
+    if not data then
+        ngx.log(ngx.ERR, "block-ip: invalid JSON from ", client_ip, ": ", err, " body=", body:sub(1, 100))
+        json_response(400, {error = "Invalid JSON: " .. (err or "unknown")})
+        return
+    end
+
+    local ip = data.ip
+    local ttl = data.ttl or 86400  -- default 24 hours
+
+    if not ip then
+        ngx.log(ngx.ERR, "block-ip: missing IP in request from ", client_ip)
+        json_response(400, {error = "IP address required"})
+        return
+    end
+
+    local dict = ngx.shared.blocked_ips
+    if not dict then
+        ngx.log(ngx.ERR, "block-ip: shared dict not available")
+        json_response(500, {error = "Shared dict not available"})
+        return
+    end
+
+    local ok, set_err = dict:set("ip:" .. ip, true, ttl)
+    if not ok then
+        ngx.log(ngx.ERR, "block-ip: failed to set IP ", ip, " in dict: ", set_err)
+        json_response(500, {error = "Failed to block IP: " .. (set_err or "unknown")})
+        return
+    end
+
+    ngx.log(ngx.INFO, "block-ip: blocked ", ip, " for ", ttl, "s")
+    json_response(200, {success = true, ip = ip, ttl = ttl})
+end
+
+-- Handle unblock IP request from agent
+function _M.handle_unblock_ip_request()
+    local client_ip = ngx.var.remote_addr
+
+    if ngx.req.get_method() ~= "POST" then
+        ngx.log(ngx.WARN, "unblock-ip: method not allowed from ", client_ip)
+        json_response(405, {error = "Method not allowed"})
+        return
+    end
+
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data()
+    if not body then
+        ngx.log(ngx.ERR, "unblock-ip: no body from ", client_ip)
+        json_response(400, {error = "No body provided"})
+        return
+    end
+
+    local data, err = cjson.decode(body)
+    if not data then
+        ngx.log(ngx.ERR, "unblock-ip: invalid JSON from ", client_ip, ": ", err, " body=", body:sub(1, 100))
+        json_response(400, {error = "Invalid JSON: " .. (err or "unknown")})
+        return
+    end
+
+    local ip = data.ip
+    if not ip then
+        ngx.log(ngx.ERR, "unblock-ip: missing IP in request from ", client_ip)
+        json_response(400, {error = "IP address required"})
+        return
+    end
+
+    local dict = ngx.shared.blocked_ips
+    if not dict then
+        ngx.log(ngx.ERR, "unblock-ip: shared dict not available")
+        json_response(500, {error = "Shared dict not available"})
+        return
+    end
+
+    dict:delete("ip:" .. ip)
+    ngx.log(ngx.INFO, "unblock-ip: unblocked ", ip)
+    json_response(200, {success = true, ip = ip})
+end
+
+-- Handle refresh request - force full cache refresh
+function _M.handle_refresh_request()
+    local client_ip = ngx.var.remote_addr
+
+    if ngx.req.get_method() ~= "POST" then
+        ngx.log(ngx.WARN, "refresh: method not allowed from ", client_ip)
+        json_response(405, {error = "Method not allowed"})
+        return
+    end
+
+    ngx.log(ngx.INFO, "refresh: refreshing blocked IPs cache")
+    _M.refresh_blocked_ips()
+    json_response(200, {success = true, message = "Cache refreshed"})
+end
+
 return _M

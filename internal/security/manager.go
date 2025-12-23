@@ -37,10 +37,20 @@ func (m *Manager) Close() error {
 	return m.db.Close()
 }
 
+// IngestResult contains the result of event ingestion
+type IngestResult struct {
+	Event       *SecurityEvent
+	AutoBlocked bool
+	BlockedIP   string
+	BlockTTL    int // TTL in seconds for the block
+}
+
 // IngestEvent processes an incoming event from nginx and stores it
-func (m *Manager) IngestEvent(event *IngestEvent) (*SecurityEvent, error) {
+func (m *Manager) IngestEvent(event *IngestEvent, autoBlockDuration time.Duration) (*IngestResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	result := &IngestResult{}
 
 	// Check if IP is blocked - if so, don't process
 	blocked, err := m.db.IsIPBlocked(event.SourceIP)
@@ -48,13 +58,13 @@ func (m *Manager) IngestEvent(event *IngestEvent) (*SecurityEvent, error) {
 		return nil, err
 	}
 	if blocked {
-		return nil, nil
+		return result, nil
 	}
 
 	// Classify the event
 	secEvent := m.detector.Classify(event)
 	if secEvent == nil {
-		return nil, nil
+		return result, nil
 	}
 
 	// Store the event
@@ -63,14 +73,20 @@ func (m *Manager) IngestEvent(event *IngestEvent) (*SecurityEvent, error) {
 		return nil, err
 	}
 	secEvent.ID = id
+	result.Event = secEvent
 
-	// Check if we should auto-block the IP (best-effort, ignore errors)
+	// Check if we should auto-block the IP
 	if m.detector.ShouldAutoBlock(event.SourceIP, secEvent) {
-		expiresAt := time.Now().Add(24 * time.Hour)
-		_, _ = m.db.BlockIP(event.SourceIP, "Auto-blocked due to suspicious activity", &expiresAt, true)
+		expiresAt := time.Now().Add(autoBlockDuration)
+		_, err := m.db.BlockIP(event.SourceIP, "Auto-blocked due to suspicious activity", &expiresAt, true)
+		if err == nil {
+			result.AutoBlocked = true
+			result.BlockedIP = event.SourceIP
+			result.BlockTTL = int(autoBlockDuration.Seconds())
+		}
 	}
 
-	return secEvent, nil
+	return result, nil
 }
 
 // GetEvents retrieves events with optional filtering

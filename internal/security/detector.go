@@ -11,38 +11,50 @@ type Detector struct {
 	mu             sync.RWMutex
 
 	// Thresholds
-	rateWindowDuration time.Duration
-	rateThreshold      int
-	autoBlockThreshold int
+	windowDuration         time.Duration
+	rateThreshold          int // high request rate
+	notFoundThreshold      int // 404 responses
+	authFailureThreshold   int // 401/403 responses
+	uniquePathsThreshold   int // scanning many different paths
+	repeatedHitsThreshold  int // hammering same path
 }
 
 type requestWindow struct {
-	count     int
-	windowEnd time.Time
+	count        int
+	notFoundHits int            // 404 responses
+	authFailures int            // 401/403 responses
+	pathHits     map[string]int // path -> hit count
+	windowEnd    time.Time
 }
 
 func NewDetector() *Detector {
 	return &Detector{
-		ipRequestCount:     make(map[string]*requestWindow),
-		rateWindowDuration: time.Minute,
-		rateThreshold:      100,
-		autoBlockThreshold: 50,
+		ipRequestCount:        make(map[string]*requestWindow),
+		windowDuration:        2 * time.Minute,
+		rateThreshold:         60,  // 60 requests in 2 min
+		notFoundThreshold:     10,  // 10 404s in 2 min
+		authFailureThreshold:  5,   // 5 auth failures in 2 min
+		uniquePathsThreshold:  20,  // 20 different paths in 2 min
+		repeatedHitsThreshold: 30,  // 30 hits to same path in 2 min
 	}
 }
 
 // SetThresholds configures detection thresholds
-func (d *Detector) SetThresholds(rateThreshold, autoBlockThreshold int, windowDuration time.Duration) {
+func (d *Detector) SetThresholds(rateThreshold, notFoundThreshold, authFailureThreshold, uniquePathsThreshold, repeatedHitsThreshold int, windowDuration time.Duration) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.rateThreshold = rateThreshold
-	d.autoBlockThreshold = autoBlockThreshold
-	d.rateWindowDuration = windowDuration
+	d.notFoundThreshold = notFoundThreshold
+	d.authFailureThreshold = authFailureThreshold
+	d.uniquePathsThreshold = uniquePathsThreshold
+	d.repeatedHitsThreshold = repeatedHitsThreshold
+	d.windowDuration = windowDuration
 }
 
 // Classify analyzes an incoming event and creates a SecurityEvent if it's security-relevant
 func (d *Detector) Classify(event *IngestEvent) *SecurityEvent {
-	// Track request rate
-	highRate := d.trackRequestRate(event.SourceIP)
+	// Track request behavior
+	highRate := d.trackRequest(event.SourceIP, event)
 
 	var eventType, severity, message string
 
@@ -118,8 +130,8 @@ func (d *Detector) Classify(event *IngestEvent) *SecurityEvent {
 	}
 }
 
-// trackRequestRate tracks request rate per IP and returns true if rate is too high
-func (d *Detector) trackRequestRate(ip string) bool {
+// trackRequest tracks request behavior per IP and returns true if rate is too high
+func (d *Detector) trackRequest(ip string, event *IngestEvent) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -129,12 +141,27 @@ func (d *Detector) trackRequestRate(ip string) bool {
 	if !exists || now.After(window.windowEnd) {
 		d.ipRequestCount[ip] = &requestWindow{
 			count:     1,
-			windowEnd: now.Add(d.rateWindowDuration),
+			pathHits:  make(map[string]int),
+			windowEnd: now.Add(d.windowDuration),
 		}
-		return false
+		window = d.ipRequestCount[ip]
+	} else {
+		window.count++
 	}
 
-	window.count++
+	// Track hits per path
+	window.pathHits[event.RequestPath]++
+
+	// Track 404 responses (probing for files/paths)
+	if event.StatusCode == 404 {
+		window.notFoundHits++
+	}
+
+	// Track auth failures (401, 403)
+	if event.StatusCode == 401 || event.StatusCode == 403 {
+		window.authFailures++
+	}
+
 	return window.count > d.rateThreshold
 }
 
@@ -150,13 +177,34 @@ func (d *Detector) ShouldAutoBlock(ip string, event *SecurityEvent) bool {
 		return true
 	}
 
-	// Check for repeated critical events
 	d.mu.RLock()
 	window, exists := d.ipRequestCount[ip]
 	d.mu.RUnlock()
 
-	if exists && window.count > d.autoBlockThreshold && event.Severity == SeverityCritical {
+	if !exists {
+		return false
+	}
+
+	// Auto-block after too many 404s (probing for files/paths)
+	if window.notFoundHits >= d.notFoundThreshold {
 		return true
+	}
+
+	// Auto-block after too many auth failures
+	if window.authFailures >= d.authFailureThreshold {
+		return true
+	}
+
+	// Auto-block if trying too many unique paths (scanning)
+	if len(window.pathHits) >= d.uniquePathsThreshold {
+		return true
+	}
+
+	// Auto-block if hammering same path repeatedly
+	for _, hits := range window.pathHits {
+		if hits >= d.repeatedHitsThreshold {
+			return true
+		}
 	}
 
 	return false
