@@ -1,7 +1,11 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"time"
 
@@ -24,18 +28,29 @@ func (s *Server) ingestSecurityEvent(c *gin.Context) {
 		return
 	}
 
-	secEvent, err := s.securityManager.IngestEvent(&event)
+	result, err := s.securityManager.IngestEvent(&event)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	if secEvent == nil {
+	if result.Event == nil {
 		c.JSON(http.StatusOK, gin.H{"processed": false, "reason": "Event not security-relevant or IP blocked"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"processed": true, "event": secEvent})
+	// If an IP was auto-blocked, notify nginx immediately
+	if result.AutoBlocked {
+		if err := s.notifyNginxBlockIP(result.BlockedIP, result.BlockTTL); err != nil {
+			log.Printf("Warning: failed to notify nginx about auto-blocked IP %s: %v", result.BlockedIP, err)
+		}
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"processed":    true,
+		"event":        result.Event,
+		"auto_blocked": result.AutoBlocked,
+	})
 }
 
 // getSecurityStats returns security statistics
@@ -198,6 +213,11 @@ func (s *Server) blockIP(c *gin.Context) {
 		return
 	}
 
+	// Notify nginx to immediately block the IP
+	if err := s.notifyNginxBlockIP(req.IP, req.Duration); err != nil {
+		log.Printf("Warning: failed to notify nginx about blocked IP %s: %v", req.IP, err)
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"id": id, "message": "IP blocked successfully"})
 }
 
@@ -217,6 +237,11 @@ func (s *Server) unblockIP(c *gin.Context) {
 	if err := s.securityManager.UnblockIP(ip); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Notify nginx to immediately unblock the IP
+	if err := s.notifyNginxUnblockIP(ip); err != nil {
+		log.Printf("Warning: failed to notify nginx about unblocked IP %s: %v", ip, err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "IP unblocked successfully"})
@@ -697,6 +722,69 @@ func (s *Server) updateSecuritySettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// notifyNginxBlockIP notifies nginx to immediately add an IP to its blocked list
+func (s *Server) notifyNginxBlockIP(ip string, ttlSeconds int) error {
+	if s.config.Nginx.ContainerName == "" {
+		return fmt.Errorf("nginx container name not configured")
+	}
+
+	if ttlSeconds <= 0 {
+		ttlSeconds = 86400 * 365 // 1 year for permanent blocks
+	}
+
+	payload := map[string]interface{}{
+		"ip":  ip,
+		"ttl": ttlSeconds,
+	}
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	curlCmd := fmt.Sprintf(
+		`curl -s -X POST -H "Content-Type: application/json" -d '%s' http://127.0.0.1:8081/_internal/security/block-ip`,
+		string(jsonPayload),
+	)
+
+	cmd := exec.Command("docker", "exec", s.config.Nginx.ContainerName, "sh", "-c", curlCmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to notify nginx: %s - %w", string(output), err)
+	}
+
+	log.Printf("Notified nginx to block IP %s (ttl=%ds): %s", ip, ttlSeconds, string(output))
+	return nil
+}
+
+// notifyNginxUnblockIP notifies nginx to immediately remove an IP from its blocked list
+func (s *Server) notifyNginxUnblockIP(ip string) error {
+	if s.config.Nginx.ContainerName == "" {
+		return fmt.Errorf("nginx container name not configured")
+	}
+
+	payload := map[string]interface{}{
+		"ip": ip,
+	}
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	curlCmd := fmt.Sprintf(
+		`curl -s -X POST -H "Content-Type: application/json" -d '%s' http://127.0.0.1:8081/_internal/security/unblock-ip`,
+		string(jsonPayload),
+	)
+
+	cmd := exec.Command("docker", "exec", s.config.Nginx.ContainerName, "sh", "-c", curlCmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to notify nginx: %s - %w", string(output), err)
+	}
+
+	log.Printf("Notified nginx to unblock IP %s: %s", ip, string(output))
+	return nil
 }
 
 // refreshSecurityScripts regenerates Lua scripts with correct agent IP and reloads nginx

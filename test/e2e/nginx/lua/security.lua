@@ -9,6 +9,82 @@ local _M = {}
 -- Configuration (will be set by the agent)
 local AGENT_URL = os.getenv("FLATRUN_AGENT_URL") or "http://host.docker.internal:8080"
 
+-- Blocked IPs cache settings
+local BLOCKED_IPS_CACHE_TTL = 30  -- seconds
+local BLOCKED_IPS_LAST_FETCH = "blocked_ips_last_fetch"
+
+-- Check if an IP is blocked (with caching)
+function _M.is_blocked(ip)
+    if not ip then return false end
+
+    local dict = ngx.shared.blocked_ips
+    if not dict then return false end
+
+    local is_blocked = dict:get("ip:" .. ip)
+    if is_blocked ~= nil then
+        return is_blocked
+    end
+
+    local last_fetch = dict:get(BLOCKED_IPS_LAST_FETCH) or 0
+    local now = ngx.time()
+
+    if now - last_fetch > BLOCKED_IPS_CACHE_TTL then
+        ngx.timer.at(0, function()
+            _M.refresh_blocked_ips()
+        end)
+    end
+
+    return false
+end
+
+-- Fetch blocked IPs from agent API and cache them
+function _M.refresh_blocked_ips()
+    local dict = ngx.shared.blocked_ips
+    if not dict then return end
+
+    local httpc = http.new()
+    httpc:set_timeout(3000)
+
+    local res, err = httpc:request_uri(AGENT_URL .. "/api/security/blocked-ips", {
+        method = "GET",
+    })
+
+    if not res then
+        ngx.log(ngx.ERR, "Failed to fetch blocked IPs: ", err)
+        return
+    end
+
+    if res.status ~= 200 then
+        ngx.log(ngx.ERR, "Blocked IPs API returned status: ", res.status)
+        return
+    end
+
+    local data, decode_err = cjson.decode(res.body)
+    if not data then
+        ngx.log(ngx.ERR, "Failed to decode blocked IPs response: ", decode_err)
+        return
+    end
+
+    dict:flush_all()
+    dict:set(BLOCKED_IPS_LAST_FETCH, ngx.time())
+
+    local blocked_ips = data.blocked_ips or {}
+    for _, entry in ipairs(blocked_ips) do
+        if entry.ip then
+            dict:set("ip:" .. entry.ip, true, BLOCKED_IPS_CACHE_TTL * 2)
+        end
+    end
+
+    ngx.log(ngx.INFO, "Refreshed blocked IPs cache: ", #blocked_ips, " IPs")
+end
+
+-- Initialize blocked IPs cache on worker start
+function _M.init_blocked_ips()
+    ngx.timer.at(0, function()
+        _M.refresh_blocked_ips()
+    end)
+end
+
 -- Suspicious paths patterns
 local suspicious_patterns = {
     "%.env",
@@ -175,6 +251,107 @@ function _M.check_rate_limit(key, limit, window)
 
     dict:incr(key, 1)
     return false
+end
+
+-- Internal API handlers for immediate IP blocking
+
+function _M.handle_block_ip_request()
+    if ngx.req.get_method() ~= "POST" then
+        ngx.status = 405
+        ngx.say('{"error": "Method not allowed"}')
+        return
+    end
+
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data()
+    if not body then
+        ngx.status = 400
+        ngx.say('{"error": "No body provided"}')
+        return
+    end
+
+    local data, err = cjson.decode(body)
+    if not data then
+        ngx.status = 400
+        ngx.say('{"error": "Invalid JSON"}')
+        return
+    end
+
+    local ip = data.ip
+    local ttl = data.ttl or 86400
+
+    if not ip then
+        ngx.status = 400
+        ngx.say('{"error": "IP address required"}')
+        return
+    end
+
+    local dict = ngx.shared.blocked_ips
+    if not dict then
+        ngx.status = 500
+        ngx.say('{"error": "Shared dict not available"}')
+        return
+    end
+
+    dict:set("ip:" .. ip, true, ttl)
+    ngx.status = 200
+    ngx.header["Content-Type"] = "application/json"
+    ngx.say('{"success": true, "ip": "' .. ip .. '"}')
+end
+
+function _M.handle_unblock_ip_request()
+    if ngx.req.get_method() ~= "POST" then
+        ngx.status = 405
+        ngx.say('{"error": "Method not allowed"}')
+        return
+    end
+
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data()
+    if not body then
+        ngx.status = 400
+        ngx.say('{"error": "No body provided"}')
+        return
+    end
+
+    local data, err = cjson.decode(body)
+    if not data then
+        ngx.status = 400
+        ngx.say('{"error": "Invalid JSON"}')
+        return
+    end
+
+    local ip = data.ip
+    if not ip then
+        ngx.status = 400
+        ngx.say('{"error": "IP address required"}')
+        return
+    end
+
+    local dict = ngx.shared.blocked_ips
+    if not dict then
+        ngx.status = 500
+        ngx.say('{"error": "Shared dict not available"}')
+        return
+    end
+
+    dict:delete("ip:" .. ip)
+    ngx.status = 200
+    ngx.header["Content-Type"] = "application/json"
+    ngx.say('{"success": true, "ip": "' .. ip .. '"}')
+end
+
+function _M.handle_refresh_request()
+    if ngx.req.get_method() ~= "POST" then
+        ngx.status = 405
+        ngx.say('{"error": "Method not allowed"}')
+        return
+    end
+
+    _M.refresh_blocked_ips()
+    ngx.status = 200
+    ngx.header["Content-Type"] = "application/json"
+    ngx.say('{"success": true, "message": "Cache refreshed"}')
 end
 
 return _M
