@@ -9,6 +9,7 @@ local _M = {}
 -- Configuration (injected by agent during deployment)
 local AGENT_IP = "{{.AgentIP}}"
 local AGENT_PORT = {{.AgentPort}}
+local INTERNAL_TOKEN = "{{.InternalAPIToken}}"
 
 -- Blocked IPs cache settings
 local BLOCKED_IPS_CACHE_TTL = 30  -- seconds
@@ -110,9 +111,10 @@ function _M.refresh_blocked_ips()
 
     local res, req_err = httpc:request({
         method = "GET",
-        path = "/api/security/blocked-ips",
+        path = "/api/_internal/blocked-ips",
         headers = {
             ["Host"] = AGENT_IP .. ":" .. AGENT_PORT,
+            ["X-Internal-Token"] = INTERNAL_TOKEN,
         }
     })
 

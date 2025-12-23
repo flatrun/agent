@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"time"
 
@@ -126,6 +128,9 @@ type SecurityConfig struct {
 	AuthFailureThreshold  int           `yaml:"auth_failure_threshold" json:"auth_failure_threshold"`
 	UniquePathsThreshold  int           `yaml:"unique_paths_threshold" json:"unique_paths_threshold"`
 	RepeatedHitsThreshold int           `yaml:"repeated_hits_threshold" json:"repeated_hits_threshold"`
+
+	// Internal API token for nginx-to-agent communication (auto-generated if empty)
+	InternalAPIToken string `yaml:"internal_api_token" json:"-"`
 }
 
 func FindConfigPath(providedPath string) string {
@@ -267,6 +272,12 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Security.RepeatedHitsThreshold == 0 {
 		cfg.Security.RepeatedHitsThreshold = 30
+	}
+	if cfg.Security.InternalAPIToken == "" {
+		bytes := make([]byte, 32)
+		if _, err := rand.Read(bytes); err == nil {
+			cfg.Security.InternalAPIToken = hex.EncodeToString(bytes)
+		}
 	}
 }
 

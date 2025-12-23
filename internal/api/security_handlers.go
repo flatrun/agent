@@ -194,6 +194,19 @@ func (s *Server) listBlockedIPs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"blocked_ips": ips})
 }
 
+// listBlockedIPsInternal returns blocked IPs for internal nginx communication
+func (s *Server) listBlockedIPsInternal(c *gin.Context) {
+	token := c.GetHeader("X-Internal-Token")
+	expectedToken := s.config.Security.InternalAPIToken
+
+	if token == "" || token != expectedToken {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid internal token"})
+		return
+	}
+
+	s.listBlockedIPs(c)
+}
+
 // blockIP blocks an IP address
 func (s *Server) blockIP(c *gin.Context) {
 	if s.securityManager == nil {

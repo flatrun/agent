@@ -276,6 +276,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/security/events", s.listSecurityEvents)
 			protected.GET("/security/events/:id", s.getSecurityEvent)
 			protected.POST("/security/cleanup", s.cleanupSecurityEvents)
+			protected.GET("/security/blocked-ips", s.listBlockedIPs)
 			protected.POST("/security/blocked-ips", s.blockIP)
 			protected.DELETE("/security/blocked-ips/:ip", s.unblockIP)
 			protected.GET("/security/ips/:ip/events", s.getEventsByIP)
@@ -301,7 +302,9 @@ func (s *Server) setupRoutes() {
 		// Ingest endpoints (no auth - called by nginx Lua)
 		api.POST("/security/events/ingest", s.ingestSecurityEvent)
 		api.POST("/traffic/ingest", s.ingestTrafficLog)
-		api.GET("/security/blocked-ips", s.listBlockedIPs)
+
+		// Internal nginx endpoint - token-authenticated for blocked IPs
+		api.GET("/_internal/blocked-ips", s.listBlockedIPsInternal)
 	}
 }
 
