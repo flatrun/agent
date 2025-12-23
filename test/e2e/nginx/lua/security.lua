@@ -10,6 +10,7 @@ local _M = {}
 
 -- Configuration via environment variable (test-specific)
 local AGENT_URL = os.getenv("FLATRUN_AGENT_URL") or "http://host.docker.internal:8080"
+local INTERNAL_TOKEN = os.getenv("FLATRUN_INTERNAL_TOKEN") or ""
 
 -- Blocked IPs cache settings
 local BLOCKED_IPS_CACHE_TTL = 30  -- seconds
@@ -47,8 +48,11 @@ function _M.refresh_blocked_ips()
     local httpc = http.new()
     httpc:set_timeout(3000)
 
-    local res, err = httpc:request_uri(AGENT_URL .. "/api/security/blocked-ips", {
+    local res, err = httpc:request_uri(AGENT_URL .. "/api/_internal/blocked-ips", {
         method = "GET",
+        headers = {
+            ["X-Internal-Token"] = INTERNAL_TOKEN,
+        },
     })
 
     if not res then

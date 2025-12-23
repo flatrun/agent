@@ -194,6 +194,19 @@ func (s *Server) listBlockedIPs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"blocked_ips": ips})
 }
 
+// listBlockedIPsInternal returns blocked IPs for internal nginx communication
+func (s *Server) listBlockedIPsInternal(c *gin.Context) {
+	token := c.GetHeader("X-Internal-Token")
+	expectedToken := s.config.Security.InternalAPIToken
+
+	if token == "" || token != expectedToken {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid internal token"})
+		return
+	}
+
+	s.listBlockedIPs(c)
+}
+
 // blockIP blocks an IP address
 func (s *Server) blockIP(c *gin.Context) {
 	if s.securityManager == nil {
@@ -611,6 +624,12 @@ func (s *Server) updateSecuritySettings(c *gin.Context) {
 		AutoBlockEnabled   *bool  `json:"auto_block_enabled"`
 		AutoBlockThreshold int    `json:"auto_block_threshold"`
 		AutoBlockDuration  string `json:"auto_block_duration"`
+		// Detection thresholds
+		DetectionWindow       string `json:"detection_window"`
+		NotFoundThreshold     int    `json:"not_found_threshold"`
+		AuthFailureThreshold  int    `json:"auth_failure_threshold"`
+		UniquePathsThreshold  int    `json:"unique_paths_threshold"`
+		RepeatedHitsThreshold int    `json:"repeated_hits_threshold"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -670,6 +689,29 @@ func (s *Server) updateSecuritySettings(c *gin.Context) {
 			updatedFields = append(updatedFields, "auto_block_duration")
 		}
 	}
+	// Detection thresholds
+	if req.DetectionWindow != "" {
+		if d, err := time.ParseDuration(req.DetectionWindow); err == nil {
+			s.config.Security.DetectionWindow = d
+			updatedFields = append(updatedFields, "detection_window")
+		}
+	}
+	if req.NotFoundThreshold > 0 {
+		s.config.Security.NotFoundThreshold = req.NotFoundThreshold
+		updatedFields = append(updatedFields, "not_found_threshold")
+	}
+	if req.AuthFailureThreshold > 0 {
+		s.config.Security.AuthFailureThreshold = req.AuthFailureThreshold
+		updatedFields = append(updatedFields, "auth_failure_threshold")
+	}
+	if req.UniquePathsThreshold > 0 {
+		s.config.Security.UniquePathsThreshold = req.UniquePathsThreshold
+		updatedFields = append(updatedFields, "unique_paths_threshold")
+	}
+	if req.RepeatedHitsThreshold > 0 {
+		s.config.Security.RepeatedHitsThreshold = req.RepeatedHitsThreshold
+		updatedFields = append(updatedFields, "repeated_hits_threshold")
+	}
 
 	result["updated_fields"] = updatedFields
 
@@ -713,16 +755,33 @@ func (s *Server) updateSecuritySettings(c *gin.Context) {
 	// Update dependent managers
 	s.infraManager.UpdateConfig(s.config)
 
+	// Update detector thresholds if security manager is available
+	if s.securityManager != nil {
+		s.securityManager.SetDetectorThresholds(
+			s.config.Security.RateThreshold,
+			s.config.Security.NotFoundThreshold,
+			s.config.Security.AuthFailureThreshold,
+			s.config.Security.UniquePathsThreshold,
+			s.config.Security.RepeatedHitsThreshold,
+			s.config.Security.DetectionWindow,
+		)
+	}
+
 	// Return current security settings
 	result["security"] = gin.H{
-		"enabled":              s.config.Security.Enabled,
-		"realtime_capture":     s.config.Security.RealtimeCapture,
-		"scan_interval":        s.config.Security.ScanInterval.String(),
-		"retention_days":       s.config.Security.RetentionDays,
-		"rate_threshold":       s.config.Security.RateThreshold,
-		"auto_block_enabled":   s.config.Security.AutoBlockEnabled,
-		"auto_block_threshold": s.config.Security.AutoBlockThreshold,
-		"auto_block_duration":  s.config.Security.AutoBlockDuration.String(),
+		"enabled":                 s.config.Security.Enabled,
+		"realtime_capture":        s.config.Security.RealtimeCapture,
+		"scan_interval":           s.config.Security.ScanInterval.String(),
+		"retention_days":          s.config.Security.RetentionDays,
+		"rate_threshold":          s.config.Security.RateThreshold,
+		"auto_block_enabled":      s.config.Security.AutoBlockEnabled,
+		"auto_block_threshold":    s.config.Security.AutoBlockThreshold,
+		"auto_block_duration":     s.config.Security.AutoBlockDuration.String(),
+		"detection_window":        s.config.Security.DetectionWindow.String(),
+		"not_found_threshold":     s.config.Security.NotFoundThreshold,
+		"auth_failure_threshold":  s.config.Security.AuthFailureThreshold,
+		"unique_paths_threshold":  s.config.Security.UniquePathsThreshold,
+		"repeated_hits_threshold": s.config.Security.RepeatedHitsThreshold,
 	}
 
 	c.JSON(http.StatusOK, result)

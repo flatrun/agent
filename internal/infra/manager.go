@@ -377,7 +377,7 @@ func (m *Manager) SetNginxRealtimeCaptureWithStatus(enabled bool) (map[string]in
 			result["agent_ip"] = agentIP
 			result["agent_port"] = agentPort
 
-			securityLua, err := templates.GetNginxSecurityLuaWithConfig(agentIP, agentPort)
+			securityLua, err := templates.GetNginxSecurityLuaWithConfig(agentIP, agentPort, m.config.Security.InternalAPIToken)
 			if err != nil {
 				errors = append(errors, fmt.Sprintf("failed to get security.lua template: %v", err))
 			} else {
@@ -1228,7 +1228,7 @@ func (m *Manager) RefreshSecurityScripts() (*RefreshSecurityScriptsResult, error
 	}
 
 	// Generate and write security.lua with injected IP
-	securityLua, err := templates.GetNginxSecurityLuaWithConfig(agentIP, agentPort)
+	securityLua, err := templates.GetNginxSecurityLuaWithConfig(agentIP, agentPort, m.config.Security.InternalAPIToken)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("failed to generate security.lua: %v", err))
 		result.Success = false

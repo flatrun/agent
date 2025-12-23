@@ -91,6 +91,15 @@ func New(cfg *config.Config, configPath string) *Server {
 		if err != nil {
 			log.Printf("Warning: Failed to initialize security manager: %v", err)
 		} else {
+			// Apply detection thresholds from config
+			securityManager.SetDetectorThresholds(
+				cfg.Security.RateThreshold,
+				cfg.Security.NotFoundThreshold,
+				cfg.Security.AuthFailureThreshold,
+				cfg.Security.UniquePathsThreshold,
+				cfg.Security.RepeatedHitsThreshold,
+				cfg.Security.DetectionWindow,
+			)
 			nginxConfigPath := cfg.Nginx.ConfigPath
 			if nginxConfigPath == "" {
 				nginxConfigPath = filepath.Join(cfg.DeploymentsPath, "nginx", "conf.d")
@@ -293,6 +302,9 @@ func (s *Server) setupRoutes() {
 		// Ingest endpoints (no auth - called by nginx Lua)
 		api.POST("/security/events/ingest", s.ingestSecurityEvent)
 		api.POST("/traffic/ingest", s.ingestTrafficLog)
+
+		// Internal nginx endpoint - token-authenticated for blocked IPs
+		api.GET("/_internal/blocked-ips", s.listBlockedIPsInternal)
 	}
 }
 

@@ -37,6 +37,11 @@ func (m *Manager) Close() error {
 	return m.db.Close()
 }
 
+// SetDetectorThresholds updates the detector's behavior thresholds
+func (m *Manager) SetDetectorThresholds(rateThreshold, notFoundThreshold, authFailureThreshold, uniquePathsThreshold, repeatedHitsThreshold int, windowDuration time.Duration) {
+	m.detector.SetThresholds(rateThreshold, notFoundThreshold, authFailureThreshold, uniquePathsThreshold, repeatedHitsThreshold, windowDuration)
+}
+
 // IngestResult contains the result of event ingestion
 type IngestResult struct {
 	Event       *SecurityEvent

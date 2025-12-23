@@ -92,12 +92,13 @@ func GetNginxSecurityLua() ([]byte, error) {
 
 // LuaTemplateData contains the data for Lua template processing
 type LuaTemplateData struct {
-	AgentIP   string
-	AgentPort int
+	AgentIP          string
+	AgentPort        int
+	InternalAPIToken string
 }
 
 // GetNginxSecurityLuaWithConfig returns the security.lua template processed with agent config
-func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int) ([]byte, error) {
+func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int, internalAPIToken string) ([]byte, error) {
 	content, err := FS.ReadFile("infra/nginx/lua/security.lua")
 	if err != nil {
 		return nil, err
@@ -110,8 +111,9 @@ func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int) ([]byte, error
 
 	var buf bytes.Buffer
 	data := LuaTemplateData{
-		AgentIP:   agentIP,
-		AgentPort: agentPort,
+		AgentIP:          agentIP,
+		AgentPort:        agentPort,
+		InternalAPIToken: internalAPIToken,
 	}
 
 	if err := tmpl.Execute(&buf, data); err != nil {
