@@ -28,7 +28,7 @@ func (s *Server) ingestSecurityEvent(c *gin.Context) {
 		return
 	}
 
-	result, err := s.securityManager.IngestEvent(&event)
+	result, err := s.securityManager.IngestEvent(&event, s.config.Security.AutoBlockDuration)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

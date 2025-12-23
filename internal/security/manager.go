@@ -46,7 +46,7 @@ type IngestResult struct {
 }
 
 // IngestEvent processes an incoming event from nginx and stores it
-func (m *Manager) IngestEvent(event *IngestEvent) (*IngestResult, error) {
+func (m *Manager) IngestEvent(event *IngestEvent, autoBlockDuration time.Duration) (*IngestResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -77,13 +77,12 @@ func (m *Manager) IngestEvent(event *IngestEvent) (*IngestResult, error) {
 
 	// Check if we should auto-block the IP
 	if m.detector.ShouldAutoBlock(event.SourceIP, secEvent) {
-		blockDuration := 24 * time.Hour
-		expiresAt := time.Now().Add(blockDuration)
+		expiresAt := time.Now().Add(autoBlockDuration)
 		_, err := m.db.BlockIP(event.SourceIP, "Auto-blocked due to suspicious activity", &expiresAt, true)
 		if err == nil {
 			result.AutoBlocked = true
 			result.BlockedIP = event.SourceIP
-			result.BlockTTL = int(blockDuration.Seconds())
+			result.BlockTTL = int(autoBlockDuration.Seconds())
 		}
 	}
 

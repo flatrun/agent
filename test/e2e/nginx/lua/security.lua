@@ -1,12 +1,14 @@
--- FlatRun Security Event Capture
--- This script captures security-relevant events and sends them to the agent API
+-- FlatRun Security Event Capture (E2E Test Version)
+-- NOTE: This is a simplified version for e2e testing that uses environment variables.
+-- The production template is at: templates/infra/nginx/lua/security.lua
+-- Keep core functionality in sync with the template.
 
 local cjson = require "cjson.safe"
 local http = require "resty.http"
 
 local _M = {}
 
--- Configuration (will be set by the agent)
+-- Configuration via environment variable (test-specific)
 local AGENT_URL = os.getenv("FLATRUN_AGENT_URL") or "http://host.docker.internal:8080"
 
 -- Blocked IPs cache settings
@@ -255,25 +257,28 @@ end
 
 -- Internal API handlers for immediate IP blocking
 
+local function json_response(status, data)
+    ngx.status = status
+    ngx.header["Content-Type"] = "application/json"
+    ngx.say(cjson.encode(data))
+end
+
 function _M.handle_block_ip_request()
     if ngx.req.get_method() ~= "POST" then
-        ngx.status = 405
-        ngx.say('{"error": "Method not allowed"}')
+        json_response(405, {error = "Method not allowed"})
         return
     end
 
     ngx.req.read_body()
     local body = ngx.req.get_body_data()
     if not body then
-        ngx.status = 400
-        ngx.say('{"error": "No body provided"}')
+        json_response(400, {error = "No body provided"})
         return
     end
 
     local data, err = cjson.decode(body)
     if not data then
-        ngx.status = 400
-        ngx.say('{"error": "Invalid JSON"}')
+        json_response(400, {error = "Invalid JSON"})
         return
     end
 
@@ -281,77 +286,63 @@ function _M.handle_block_ip_request()
     local ttl = data.ttl or 86400
 
     if not ip then
-        ngx.status = 400
-        ngx.say('{"error": "IP address required"}')
+        json_response(400, {error = "IP address required"})
         return
     end
 
     local dict = ngx.shared.blocked_ips
     if not dict then
-        ngx.status = 500
-        ngx.say('{"error": "Shared dict not available"}')
+        json_response(500, {error = "Shared dict not available"})
         return
     end
 
     dict:set("ip:" .. ip, true, ttl)
-    ngx.status = 200
-    ngx.header["Content-Type"] = "application/json"
-    ngx.say('{"success": true, "ip": "' .. ip .. '"}')
+    json_response(200, {success = true, ip = ip})
 end
 
 function _M.handle_unblock_ip_request()
     if ngx.req.get_method() ~= "POST" then
-        ngx.status = 405
-        ngx.say('{"error": "Method not allowed"}')
+        json_response(405, {error = "Method not allowed"})
         return
     end
 
     ngx.req.read_body()
     local body = ngx.req.get_body_data()
     if not body then
-        ngx.status = 400
-        ngx.say('{"error": "No body provided"}')
+        json_response(400, {error = "No body provided"})
         return
     end
 
     local data, err = cjson.decode(body)
     if not data then
-        ngx.status = 400
-        ngx.say('{"error": "Invalid JSON"}')
+        json_response(400, {error = "Invalid JSON"})
         return
     end
 
     local ip = data.ip
     if not ip then
-        ngx.status = 400
-        ngx.say('{"error": "IP address required"}')
+        json_response(400, {error = "IP address required"})
         return
     end
 
     local dict = ngx.shared.blocked_ips
     if not dict then
-        ngx.status = 500
-        ngx.say('{"error": "Shared dict not available"}')
+        json_response(500, {error = "Shared dict not available"})
         return
     end
 
     dict:delete("ip:" .. ip)
-    ngx.status = 200
-    ngx.header["Content-Type"] = "application/json"
-    ngx.say('{"success": true, "ip": "' .. ip .. '"}')
+    json_response(200, {success = true, ip = ip})
 end
 
 function _M.handle_refresh_request()
     if ngx.req.get_method() ~= "POST" then
-        ngx.status = 405
-        ngx.say('{"error": "Method not allowed"}')
+        json_response(405, {error = "Method not allowed"})
         return
     end
 
     _M.refresh_blocked_ips()
-    ngx.status = 200
-    ngx.header["Content-Type"] = "application/json"
-    ngx.say('{"success": true, "message": "Cache refreshed"}')
+    json_response(200, {success = true, message = "Cache refreshed"})
 end
 
 return _M
