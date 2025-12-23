@@ -686,11 +686,41 @@ func (m *Manager) CheckSecurityHealth() *SecurityHealthCheck {
 			result.Checks["nginx_conf_has_global_traffic_logging"] = false
 			result.Issues = append(result.Issues, "nginx.conf does not have global traffic logging enabled")
 		}
+
+		// Check for IP blocking shared dict
+		if strings.Contains(contentStr, "lua_shared_dict blocked_ips") {
+			result.Checks["nginx_conf_has_blocked_ips_dict"] = true
+		} else {
+			result.Checks["nginx_conf_has_blocked_ips_dict"] = false
+			result.Issues = append(result.Issues, "nginx.conf missing lua_shared_dict blocked_ips for IP blocking")
+			result.Recommendations = append(result.Recommendations, "Use POST /api/security/refresh to regenerate nginx.conf with IP blocking support")
+		}
+
+		// Check for IP blocking access check
+		if strings.Contains(contentStr, "access_by_lua_block") && strings.Contains(contentStr, "security.is_blocked") {
+			result.Checks["nginx_conf_has_ip_blocking"] = true
+		} else {
+			result.Checks["nginx_conf_has_ip_blocking"] = false
+			result.Issues = append(result.Issues, "nginx.conf missing access_by_lua_block for IP blocking")
+			result.Recommendations = append(result.Recommendations, "Use POST /api/security/refresh to regenerate nginx.conf with IP blocking")
+		}
+
+		// Check for internal API server block
+		if strings.Contains(contentStr, "listen 127.0.0.1:8081") {
+			result.Checks["nginx_conf_has_internal_api"] = true
+		} else {
+			result.Checks["nginx_conf_has_internal_api"] = false
+			result.Issues = append(result.Issues, "nginx.conf missing internal API server for instant IP blocking")
+			result.Recommendations = append(result.Recommendations, "Use POST /api/security/refresh to regenerate nginx.conf with internal API")
+		}
 	} else {
 		result.Checks["nginx_conf_exists"] = false
 		result.Checks["nginx_conf_has_lua_init"] = false
 		result.Checks["nginx_conf_has_traffic_module"] = false
 		result.Checks["nginx_conf_has_global_traffic_logging"] = false
+		result.Checks["nginx_conf_has_blocked_ips_dict"] = false
+		result.Checks["nginx_conf_has_ip_blocking"] = false
+		result.Checks["nginx_conf_has_internal_api"] = false
 		result.Issues = append(result.Issues, "nginx.conf does not exist at "+nginxConfPath)
 		result.Recommendations = append(result.Recommendations, "Enable realtime capture in Security settings")
 	}
@@ -815,6 +845,16 @@ func (m *Manager) CheckSecurityHealth() *SecurityHealthCheck {
 			result.Recommendations = append(result.Recommendations,
 				"3. Use POST /api/security/refresh to regenerate scripts with correct IP")
 		}
+
+		// Check 9: Internal API (port 8081) is reachable for instant IP blocking
+		internalAPIReachable := m.checkNginxInternalAPIReachable()
+		result.Checks["nginx_internal_api_reachable"] = internalAPIReachable
+		if !internalAPIReachable {
+			result.Issues = append(result.Issues,
+				"Nginx internal API (port 8081) is not responding - instant IP blocking will not work")
+			result.Recommendations = append(result.Recommendations,
+				"Check nginx error logs for Lua errors, ensure nginx.conf has internal server block on 127.0.0.1:8081")
+		}
 	}
 
 	// Determine overall status
@@ -824,11 +864,15 @@ func (m *Manager) CheckSecurityHealth() *SecurityHealthCheck {
 		"traffic_lua_exists",
 		"traffic_lua_ip_injected",
 		"nginx_conf_has_lua_init",
+		"nginx_conf_has_blocked_ips_dict",
+		"nginx_conf_has_ip_blocking",
+		"nginx_conf_has_internal_api",
 		"nginx_container_running",
 		"nginx_lua_module_loaded",
 		"nginx_conf_mounted",
 		"lua_directory_mounted",
 		"nginx_can_reach_agent",
+		"nginx_internal_api_reachable",
 		"vhosts_have_security_hook",
 	}
 
@@ -981,6 +1025,17 @@ func (m *Manager) checkNginxCanReachAgent(agentIP string, agentPort int) bool {
 			"timeout 5 wget -q -O /dev/null http://%s:%d/api/health 2>/dev/null && echo yes || "+
 			"echo no",
 		agentIP, agentPort, agentIP, agentPort)
+
+	cmd := exec.Command("docker", "exec", m.config.Nginx.ContainerName, "sh", "-c", testCmd)
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(output), "yes")
+}
+
+func (m *Manager) checkNginxInternalAPIReachable() bool {
+	testCmd := "curl -s --connect-timeout 2 --max-time 5 -X POST http://127.0.0.1:8081/_internal/security/refresh-blocked-ips 2>/dev/null | grep -q success && echo yes || echo no"
 
 	cmd := exec.Command("docker", "exec", m.config.Nginx.ContainerName, "sh", "-c", testCmd)
 	output, err := cmd.Output()

@@ -24,12 +24,16 @@ func (s *Server) ingestSecurityEvent(c *gin.Context) {
 
 	var event security.IngestEvent
 	if err := c.ShouldBindJSON(&event); err != nil {
+		clientIP := c.ClientIP()
+		log.Printf("Security ingest: failed to parse JSON from %s: %v", clientIP, err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	result, err := s.securityManager.IngestEvent(&event, s.config.Security.AutoBlockDuration)
 	if err != nil {
+		log.Printf("Security ingest: failed to process event from IP %s (path=%s, method=%s): %v",
+			event.SourceIP, event.RequestPath, event.RequestMethod, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

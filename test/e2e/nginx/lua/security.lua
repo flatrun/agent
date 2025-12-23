@@ -256,6 +256,7 @@ function _M.check_rate_limit(key, limit, window)
 end
 
 -- Internal API handlers for immediate IP blocking
+-- NOTE: Keep in sync with templates/infra/nginx/lua/security.lua
 
 local function json_response(status, data)
     ngx.status = status
@@ -264,7 +265,10 @@ local function json_response(status, data)
 end
 
 function _M.handle_block_ip_request()
+    local client_ip = ngx.var.remote_addr
+
     if ngx.req.get_method() ~= "POST" then
+        ngx.log(ngx.WARN, "block-ip: method not allowed from ", client_ip)
         json_response(405, {error = "Method not allowed"})
         return
     end
@@ -272,13 +276,15 @@ function _M.handle_block_ip_request()
     ngx.req.read_body()
     local body = ngx.req.get_body_data()
     if not body then
+        ngx.log(ngx.ERR, "block-ip: no body from ", client_ip)
         json_response(400, {error = "No body provided"})
         return
     end
 
     local data, err = cjson.decode(body)
     if not data then
-        json_response(400, {error = "Invalid JSON"})
+        ngx.log(ngx.ERR, "block-ip: invalid JSON from ", client_ip, ": ", err, " body=", body:sub(1, 100))
+        json_response(400, {error = "Invalid JSON: " .. (err or "unknown")})
         return
     end
 
@@ -286,22 +292,34 @@ function _M.handle_block_ip_request()
     local ttl = data.ttl or 86400
 
     if not ip then
+        ngx.log(ngx.ERR, "block-ip: missing IP in request from ", client_ip)
         json_response(400, {error = "IP address required"})
         return
     end
 
     local dict = ngx.shared.blocked_ips
     if not dict then
+        ngx.log(ngx.ERR, "block-ip: shared dict not available")
         json_response(500, {error = "Shared dict not available"})
         return
     end
 
-    dict:set("ip:" .. ip, true, ttl)
-    json_response(200, {success = true, ip = ip})
+    local ok, set_err = dict:set("ip:" .. ip, true, ttl)
+    if not ok then
+        ngx.log(ngx.ERR, "block-ip: failed to set IP ", ip, " in dict: ", set_err)
+        json_response(500, {error = "Failed to block IP: " .. (set_err or "unknown")})
+        return
+    end
+
+    ngx.log(ngx.INFO, "block-ip: blocked ", ip, " for ", ttl, "s")
+    json_response(200, {success = true, ip = ip, ttl = ttl})
 end
 
 function _M.handle_unblock_ip_request()
+    local client_ip = ngx.var.remote_addr
+
     if ngx.req.get_method() ~= "POST" then
+        ngx.log(ngx.WARN, "unblock-ip: method not allowed from ", client_ip)
         json_response(405, {error = "Method not allowed"})
         return
     end
@@ -309,38 +327,47 @@ function _M.handle_unblock_ip_request()
     ngx.req.read_body()
     local body = ngx.req.get_body_data()
     if not body then
+        ngx.log(ngx.ERR, "unblock-ip: no body from ", client_ip)
         json_response(400, {error = "No body provided"})
         return
     end
 
     local data, err = cjson.decode(body)
     if not data then
-        json_response(400, {error = "Invalid JSON"})
+        ngx.log(ngx.ERR, "unblock-ip: invalid JSON from ", client_ip, ": ", err, " body=", body:sub(1, 100))
+        json_response(400, {error = "Invalid JSON: " .. (err or "unknown")})
         return
     end
 
     local ip = data.ip
     if not ip then
+        ngx.log(ngx.ERR, "unblock-ip: missing IP in request from ", client_ip)
         json_response(400, {error = "IP address required"})
         return
     end
 
     local dict = ngx.shared.blocked_ips
     if not dict then
+        ngx.log(ngx.ERR, "unblock-ip: shared dict not available")
         json_response(500, {error = "Shared dict not available"})
         return
     end
 
     dict:delete("ip:" .. ip)
+    ngx.log(ngx.INFO, "unblock-ip: unblocked ", ip)
     json_response(200, {success = true, ip = ip})
 end
 
 function _M.handle_refresh_request()
+    local client_ip = ngx.var.remote_addr
+
     if ngx.req.get_method() ~= "POST" then
+        ngx.log(ngx.WARN, "refresh: method not allowed from ", client_ip)
         json_response(405, {error = "Method not allowed"})
         return
     end
 
+    ngx.log(ngx.INFO, "refresh: refreshing blocked IPs cache")
     _M.refresh_blocked_ips()
     json_response(200, {success = true, message = "Cache refreshed"})
 end
