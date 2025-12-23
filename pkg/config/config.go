@@ -119,6 +119,13 @@ type SecurityConfig struct {
 	AutoBlockEnabled   bool          `yaml:"auto_block_enabled" json:"auto_block_enabled"`
 	AutoBlockThreshold int           `yaml:"auto_block_threshold" json:"auto_block_threshold"`
 	AutoBlockDuration  time.Duration `yaml:"auto_block_duration" json:"auto_block_duration"`
+
+	// Detection thresholds for autoblock
+	DetectionWindow       time.Duration `yaml:"detection_window" json:"detection_window"`
+	NotFoundThreshold     int           `yaml:"not_found_threshold" json:"not_found_threshold"`
+	AuthFailureThreshold  int           `yaml:"auth_failure_threshold" json:"auth_failure_threshold"`
+	UniquePathsThreshold  int           `yaml:"unique_paths_threshold" json:"unique_paths_threshold"`
+	RepeatedHitsThreshold int           `yaml:"repeated_hits_threshold" json:"repeated_hits_threshold"`
 }
 
 func FindConfigPath(providedPath string) string {
@@ -244,6 +251,22 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Security.AutoBlockDuration == 0 {
 		cfg.Security.AutoBlockDuration = 24 * time.Hour
+	}
+	// Detection threshold defaults
+	if cfg.Security.DetectionWindow == 0 {
+		cfg.Security.DetectionWindow = 2 * time.Minute
+	}
+	if cfg.Security.NotFoundThreshold == 0 {
+		cfg.Security.NotFoundThreshold = 10
+	}
+	if cfg.Security.AuthFailureThreshold == 0 {
+		cfg.Security.AuthFailureThreshold = 5
+	}
+	if cfg.Security.UniquePathsThreshold == 0 {
+		cfg.Security.UniquePathsThreshold = 20
+	}
+	if cfg.Security.RepeatedHitsThreshold == 0 {
+		cfg.Security.RepeatedHitsThreshold = 30
 	}
 }
 
