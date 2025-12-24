@@ -75,6 +75,13 @@ func (m *Manager) GetStats(deploymentName string, since time.Duration) (*Traffic
 	return m.db.GetStats(deploymentName, since)
 }
 
+func (m *Manager) GetUnknownDomainStats(knownDeployments []string, since time.Duration) (*UnknownDomainStats, error) {
+	if since <= 0 {
+		since = 24 * time.Hour
+	}
+	return m.db.GetUnknownDomainStats(knownDeployments, since)
+}
+
 func (m *Manager) Cleanup(days int) (int64, error) {
 	if days <= 0 {
 		days = m.retentionDays

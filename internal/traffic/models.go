@@ -85,3 +85,23 @@ type IngestTrafficLog struct {
 	UpstreamTimeMs *int   `json:"upstream_time_ms,omitempty"`
 	Timestamp      int64  `json:"timestamp"`
 }
+
+type UnknownDomainStats struct {
+	TotalRequests int64                    `json:"total_requests"`
+	TopDomains    []UnknownDomainEntry     `json:"top_domains"`
+	TopIPs        []UnknownDomainIPEntry   `json:"top_ips"`
+	RecentLogs    []TrafficLog             `json:"recent_logs"`
+}
+
+type UnknownDomainEntry struct {
+	Domain       string    `json:"domain"`
+	RequestCount int64     `json:"request_count"`
+	LastSeen     time.Time `json:"last_seen"`
+}
+
+type UnknownDomainIPEntry struct {
+	IP           string    `json:"ip"`
+	RequestCount int64     `json:"request_count"`
+	Domains      []string  `json:"domains"`
+	LastSeen     time.Time `json:"last_seen"`
+}

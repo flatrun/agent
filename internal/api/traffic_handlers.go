@@ -117,6 +117,39 @@ func (s *Server) getTrafficStats(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"stats": stats})
 }
 
+func (s *Server) getUnknownDomainStats(c *gin.Context) {
+	if s.trafficManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Traffic logging not enabled"})
+		return
+	}
+
+	since := 24 * time.Hour
+	if sinceStr := c.Query("since"); sinceStr != "" {
+		if d, err := time.ParseDuration(sinceStr); err == nil {
+			since = d
+		}
+	}
+
+	deployments, err := s.manager.ListDeployments()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var knownDeployments []string
+	for _, d := range deployments {
+		knownDeployments = append(knownDeployments, d.Name)
+	}
+
+	stats, err := s.trafficManager.GetUnknownDomainStats(knownDeployments, since)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"stats": stats})
+}
+
 // cleanupTrafficLogs removes old traffic logs
 func (s *Server) cleanupTrafficLogs(c *gin.Context) {
 	if s.trafficManager == nil {

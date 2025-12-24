@@ -378,3 +378,127 @@ func (db *DB) Cleanup(olderThan time.Duration) (int64, error) {
 	}
 	return result.RowsAffected()
 }
+
+func (db *DB) GetUnknownDomainStats(knownDeployments []string, since time.Duration) (*UnknownDomainStats, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	stats := &UnknownDomainStats{
+		TopDomains: []UnknownDomainEntry{},
+		TopIPs:     []UnknownDomainIPEntry{},
+		RecentLogs: []TrafficLog{},
+	}
+
+	cutoff := time.Now().Add(-since)
+
+	placeholders := ""
+	args := []interface{}{cutoff}
+	for i, d := range knownDeployments {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, d)
+	}
+
+	notInClause := ""
+	if len(knownDeployments) > 0 {
+		notInClause = " AND deployment_name NOT IN (" + placeholders + ")"
+	}
+
+	// Total count
+	var total int64
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM traffic_logs
+		WHERE created_at >= ?`+notInClause, args...).Scan(&total)
+	if err != nil {
+		return nil, err
+	}
+	stats.TotalRequests = total
+
+	// Top domains
+	rows, err := db.conn.Query(`
+		SELECT deployment_name, COUNT(*) as cnt, MAX(created_at) as last_seen
+		FROM traffic_logs
+		WHERE created_at >= ?`+notInClause+`
+		GROUP BY deployment_name
+		ORDER BY cnt DESC
+		LIMIT 20`, args...)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var entry UnknownDomainEntry
+			if err := rows.Scan(&entry.Domain, &entry.RequestCount, &entry.LastSeen); err == nil {
+				stats.TopDomains = append(stats.TopDomains, entry)
+			}
+		}
+	}
+
+	// Top IPs with domains they accessed
+	rows, err = db.conn.Query(`
+		SELECT source_ip, COUNT(*) as cnt,
+			GROUP_CONCAT(DISTINCT deployment_name) as domains,
+			MAX(created_at) as last_seen
+		FROM traffic_logs
+		WHERE created_at >= ?`+notInClause+`
+		GROUP BY source_ip
+		ORDER BY cnt DESC
+		LIMIT 20`, args...)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var entry UnknownDomainIPEntry
+			var domainsStr string
+			if err := rows.Scan(&entry.IP, &entry.RequestCount, &domainsStr, &entry.LastSeen); err == nil {
+				if domainsStr != "" {
+					entry.Domains = append(entry.Domains, splitString(domainsStr, ",")...)
+				}
+				stats.TopIPs = append(stats.TopIPs, entry)
+			}
+		}
+	}
+
+	// Recent logs
+	rows, err = db.conn.Query(`
+		SELECT id, deployment_name, request_path, request_method, status_code,
+			source_ip, response_time_ms, bytes_sent, request_length, upstream_time_ms, created_at
+		FROM traffic_logs
+		WHERE created_at >= ?`+notInClause+`
+		ORDER BY created_at DESC
+		LIMIT 50`, args...)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var log TrafficLog
+			var upstreamTime sql.NullInt64
+			if err := rows.Scan(&log.ID, &log.DeploymentName, &log.RequestPath,
+				&log.RequestMethod, &log.StatusCode, &log.SourceIP,
+				&log.ResponseTimeMs, &log.BytesSent, &log.RequestLength,
+				&upstreamTime, &log.CreatedAt); err == nil {
+				if upstreamTime.Valid {
+					t := int(upstreamTime.Int64)
+					log.UpstreamTimeMs = &t
+				}
+				stats.RecentLogs = append(stats.RecentLogs, log)
+			}
+		}
+	}
+
+	return stats, nil
+}
+
+func splitString(s, sep string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == sep[0] {
+			result = append(result, s[start:i])
+			start = i + 1
+		}
+	}
+	result = append(result, s[start:])
+	return result
+}

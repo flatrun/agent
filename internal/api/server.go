@@ -303,6 +303,7 @@ func (s *Server) setupRoutes() {
 			// Traffic endpoints
 			protected.GET("/traffic/logs", s.getTrafficLogs)
 			protected.GET("/traffic/stats", s.getTrafficStats)
+			protected.GET("/traffic/unknown-domains", s.getUnknownDomainStats)
 			protected.POST("/traffic/cleanup", s.cleanupTrafficLogs)
 			protected.GET("/deployments/:name/traffic", s.getDeploymentTrafficStats)
 		}
