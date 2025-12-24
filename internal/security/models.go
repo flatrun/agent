@@ -46,6 +46,15 @@ type ProtectedRoute struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type WhitelistEntry struct {
+	ID         int64     `json:"id"`
+	Value      string    `json:"value"`
+	Type       string    `json:"type"` // "ip", "cidr", or "path"
+	Reason     string    `json:"reason,omitempty"`
+	IsInternal bool      `json:"is_internal"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type SecurityStats struct {
 	TotalEvents          int               `json:"total_events"`
 	Last24Hours          int               `json:"last_24_hours"`

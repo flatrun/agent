@@ -38,6 +38,12 @@ func NewDB(deploymentsPath string) (*DB, error) {
 		return nil, err
 	}
 
+	// Seed default whitelist entries
+	if err := db.SeedDefaultWhitelist(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
 	return db, nil
 }
 
@@ -80,6 +86,18 @@ func (db *DB) migrate() error {
 
 	CREATE INDEX IF NOT EXISTS idx_blocked_ips_ip ON blocked_ips(ip);
 	CREATE INDEX IF NOT EXISTS idx_blocked_ips_expires ON blocked_ips(expires_at);
+
+	CREATE TABLE IF NOT EXISTS whitelist (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		value TEXT NOT NULL UNIQUE,
+		type TEXT NOT NULL CHECK (type IN ('ip', 'cidr', 'path')),
+		reason TEXT,
+		is_internal BOOLEAN DEFAULT FALSE,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_whitelist_value ON whitelist(value);
+	CREATE INDEX IF NOT EXISTS idx_whitelist_type ON whitelist(type);
 
 	CREATE TABLE IF NOT EXISTS protected_routes (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,6 +355,100 @@ func (db *DB) IsIPBlocked(ip string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// GetWhitelist retrieves all whitelist entries
+func (db *DB) GetWhitelist() ([]WhitelistEntry, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	rows, err := db.conn.Query(`
+		SELECT id, value, type, reason, is_internal, created_at
+		FROM whitelist
+		ORDER BY is_internal DESC, created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []WhitelistEntry
+	for rows.Next() {
+		var e WhitelistEntry
+		var reason sql.NullString
+		if err := rows.Scan(&e.ID, &e.Value, &e.Type, &reason, &e.IsInternal, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.Reason = reason.String
+		entries = append(entries, e)
+	}
+
+	return entries, nil
+}
+
+// AddWhitelistEntry adds a new entry to the whitelist
+func (db *DB) AddWhitelistEntry(value, entryType, reason string, isInternal bool) (int64, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	result, err := db.conn.Exec(`
+		INSERT INTO whitelist (value, type, reason, is_internal)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(value) DO UPDATE SET reason = ?, is_internal = ?`,
+		value, entryType, reason, isInternal, reason, isInternal,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+// RemoveWhitelistEntry removes an entry from the whitelist
+func (db *DB) RemoveWhitelistEntry(id int64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	_, err := db.conn.Exec("DELETE FROM whitelist WHERE id = ? AND is_internal = FALSE", id)
+	return err
+}
+
+// IsWhitelisted checks if an IP or path is in the whitelist
+func (db *DB) IsWhitelisted(value string) (bool, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var count int
+	err := db.conn.QueryRow("SELECT COUNT(*) FROM whitelist WHERE value = ?", value).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// SeedDefaultWhitelist adds default internal whitelist entries if not present
+func (db *DB) SeedDefaultWhitelist() error {
+	defaults := []struct {
+		Value  string
+		Type   string
+		Reason string
+	}{
+		{"127.0.0.1", "ip", "Localhost"},
+		{"10.0.0.0/8", "cidr", "Private network"},
+		{"172.16.0.0/12", "cidr", "Docker/Private network"},
+		{"192.168.0.0/16", "cidr", "Private network"},
+		{"/_internal", "path", "Internal API"},
+		{"/api/_internal", "path", "Internal API"},
+		{"/api/health", "path", "Health check"},
+		{"/api/security/events/ingest", "path", "Security ingest"},
+		{"/api/traffic/ingest", "path", "Traffic ingest"},
+	}
+
+	for _, d := range defaults {
+		_, err := db.AddWhitelistEntry(d.Value, d.Type, d.Reason, true)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetProtectedRoutes retrieves all protected routes

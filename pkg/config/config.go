@@ -51,6 +51,7 @@ type NginxConfig struct {
 	ReloadCommand        string `yaml:"reload_command" json:"reload_command"`
 	External             bool   `yaml:"external" json:"external"`
 	ContainerWebrootPath string `yaml:"container_webroot_path" json:"container_webroot_path"`
+	RejectUnknownDomains bool   `yaml:"reject_unknown_domains" json:"reject_unknown_domains"`
 }
 
 type CertbotConfig struct {

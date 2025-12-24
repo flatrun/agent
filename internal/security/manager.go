@@ -175,6 +175,30 @@ func (m *Manager) DeleteProtectedRoute(id int64) error {
 	return m.db.DeleteProtectedRoute(id)
 }
 
+func (m *Manager) GetWhitelist() ([]WhitelistEntry, error) {
+	return m.db.GetWhitelist()
+}
+
+func (m *Manager) AddWhitelistEntry(value, entryType, reason string) (int64, error) {
+	return m.db.AddWhitelistEntry(value, entryType, reason, false)
+}
+
+func (m *Manager) RemoveWhitelistEntry(id int64) error {
+	return m.db.RemoveWhitelistEntry(id)
+}
+
+func (m *Manager) IsWhitelisted(value string) (bool, error) {
+	return m.db.IsWhitelisted(value)
+}
+
+func (m *Manager) AddDockerGatewayToWhitelist(gatewayIP string) error {
+	if gatewayIP == "" {
+		return nil
+	}
+	_, err := m.db.AddWhitelistEntry(gatewayIP, "ip", "Docker gateway", true)
+	return err
+}
+
 // Cleanup removes old events and expired blocks
 func (m *Manager) Cleanup(retentionDays int) (int64, int64, error) {
 	eventsDeleted, err := m.db.CleanupOldEvents(time.Duration(retentionDays) * 24 * time.Hour)

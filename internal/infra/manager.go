@@ -357,7 +357,9 @@ func (m *Manager) SetNginxRealtimeCaptureWithStatus(enabled bool) (map[string]in
 
 	if enabled {
 		// Write nginx.conf with Lua support
-		nginxConf, err := templates.GetNginxConfig(true)
+		nginxConf, err := templates.GetNginxConfigWithData(true, templates.NginxConfigData{
+			RejectUnknownDomains: m.config.Nginx.RejectUnknownDomains,
+		})
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("failed to get nginx lua config template: %v", err))
 		} else {
@@ -414,6 +416,13 @@ func (m *Manager) SetNginxRealtimeCaptureWithStatus(enabled bool) (map[string]in
 			}
 			result["conf_files_written"] = true
 		}
+
+		// Ensure ssl directory exists
+		sslDir := filepath.Join(nginxDir, "ssl")
+		if err := os.MkdirAll(sslDir, 0755); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to create ssl directory: %v", err))
+		}
+
 	} else {
 		// Delete nginx.conf - container will use default from image
 		if _, err := os.Stat(confPath); err == nil {
@@ -1049,6 +1058,7 @@ func (m *Manager) checkNginxInternalAPIReachable() bool {
 var securityVolumeMounts = []string{
 	"./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro",
 	"./lua:/etc/nginx/lua:ro",
+	"./ssl:/etc/nginx/ssl:ro",
 }
 
 func (m *Manager) getNginxComposePath() string {
@@ -1215,8 +1225,15 @@ func (m *Manager) RefreshSecurityScripts() (*RefreshSecurityScriptsResult, error
 		result.Errors = append(result.Errors, fmt.Sprintf("failed to create conf.d directory: %v", err))
 	}
 
+	sslDir := filepath.Join(nginxDir, "ssl")
+	if err := os.MkdirAll(sslDir, 0755); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to create ssl directory: %v", err))
+	}
+
 	// Write nginx.conf with Lua support
-	nginxConf, err := templates.GetNginxConfig(true)
+	nginxConf, err := templates.GetNginxConfigWithData(true, templates.NginxConfigData{
+		RejectUnknownDomains: m.config.Nginx.RejectUnknownDomains,
+	})
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("failed to get nginx lua config template: %v", err))
 	} else {

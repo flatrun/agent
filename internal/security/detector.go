@@ -11,12 +11,12 @@ type Detector struct {
 	mu             sync.RWMutex
 
 	// Thresholds
-	windowDuration         time.Duration
-	rateThreshold          int // high request rate
-	notFoundThreshold      int // 404 responses
-	authFailureThreshold   int // 401/403 responses
-	uniquePathsThreshold   int // scanning many different paths
-	repeatedHitsThreshold  int // hammering same path
+	windowDuration        time.Duration
+	rateThreshold         int // high request rate
+	notFoundThreshold     int // 404 responses
+	authFailureThreshold  int // 401/403 responses
+	uniquePathsThreshold  int // scanning many different paths
+	repeatedHitsThreshold int // hammering same path
 }
 
 type requestWindow struct {
@@ -31,11 +31,11 @@ func NewDetector() *Detector {
 	return &Detector{
 		ipRequestCount:        make(map[string]*requestWindow),
 		windowDuration:        2 * time.Minute,
-		rateThreshold:         60,  // 60 requests in 2 min
-		notFoundThreshold:     10,  // 10 404s in 2 min
-		authFailureThreshold:  5,   // 5 auth failures in 2 min
-		uniquePathsThreshold:  20,  // 20 different paths in 2 min
-		repeatedHitsThreshold: 30,  // 30 hits to same path in 2 min
+		rateThreshold:         60, // 60 requests in 2 min
+		notFoundThreshold:     10, // 10 404s in 2 min
+		authFailureThreshold:  5,  // 5 auth failures in 2 min
+		uniquePathsThreshold:  20, // 20 different paths in 2 min
+		repeatedHitsThreshold: 30, // 30 hits to same path in 2 min
 	}
 }
 

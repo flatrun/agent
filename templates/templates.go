@@ -79,11 +79,41 @@ func GetCategories() []Category {
 	return Categories
 }
 
+type NginxConfigData struct {
+	RejectUnknownDomains bool
+}
+
 func GetNginxConfig(luaEnabled bool) ([]byte, error) {
 	if luaEnabled {
 		return FS.ReadFile("infra/nginx/nginx.lua.conf")
 	}
 	return FS.ReadFile("infra/nginx/nginx.conf")
+}
+
+func GetNginxConfigWithData(luaEnabled bool, data NginxConfigData) ([]byte, error) {
+	var content []byte
+	var err error
+
+	if luaEnabled {
+		content, err = FS.ReadFile("infra/nginx/nginx.lua.conf")
+	} else {
+		content, err = FS.ReadFile("infra/nginx/nginx.conf")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	tmpl, err := template.New("nginx.conf").Parse(string(content))
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
 
 func GetNginxSecurityLua() ([]byte, error) {
