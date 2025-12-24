@@ -178,24 +178,97 @@ function _M.init_blocked_ips()
     end)
 end
 
-local function is_ip_in_cidr(ip, cidr)
-    local cidr_ip, cidr_bits = cidr:match("^([^/]+)/(%d+)$")
-    if not cidr_ip then return ip == cidr end
+local function is_ipv6(ip)
+    return ip:find(":") ~= nil
+end
 
-    local function ip_to_int(ip_str)
-        local parts = {ip_str:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")}
-        if #parts ~= 4 then return nil end
-        return tonumber(parts[1]) * 16777216 + tonumber(parts[2]) * 65536 +
-               tonumber(parts[3]) * 256 + tonumber(parts[4])
+local function ipv4_to_int(ip_str)
+    local parts = {ip_str:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")}
+    if #parts ~= 4 then return nil end
+    return tonumber(parts[1]) * 16777216 + tonumber(parts[2]) * 65536 +
+           tonumber(parts[3]) * 256 + tonumber(parts[4])
+end
+
+local function expand_ipv6(ip)
+    if ip:find("::") then
+        local left, right = ip:match("^(.-)::(.*)$")
+        left = left or ""
+        right = right or ""
+        local left_parts = {}
+        local right_parts = {}
+        for part in left:gmatch("[^:]+") do
+            left_parts[#left_parts + 1] = part
+        end
+        for part in right:gmatch("[^:]+") do
+            right_parts[#right_parts + 1] = part
+        end
+        local missing = 8 - #left_parts - #right_parts
+        local parts = {}
+        for _, p in ipairs(left_parts) do parts[#parts + 1] = p end
+        for _ = 1, missing do parts[#parts + 1] = "0" end
+        for _, p in ipairs(right_parts) do parts[#parts + 1] = p end
+        return parts
+    else
+        local parts = {}
+        for part in ip:gmatch("[^:]+") do
+            parts[#parts + 1] = part
+        end
+        return parts
+    end
+end
+
+local function ipv6_parts_to_ints(parts)
+    if #parts ~= 8 then return nil end
+    local ints = {}
+    for i, p in ipairs(parts) do
+        ints[i] = tonumber(p, 16) or 0
+    end
+    return ints
+end
+
+local function ipv6_match_cidr(ip_ints, cidr_ints, bits)
+    local full_groups = math.floor(bits / 16)
+    local remaining_bits = bits % 16
+
+    for i = 1, full_groups do
+        if ip_ints[i] ~= cidr_ints[i] then return false end
     end
 
-    local ip_int = ip_to_int(ip)
-    local cidr_int = ip_to_int(cidr_ip)
-    if not ip_int or not cidr_int then return false end
+    if remaining_bits > 0 and full_groups < 8 then
+        local mask = bit.lshift(0xFFFF, 16 - remaining_bits)
+        mask = bit.band(mask, 0xFFFF)
+        if bit.band(ip_ints[full_groups + 1], mask) ~= bit.band(cidr_ints[full_groups + 1], mask) then
+            return false
+        end
+    end
+
+    return true
+end
+
+local function is_ip_in_cidr(ip, cidr)
+    local cidr_ip, cidr_bits = cidr:match("^(.+)/(%d+)$")
+    if not cidr_ip then return ip == cidr end
 
     local bits = tonumber(cidr_bits)
-    local mask = bits == 0 and 0 or (0xFFFFFFFF - (2^(32 - bits) - 1))
-    return bit.band(ip_int, mask) == bit.band(cidr_int, mask)
+    local ip_is_v6 = is_ipv6(ip)
+    local cidr_is_v6 = is_ipv6(cidr_ip)
+
+    if ip_is_v6 ~= cidr_is_v6 then return false end
+
+    if ip_is_v6 then
+        local ip_parts = expand_ipv6(ip)
+        local cidr_parts = expand_ipv6(cidr_ip)
+        local ip_ints = ipv6_parts_to_ints(ip_parts)
+        local cidr_ints = ipv6_parts_to_ints(cidr_parts)
+        if not ip_ints or not cidr_ints then return false end
+        return ipv6_match_cidr(ip_ints, cidr_ints, bits)
+    else
+        local ip_int = ipv4_to_int(ip)
+        local cidr_int = ipv4_to_int(cidr_ip)
+        if not ip_int or not cidr_int then return false end
+        local mask = bits == 0 and 0 or (0xFFFFFFFF - (2^(32 - bits) - 1))
+        return bit.band(ip_int, mask) == bit.band(cidr_int, mask)
+    end
 end
 
 function _M.is_whitelisted(ip, path)

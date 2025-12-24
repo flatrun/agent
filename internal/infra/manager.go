@@ -2,15 +2,8 @@ package infra
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -430,12 +423,6 @@ func (m *Manager) SetNginxRealtimeCaptureWithStatus(enabled bool) (map[string]in
 			errors = append(errors, fmt.Sprintf("failed to create ssl directory: %v", err))
 		}
 
-		// Generate default SSL cert if rejecting unknown domains
-		if m.config.Nginx.RejectUnknownDomains {
-			if err := m.ensureDefaultSSLCert(nginxDir); err != nil {
-				errors = append(errors, fmt.Sprintf("failed to generate default SSL cert: %v", err))
-			}
-		}
 	} else {
 		// Delete nginx.conf - container will use default from image
 		if _, err := os.Stat(confPath); err == nil {
@@ -597,77 +584,6 @@ func (m *Manager) getNginxDir() string {
 		return filepath.Join(m.config.DeploymentsPath, "nginx")
 	}
 	return filepath.Dir(configPath)
-}
-
-func (m *Manager) ensureDefaultSSLCert(nginxDir string) error {
-	sslDir := filepath.Join(nginxDir, "ssl")
-	if err := os.MkdirAll(sslDir, 0755); err != nil {
-		return fmt.Errorf("failed to create ssl directory: %w", err)
-	}
-
-	certPath := filepath.Join(sslDir, "default.crt")
-	keyPath := filepath.Join(sslDir, "default.key")
-
-	if _, err := os.Stat(certPath); err == nil {
-		if _, err := os.Stat(keyPath); err == nil {
-			return nil
-		}
-	}
-
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("failed to generate private key: %w", err)
-	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return fmt.Errorf("failed to generate serial number: %w", err)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			Organization: []string{"FlatRun Default"},
-			CommonName:   "localhost",
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	if err != nil {
-		return fmt.Errorf("failed to create certificate: %w", err)
-	}
-
-	certOut, err := os.Create(certPath)
-	if err != nil {
-		return fmt.Errorf("failed to create cert file: %w", err)
-	}
-	defer certOut.Close()
-
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
-		return fmt.Errorf("failed to write certificate: %w", err)
-	}
-
-	keyBytes, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		return fmt.Errorf("failed to marshal private key: %w", err)
-	}
-
-	keyOut, err := os.Create(keyPath)
-	if err != nil {
-		return fmt.Errorf("failed to create key file: %w", err)
-	}
-	defer keyOut.Close()
-
-	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}); err != nil {
-		return fmt.Errorf("failed to write private key: %w", err)
-	}
-
-	return nil
 }
 
 // SecurityHealthCheck represents the result of a security setup health check
@@ -1312,12 +1228,6 @@ func (m *Manager) RefreshSecurityScripts() (*RefreshSecurityScriptsResult, error
 	sslDir := filepath.Join(nginxDir, "ssl")
 	if err := os.MkdirAll(sslDir, 0755); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("failed to create ssl directory: %v", err))
-	}
-
-	if m.config.Nginx.RejectUnknownDomains {
-		if err := m.ensureDefaultSSLCert(nginxDir); err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("failed to generate default SSL cert: %v", err))
-		}
 	}
 
 	// Write nginx.conf with Lua support
