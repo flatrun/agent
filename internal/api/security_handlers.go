@@ -264,7 +264,84 @@ func (s *Server) unblockIP(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "IP unblocked successfully"})
 }
 
-// getEventsByIP returns all security events for a specific IP
+func (s *Server) listWhitelist(c *gin.Context) {
+	if s.securityManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
+		return
+	}
+
+	entries, err := s.securityManager.GetWhitelist()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"whitelist": entries})
+}
+
+func (s *Server) addWhitelistEntry(c *gin.Context) {
+	if s.securityManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
+		return
+	}
+
+	var req struct {
+		Value  string `json:"value" binding:"required"`
+		Type   string `json:"type" binding:"required"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Type != "ip" && req.Type != "cidr" && req.Type != "path" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Type must be 'ip', 'cidr', or 'path'"})
+		return
+	}
+
+	id, err := s.securityManager.AddWhitelistEntry(req.Value, req.Type, req.Reason)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"id": id})
+}
+
+func (s *Server) removeWhitelistEntry(c *gin.Context) {
+	if s.securityManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
+		return
+	}
+
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
+		return
+	}
+
+	if err := s.securityManager.RemoveWhitelistEntry(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Entry removed"})
+}
+
+func (s *Server) listWhitelistInternal(c *gin.Context) {
+	token := c.GetHeader("X-Internal-Token")
+	expectedToken := s.config.Security.InternalAPIToken
+
+	if token == "" || token != expectedToken {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid internal token"})
+		return
+	}
+
+	s.listWhitelist(c)
+}
+
 func (s *Server) getEventsByIP(c *gin.Context) {
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})

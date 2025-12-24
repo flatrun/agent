@@ -107,6 +107,11 @@ func New(cfg *config.Config, configPath string) *Server {
 			if err := securityManager.InitNginxConfigs(nginxConfigPath); err != nil {
 				log.Printf("Warning: Failed to initialize security nginx configs: %v", err)
 			}
+			// Add Docker gateway IP to whitelist
+			gatewayIP := infraManager.GetDockerHostIP()
+			if err := securityManager.AddDockerGatewayToWhitelist(gatewayIP); err != nil {
+				log.Printf("Warning: Failed to add Docker gateway to whitelist: %v", err)
+			}
 		}
 	}
 
@@ -284,6 +289,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/security/protected-routes", s.addProtectedRoute)
 			protected.PUT("/security/protected-routes/:id", s.updateProtectedRoute)
 			protected.DELETE("/security/protected-routes/:id", s.deleteProtectedRoute)
+			protected.GET("/security/whitelist", s.listWhitelist)
+			protected.POST("/security/whitelist", s.addWhitelistEntry)
+			protected.DELETE("/security/whitelist/:id", s.removeWhitelistEntry)
 			protected.GET("/security/realtime-capture", s.getRealtimeCaptureStatus)
 			protected.PUT("/security/realtime-capture", s.setRealtimeCaptureStatus)
 			protected.GET("/security/health", s.getSecurityHealth)
@@ -303,8 +311,9 @@ func (s *Server) setupRoutes() {
 		api.POST("/security/events/ingest", s.ingestSecurityEvent)
 		api.POST("/traffic/ingest", s.ingestTrafficLog)
 
-		// Internal nginx endpoint - token-authenticated for blocked IPs
+		// Internal nginx endpoints - token-authenticated
 		api.GET("/_internal/blocked-ips", s.listBlockedIPsInternal)
+		api.GET("/_internal/whitelist", s.listWhitelistInternal)
 	}
 }
 
@@ -1185,12 +1194,13 @@ func (s *Server) getSettings(c *gin.Context) {
 				"subdomain_style": s.config.Domain.SubdomainStyle,
 			},
 			"nginx": gin.H{
-				"enabled":        s.config.Nginx.Enabled,
-				"image":          s.config.Nginx.Image,
-				"container_name": s.config.Nginx.ContainerName,
-				"config_path":    s.config.Nginx.ConfigPath,
-				"reload_command": s.config.Nginx.ReloadCommand,
-				"external":       s.config.Nginx.External,
+				"enabled":                s.config.Nginx.Enabled,
+				"image":                  s.config.Nginx.Image,
+				"container_name":         s.config.Nginx.ContainerName,
+				"config_path":            s.config.Nginx.ConfigPath,
+				"reload_command":         s.config.Nginx.ReloadCommand,
+				"external":               s.config.Nginx.External,
+				"reject_unknown_domains": s.config.Nginx.RejectUnknownDomains,
 			},
 			"certbot": gin.H{
 				"enabled":      s.config.Certbot.Enabled,
@@ -1241,12 +1251,13 @@ func (s *Server) updateSettings(c *gin.Context) {
 			SubdomainStyle string `json:"subdomain_style"`
 		} `json:"domain,omitempty"`
 		Nginx *struct {
-			Enabled       bool   `json:"enabled"`
-			Image         string `json:"image"`
-			ContainerName string `json:"container_name"`
-			ConfigPath    string `json:"config_path"`
-			ReloadCommand string `json:"reload_command"`
-			External      bool   `json:"external"`
+			Enabled              bool   `json:"enabled"`
+			Image                string `json:"image"`
+			ContainerName        string `json:"container_name"`
+			ConfigPath           string `json:"config_path"`
+			ReloadCommand        string `json:"reload_command"`
+			External             bool   `json:"external"`
+			RejectUnknownDomains *bool  `json:"reject_unknown_domains"`
 		} `json:"nginx,omitempty"`
 		Certbot *struct {
 			Enabled     bool   `json:"enabled"`
@@ -1317,6 +1328,9 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 		if req.Nginx.ReloadCommand != "" {
 			s.config.Nginx.ReloadCommand = req.Nginx.ReloadCommand
+		}
+		if req.Nginx.RejectUnknownDomains != nil {
+			s.config.Nginx.RejectUnknownDomains = *req.Nginx.RejectUnknownDomains
 		}
 	}
 
@@ -1426,12 +1440,13 @@ func (s *Server) updateSettings(c *gin.Context) {
 				"subdomain_style": s.config.Domain.SubdomainStyle,
 			},
 			"nginx": gin.H{
-				"enabled":        s.config.Nginx.Enabled,
-				"image":          s.config.Nginx.Image,
-				"container_name": s.config.Nginx.ContainerName,
-				"config_path":    s.config.Nginx.ConfigPath,
-				"reload_command": s.config.Nginx.ReloadCommand,
-				"external":       s.config.Nginx.External,
+				"enabled":                s.config.Nginx.Enabled,
+				"image":                  s.config.Nginx.Image,
+				"container_name":         s.config.Nginx.ContainerName,
+				"config_path":            s.config.Nginx.ConfigPath,
+				"reload_command":         s.config.Nginx.ReloadCommand,
+				"external":               s.config.Nginx.External,
+				"reject_unknown_domains": s.config.Nginx.RejectUnknownDomains,
 			},
 			"certbot": gin.H{
 				"enabled":      s.config.Certbot.Enabled,
@@ -2793,6 +2808,16 @@ func (s *Server) getSystemStats(c *gin.Context) {
 	imageStats, _ := s.networksManager.GetImageStats()
 	volumeStats, _ := s.networksManager.GetVolumeStats()
 
+	var networkCount, portCount int
+	if networks, err := s.networksManager.ListNetworks(); err == nil {
+		networkCount = len(networks)
+	}
+	if containers, err := s.networksManager.ListContainers(); err == nil {
+		for _, container := range containers {
+			portCount += len(container.Ports)
+		}
+	}
+
 	systemStats, _ := system.GetSystemStats()
 
 	c.JSON(http.StatusOK, gin.H{
@@ -2800,6 +2825,8 @@ func (s *Server) getSystemStats(c *gin.Context) {
 		"containers":  containerStats,
 		"images":      imageStats,
 		"volumes":     volumeStats,
+		"networks":    gin.H{"total": networkCount},
+		"ports":       gin.H{"total": portCount},
 		"system":      systemStats,
 	})
 }

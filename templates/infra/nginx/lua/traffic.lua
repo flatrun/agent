@@ -3,6 +3,7 @@
 
 local cjson = require "cjson.safe"
 local http = require "resty.http"
+local security = require "security"
 
 local _M = {}
 
@@ -11,11 +12,14 @@ local AGENT_IP = "{{.AgentIP}}"
 local AGENT_PORT = {{.AgentPort}}
 
 function _M.log_request()
+    local uri = ngx.var.uri or ""
+    local ip = security.get_client_ip()
+
+    if security.is_whitelisted(ip, uri) then return end
+
     local status = ngx.status
     local host = ngx.var.host or ""
-    local uri = ngx.var.uri or ""
     local method = ngx.var.request_method or ""
-    local ip = ngx.var.remote_addr or ""
     local request_time = ngx.var.request_time or "0"
     local bytes_sent = ngx.var.bytes_sent or "0"
     local request_length = ngx.var.request_length or "0"

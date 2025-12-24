@@ -11,10 +11,10 @@ local AGENT_IP = "{{.AgentIP}}"
 local AGENT_PORT = {{.AgentPort}}
 local INTERNAL_TOKEN = "{{.InternalAPIToken}}"
 
--- Blocked IPs cache settings
-local BLOCKED_IPS_CACHE_TTL = 30  -- seconds
-local BLOCKED_IPS_CACHE_KEY = "blocked_ips_list"
+-- Cache settings
+local CACHE_TTL = 30  -- seconds
 local BLOCKED_IPS_LAST_FETCH = "blocked_ips_last_fetch"
+local WHITELIST_LAST_FETCH = "whitelist_last_fetch"
 
 -- Suspicious paths patterns
 local suspicious_patterns = {
@@ -63,14 +63,34 @@ local scanner_patterns = {
     "zgrab",
 }
 
--- Check if an IP is blocked (with caching)
+local function get_real_client_ip()
+    local cf_ip = ngx.var.http_cf_connecting_ip
+    if cf_ip and cf_ip ~= "" then
+        return cf_ip
+    end
+
+    local xff = ngx.var.http_x_forwarded_for
+    if xff and xff ~= "" then
+        local first_ip = xff:match("^([^,]+)")
+        if first_ip then
+            return first_ip:match("^%s*(.-)%s*$")
+        end
+    end
+
+    return ngx.var.remote_addr
+end
+
+function _M.get_client_ip()
+    return get_real_client_ip()
+end
+
 function _M.is_blocked(ip)
     if not ip then return false end
+    if _M.is_whitelisted(ip, nil) then return false end
 
     local dict = ngx.shared.blocked_ips
     if not dict then return false end
 
-    -- Check if this specific IP is marked as blocked
     local is_blocked = dict:get("ip:" .. ip)
     if is_blocked ~= nil then
         return is_blocked
@@ -80,7 +100,7 @@ function _M.is_blocked(ip)
     local last_fetch = dict:get(BLOCKED_IPS_LAST_FETCH) or 0
     local now = ngx.time()
 
-    if now - last_fetch > BLOCKED_IPS_CACHE_TTL then
+    if now - last_fetch > CACHE_TTL then
         -- Refresh in background to not block the request
         ngx.timer.at(0, function()
             _M.refresh_blocked_ips()
@@ -145,18 +165,140 @@ function _M.refresh_blocked_ips()
     local blocked_ips = data.blocked_ips or {}
     for _, entry in ipairs(blocked_ips) do
         if entry.ip then
-            dict:set("ip:" .. entry.ip, true, BLOCKED_IPS_CACHE_TTL * 2)
+            dict:set("ip:" .. entry.ip, true, CACHE_TTL * 2)
         end
     end
 
     ngx.log(ngx.INFO, "Refreshed blocked IPs cache: ", #blocked_ips, " IPs")
 end
 
--- Initialize blocked IPs cache on worker start
 function _M.init_blocked_ips()
     ngx.timer.at(0, function()
         _M.refresh_blocked_ips()
     end)
+end
+
+local function is_ip_in_cidr(ip, cidr)
+    local cidr_ip, cidr_bits = cidr:match("^([^/]+)/(%d+)$")
+    if not cidr_ip then return ip == cidr end
+
+    local function ip_to_int(ip_str)
+        local parts = {ip_str:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")}
+        if #parts ~= 4 then return nil end
+        return tonumber(parts[1]) * 16777216 + tonumber(parts[2]) * 65536 +
+               tonumber(parts[3]) * 256 + tonumber(parts[4])
+    end
+
+    local ip_int = ip_to_int(ip)
+    local cidr_int = ip_to_int(cidr_ip)
+    if not ip_int or not cidr_int then return false end
+
+    local bits = tonumber(cidr_bits)
+    local mask = bits == 0 and 0 or (0xFFFFFFFF - (2^(32 - bits) - 1))
+    return bit.band(ip_int, mask) == bit.band(cidr_int, mask)
+end
+
+function _M.is_whitelisted(ip, path)
+    local dict = ngx.shared.whitelist
+    if not dict then return false end
+
+    if ip then
+        if dict:get("ip:" .. ip) then return true end
+        local cidrs = dict:get("cidrs")
+        if cidrs then
+            for cidr in cidrs:gmatch("[^,]+") do
+                if is_ip_in_cidr(ip, cidr) then return true end
+            end
+        end
+    end
+
+    if path then
+        local paths = dict:get("paths")
+        if paths then
+            for wpath in paths:gmatch("[^,]+") do
+                if path:sub(1, #wpath) == wpath then return true end
+            end
+        end
+    end
+
+    local last_fetch = dict:get(WHITELIST_LAST_FETCH) or 0
+    if ngx.time() - last_fetch > CACHE_TTL then
+        ngx.timer.at(0, function() _M.refresh_whitelist() end)
+    end
+
+    return false
+end
+
+function _M.refresh_whitelist()
+    local dict = ngx.shared.whitelist
+    if not dict then return end
+
+    local httpc = http.new()
+    httpc:set_timeout(3000)
+
+    local conn_ok, conn_err = httpc:connect({
+        host = AGENT_IP,
+        port = AGENT_PORT,
+        scheme = "http",
+    })
+
+    if not conn_ok then
+        ngx.log(ngx.ERR, "Failed to connect to agent for whitelist: ", conn_err)
+        return
+    end
+
+    local res, req_err = httpc:request({
+        method = "GET",
+        path = "/api/_internal/whitelist",
+        headers = {
+            ["Host"] = AGENT_IP .. ":" .. AGENT_PORT,
+            ["X-Internal-Token"] = INTERNAL_TOKEN,
+        }
+    })
+
+    if not res then
+        ngx.log(ngx.ERR, "Failed to fetch whitelist: ", req_err)
+        httpc:close()
+        return
+    end
+
+    local body = res:read_body()
+    httpc:close()
+
+    if res.status ~= 200 then
+        ngx.log(ngx.ERR, "Whitelist API returned status: ", res.status)
+        return
+    end
+
+    local data, decode_err = cjson.decode(body)
+    if not data then
+        ngx.log(ngx.ERR, "Failed to decode whitelist response: ", decode_err)
+        return
+    end
+
+    dict:flush_all()
+    dict:set(WHITELIST_LAST_FETCH, ngx.time())
+
+    local ips, cidrs, paths = {}, {}, {}
+    for _, entry in ipairs(data.whitelist or {}) do
+        if entry.type == "ip" then
+            dict:set("ip:" .. entry.value, true, CACHE_TTL * 2)
+            table.insert(ips, entry.value)
+        elseif entry.type == "cidr" then
+            table.insert(cidrs, entry.value)
+        elseif entry.type == "path" then
+            table.insert(paths, entry.value)
+        end
+    end
+
+    if #cidrs > 0 then dict:set("cidrs", table.concat(cidrs, ","), CACHE_TTL * 2) end
+    if #paths > 0 then dict:set("paths", table.concat(paths, ","), CACHE_TTL * 2) end
+
+    ngx.log(ngx.INFO, "Refreshed whitelist: ", #ips, " IPs, ", #cidrs, " CIDRs, ", #paths, " paths")
+end
+
+function _M.init_whitelist()
+    ngx.timer.at(0, function() _M.refresh_whitelist() end)
 end
 
 function _M.is_suspicious_path(uri)
@@ -184,12 +326,13 @@ end
 function _M.capture_event()
     local status = ngx.status
     local uri = ngx.var.uri
-    local ip = ngx.var.remote_addr
+    local ip = get_real_client_ip()
     local method = ngx.var.request_method
     local user_agent = ngx.var.http_user_agent or ""
     local host = ngx.var.host or ""
 
-    -- Only capture security-relevant events
+    if _M.is_whitelisted(ip, uri) then return end
+
     local should_capture = false
 
     -- Scanner detection
