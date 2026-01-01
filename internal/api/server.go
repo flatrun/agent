@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/database"
@@ -24,6 +25,7 @@ import (
 	"github.com/flatrun/agent/internal/infra"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/proxy"
+	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/internal/traffic"
@@ -55,6 +57,8 @@ type Server struct {
 	credentialsManager *credentials.Manager
 	securityManager    *security.Manager
 	trafficManager     *traffic.Manager
+	backupManager      *backup.Manager
+	schedulerManager   *scheduler.Manager
 }
 
 func New(cfg *config.Config, configPath string) *Server {
@@ -121,6 +125,12 @@ func New(cfg *config.Config, configPath string) *Server {
 		log.Printf("Warning: Failed to initialize traffic manager: %v", err)
 	}
 
+	var backupManager *backup.Manager
+	backupManager, err = backup.NewManager(cfg.DeploymentsPath)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize backup manager: %v", err)
+	}
+
 	s := &Server{
 		config:             cfg,
 		configPath:         configPath,
@@ -138,6 +148,18 @@ func New(cfg *config.Config, configPath string) *Server {
 		credentialsManager: credentialsManager,
 		securityManager:    securityManager,
 		trafficManager:     trafficManager,
+		backupManager:      backupManager,
+	}
+
+	if backupManager != nil {
+		executor := scheduler.NewExecutor(backupManager, manager)
+		schedulerManager, err := scheduler.NewManager(cfg.DeploymentsPath, executor)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize scheduler manager: %v", err)
+		} else {
+			s.schedulerManager = schedulerManager
+			schedulerManager.Start()
+		}
 	}
 
 	s.setupRoutes()
@@ -306,6 +328,27 @@ func (s *Server) setupRoutes() {
 			protected.GET("/traffic/unknown-domains", s.getUnknownDomainStats)
 			protected.POST("/traffic/cleanup", s.cleanupTrafficLogs)
 			protected.GET("/deployments/:name/traffic", s.getDeploymentTrafficStats)
+
+			// Backup endpoints
+			protected.GET("/backups", s.listBackups)
+			protected.GET("/backups/:id", s.getBackup)
+			protected.POST("/backups", s.createBackup)
+			protected.DELETE("/backups/:id", s.deleteBackup)
+			protected.GET("/backups/:id/download", s.downloadBackup)
+			protected.GET("/deployments/:name/backups", s.listDeploymentBackups)
+			protected.POST("/deployments/:name/backups", s.createDeploymentBackup)
+			protected.GET("/deployments/:name/backup-config", s.getDeploymentBackupConfig)
+			protected.PUT("/deployments/:name/backup-config", s.updateDeploymentBackupConfig)
+
+			// Scheduler endpoints
+			protected.GET("/scheduler/tasks", s.listScheduledTasks)
+			protected.GET("/scheduler/tasks/:id", s.getScheduledTask)
+			protected.POST("/scheduler/tasks", s.createScheduledTask)
+			protected.PUT("/scheduler/tasks/:id", s.updateScheduledTask)
+			protected.DELETE("/scheduler/tasks/:id", s.deleteScheduledTask)
+			protected.POST("/scheduler/tasks/:id/run", s.runTaskNow)
+			protected.GET("/scheduler/tasks/:id/executions", s.getTaskExecutions)
+			protected.GET("/scheduler/executions", s.getRecentExecutions)
 		}
 
 		// Ingest endpoints (no auth - called by nginx Lua)

@@ -31,6 +31,43 @@ type ServiceMetadata struct {
 	HealthCheck  HealthCheckConfig         `yaml:"healthcheck" json:"healthcheck"`
 	QuickActions []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
 	Security     *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
+	Backup       *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
+}
+
+type BackupSpec struct {
+	ContainerPaths  []ContainerBackupPath `yaml:"container_paths,omitempty" json:"container_paths,omitempty"`
+	Databases       []DatabaseBackupSpec  `yaml:"databases,omitempty" json:"databases,omitempty"`
+	PreHooks        []BackupHookSpec      `yaml:"pre_hooks,omitempty" json:"pre_hooks,omitempty"`
+	PostHooks       []BackupHookSpec      `yaml:"post_hooks,omitempty" json:"post_hooks,omitempty"`
+	ExcludePatterns []string              `yaml:"exclude_patterns,omitempty" json:"exclude_patterns,omitempty"`
+}
+
+type ContainerBackupPath struct {
+	Service       string `yaml:"service" json:"service"`
+	ContainerPath string `yaml:"container_path" json:"container_path"`
+	Description   string `yaml:"description,omitempty" json:"description,omitempty"`
+	Required      bool   `yaml:"required" json:"required"`
+}
+
+type DatabaseBackupSpec struct {
+	Service     string `yaml:"service" json:"service"`
+	Type        string `yaml:"type" json:"type"`
+	HostEnv     string `yaml:"host_env,omitempty" json:"host_env,omitempty"`
+	PortEnv     string `yaml:"port_env,omitempty" json:"port_env,omitempty"`
+	UserEnv     string `yaml:"user_env,omitempty" json:"user_env,omitempty"`
+	PasswordEnv string `yaml:"password_env,omitempty" json:"password_env,omitempty"`
+	DatabaseEnv string `yaml:"database_env,omitempty" json:"database_env,omitempty"`
+	Host        string `yaml:"host,omitempty" json:"host,omitempty"`
+	Port        int    `yaml:"port,omitempty" json:"port,omitempty"`
+	User        string `yaml:"user,omitempty" json:"user,omitempty"`
+	Password    string `yaml:"password,omitempty" json:"password,omitempty"`
+	Database    string `yaml:"database,omitempty" json:"database,omitempty"`
+}
+
+type BackupHookSpec struct {
+	Service string `yaml:"service" json:"service"`
+	Command string `yaml:"command" json:"command"`
+	Timeout int    `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 }
 
 type QuickAction struct {
