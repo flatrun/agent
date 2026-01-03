@@ -73,13 +73,8 @@ func (s *Server) createBackup(c *gin.Context) {
 		spec = deployment.Metadata.Backup
 	}
 
-	b, err := s.backupManager.CreateBackup(c.Request.Context(), req.DeploymentName, spec)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"backup": b})
+	jobID := s.backupManager.StartBackupJob(c.Request.Context(), req.DeploymentName, spec)
+	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Backup job started"})
 }
 
 func (s *Server) createDeploymentBackup(c *gin.Context) {
@@ -100,13 +95,8 @@ func (s *Server) createDeploymentBackup(c *gin.Context) {
 		spec = deployment.Metadata.Backup
 	}
 
-	b, err := s.backupManager.CreateBackup(c.Request.Context(), deploymentName, spec)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"backup": b})
+	jobID := s.backupManager.StartBackupJob(c.Request.Context(), deploymentName, spec)
+	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Backup job started"})
 }
 
 func (s *Server) listDeploymentBackups(c *gin.Context) {
@@ -211,4 +201,56 @@ func (s *Server) updateDeploymentBackupConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"backup_config": spec})
+}
+
+func (s *Server) restoreBackup(c *gin.Context) {
+	if s.backupManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Backup manager not enabled"})
+		return
+	}
+
+	backupID := c.Param("id")
+
+	var req backup.RestoreBackupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req = backup.RestoreBackupRequest{}
+	}
+	req.BackupID = backupID
+
+	jobID := s.backupManager.StartRestoreJob(c.Request.Context(), &req)
+	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Restore job started"})
+}
+
+func (s *Server) getBackupJob(c *gin.Context) {
+	if s.backupManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Backup manager not enabled"})
+		return
+	}
+
+	jobID := c.Param("id")
+	job := s.backupManager.GetJob(jobID)
+	if job == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"job": job})
+}
+
+func (s *Server) listBackupJobs(c *gin.Context) {
+	if s.backupManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Backup manager not enabled"})
+		return
+	}
+
+	deploymentName := c.Query("deployment")
+	limit := 50
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil {
+			limit = parsed
+		}
+	}
+
+	jobs := s.backupManager.ListJobs(deploymentName, limit)
+	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
 }

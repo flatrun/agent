@@ -87,10 +87,10 @@ type IngestTrafficLog struct {
 }
 
 type UnknownDomainStats struct {
-	TotalRequests int64                    `json:"total_requests"`
-	TopDomains    []UnknownDomainEntry     `json:"top_domains"`
-	TopIPs        []UnknownDomainIPEntry   `json:"top_ips"`
-	RecentLogs    []TrafficLog             `json:"recent_logs"`
+	TotalRequests int64                  `json:"total_requests"`
+	TopDomains    []UnknownDomainEntry   `json:"top_domains"`
+	TopIPs        []UnknownDomainIPEntry `json:"top_ips"`
+	RecentLogs    []TrafficLog           `json:"recent_logs"`
 }
 
 type UnknownDomainEntry struct {

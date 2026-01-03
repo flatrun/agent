@@ -226,7 +226,9 @@ func (m *Manager) UpdateTask(id int64, req *UpdateTaskRequest) (*ScheduledTask, 
 	if req.CronExpr != nil || (req.Enabled != nil && *req.Enabled) {
 		nextRun, err := m.calculateNextRun(task.CronExpr)
 		if err == nil {
-			m.db.UpdateTaskNextRun(id, nextRun)
+			if err := m.db.UpdateTaskNextRun(id, nextRun); err != nil {
+				log.Printf("Scheduler: failed to update next run time: %v", err)
+			}
 			task.NextRun = &nextRun
 		}
 	}

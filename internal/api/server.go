@@ -339,6 +339,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/backups", s.createDeploymentBackup)
 			protected.GET("/deployments/:name/backup-config", s.getDeploymentBackupConfig)
 			protected.PUT("/deployments/:name/backup-config", s.updateDeploymentBackupConfig)
+			protected.POST("/backups/:id/restore", s.restoreBackup)
+			protected.GET("/backups/jobs", s.listBackupJobs)
+			protected.GET("/backups/jobs/:id", s.getBackupJob)
 
 			// Scheduler endpoints
 			protected.GET("/scheduler/tasks", s.listScheduledTasks)

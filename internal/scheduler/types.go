@@ -21,12 +21,12 @@ const (
 )
 
 type ScheduledTask struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	Type           TaskType  `json:"type"`
-	DeploymentName string    `json:"deployment_name"`
-	CronExpr       string    `json:"cron_expr"`
-	Enabled        bool      `json:"enabled"`
+	ID             int64      `json:"id"`
+	Name           string     `json:"name"`
+	Type           TaskType   `json:"type"`
+	DeploymentName string     `json:"deployment_name"`
+	CronExpr       string     `json:"cron_expr"`
+	Enabled        bool       `json:"enabled"`
 	Config         TaskConfig `json:"config"`
 	LastRun        *time.Time `json:"last_run,omitempty"`
 	NextRun        *time.Time `json:"next_run,omitempty"`

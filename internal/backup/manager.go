@@ -21,6 +21,7 @@ import (
 type Manager struct {
 	deploymentsPath string
 	backupsPath     string
+	jobs            *JobTracker
 }
 
 func NewManager(deploymentsPath string) (*Manager, error) {
@@ -32,6 +33,7 @@ func NewManager(deploymentsPath string) (*Manager, error) {
 	return &Manager{
 		deploymentsPath: deploymentsPath,
 		backupsPath:     backupsPath,
+		jobs:            NewJobTracker(),
 	}, nil
 }
 
@@ -172,7 +174,9 @@ func (m *Manager) backupComposeFile(deploymentPath, tempDir string, metadata *Ba
 func (m *Manager) backupEnvFile(deploymentPath, tempDir string, metadata *BackupMetadata) error {
 	envFiles := []string{".env", ".env.flatrun"}
 	envDir := filepath.Join(tempDir, "env")
-	os.MkdirAll(envDir, 0755)
+	if err := os.MkdirAll(envDir, 0755); err != nil {
+		return fmt.Errorf("failed to create env backup directory: %w", err)
+	}
 
 	found := false
 	for _, envFile := range envFiles {
@@ -208,7 +212,9 @@ func (m *Manager) backupMetadataFile(deploymentPath, tempDir string, metadata *B
 
 func (m *Manager) backupMountedData(deploymentPath, tempDir string, metadata *BackupMetadata) error {
 	dataDir := filepath.Join(tempDir, "data")
-	os.MkdirAll(dataDir, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("failed to create data backup directory: %w", err)
+	}
 
 	commonDataDirs := []string{"data", "uploads", "storage", "config", "logs"}
 	for _, dir := range commonDataDirs {
@@ -228,7 +234,9 @@ func (m *Manager) backupMountedData(deploymentPath, tempDir string, metadata *Ba
 
 func (m *Manager) backupContainerData(ctx context.Context, deploymentName string, paths []ContainerPath, tempDir string, metadata *BackupMetadata) error {
 	containerDir := filepath.Join(tempDir, "container_data")
-	os.MkdirAll(containerDir, 0755)
+	if err := os.MkdirAll(containerDir, 0755); err != nil {
+		return fmt.Errorf("failed to create container data backup directory: %w", err)
+	}
 
 	for _, path := range paths {
 		containerName := fmt.Sprintf("%s-%s", deploymentName, path.Service)
@@ -237,7 +245,9 @@ func (m *Manager) backupContainerData(ctx context.Context, deploymentName string
 		}
 
 		destPath := filepath.Join(containerDir, path.Service, filepath.Base(path.ContainerPath))
-		os.MkdirAll(filepath.Dir(destPath), 0755)
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return fmt.Errorf("failed to create directory for %s: %w", path.ContainerPath, err)
+		}
 
 		cmd := exec.CommandContext(ctx, "docker", "cp", fmt.Sprintf("%s:%s", containerName, path.ContainerPath), destPath)
 		if err := cmd.Run(); err != nil {
@@ -256,7 +266,9 @@ func (m *Manager) backupContainerData(ctx context.Context, deploymentName string
 
 func (m *Manager) backupDatabases(ctx context.Context, deploymentName string, databases []DatabaseSpec, tempDir string, metadata *BackupMetadata) error {
 	dbDir := filepath.Join(tempDir, "databases")
-	os.MkdirAll(dbDir, 0755)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return fmt.Errorf("failed to create databases backup directory: %w", err)
+	}
 
 	for _, db := range databases {
 		var dumpPath string
@@ -304,18 +316,16 @@ func (m *Manager) dumpMySQL(ctx context.Context, deploymentName string, db *Data
 		database = deploymentName
 	}
 
-	args := []string{
-		"exec", containerName,
-		"mysqldump",
-		"-h", host,
-		"-u", user,
-	}
+	args := []string{"exec"}
 
 	if db.Password != "" {
-		args = append(args, fmt.Sprintf("-p%s", db.Password))
+		args = append(args, "-e", "MYSQL_PWD="+db.Password)
 	}
 
-	args = append(args, "--single-transaction", "--routines", "--triggers", database)
+	args = append(args, containerName, "mysqldump",
+		"-h", host,
+		"-u", user,
+		"--single-transaction", "--routines", "--triggers", database)
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := cmd.Output()
@@ -568,6 +578,314 @@ func (m *Manager) CleanupOldBackups(deploymentName string, keepCount int) (int, 
 	}
 
 	return deleted, nil
+}
+
+func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) error {
+	backup, err := m.GetBackup(req.BackupID)
+	if err != nil {
+		return err
+	}
+
+	deploymentName := backup.DeploymentName
+	if req.DeploymentName != "" {
+		deploymentName = req.DeploymentName
+	}
+
+	deploymentPath := filepath.Join(m.deploymentsPath, deploymentName)
+
+	tempDir, err := os.MkdirTemp("", "flatrun-restore-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	if err := m.extractArchive(backup.Path, tempDir); err != nil {
+		return fmt.Errorf("failed to extract backup: %w", err)
+	}
+
+	metadataPath := filepath.Join(tempDir, "backup.json")
+	metadataBytes, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return fmt.Errorf("failed to read backup metadata: %w", err)
+	}
+
+	var metadata BackupMetadata
+	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+		return fmt.Errorf("failed to parse backup metadata: %w", err)
+	}
+
+	if req.StopFirst {
+		log.Printf("Restore: stopping deployment %s", deploymentName)
+		cmd := exec.CommandContext(ctx, "docker", "compose", "-f",
+			filepath.Join(deploymentPath, "docker-compose.yml"), "stop")
+		cmd.Dir = deploymentPath
+		if err := cmd.Run(); err != nil {
+			log.Printf("Restore: warning - failed to stop deployment: %v", err)
+		}
+	}
+
+	if err := os.MkdirAll(deploymentPath, 0755); err != nil {
+		return fmt.Errorf("failed to create deployment directory: %w", err)
+	}
+
+	if metadata.Components.ComposeFile {
+		if err := m.restoreComposeFile(tempDir, deploymentPath); err != nil {
+			return fmt.Errorf("failed to restore compose file: %w", err)
+		}
+		log.Printf("Restore: restored compose file")
+	}
+
+	if metadata.Components.EnvFile {
+		if err := m.restoreEnvFiles(tempDir, deploymentPath); err != nil {
+			log.Printf("Restore: warning - failed to restore env files: %v", err)
+		} else {
+			log.Printf("Restore: restored env files")
+		}
+	}
+
+	if metadata.Components.Metadata {
+		if err := m.restoreMetadataFile(tempDir, deploymentPath); err != nil {
+			log.Printf("Restore: warning - failed to restore metadata file: %v", err)
+		} else {
+			log.Printf("Restore: restored metadata file")
+		}
+	}
+
+	if req.RestoreData && len(metadata.Components.MountedData) > 0 {
+		if err := m.restoreMountedData(tempDir, deploymentPath, metadata.Components.MountedData); err != nil {
+			log.Printf("Restore: warning - failed to restore mounted data: %v", err)
+		} else {
+			log.Printf("Restore: restored mounted data")
+		}
+	}
+
+	if req.StopFirst {
+		log.Printf("Restore: starting deployment %s", deploymentName)
+		cmd := exec.CommandContext(ctx, "docker", "compose", "-f",
+			filepath.Join(deploymentPath, "docker-compose.yml"), "up", "-d")
+		cmd.Dir = deploymentPath
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to start deployment after restore: %w", err)
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	if req.RestoreData && len(metadata.Components.ContainerData) > 0 {
+		if err := m.restoreContainerData(ctx, deploymentName, tempDir, metadata.Components.ContainerData); err != nil {
+			log.Printf("Restore: warning - failed to restore container data: %v", err)
+		} else {
+			log.Printf("Restore: restored container data")
+		}
+	}
+
+	if req.RestoreDB && len(metadata.Components.Databases) > 0 {
+		if err := m.restoreDatabases(ctx, deploymentName, tempDir, metadata.Components.Databases); err != nil {
+			log.Printf("Restore: warning - failed to restore databases: %v", err)
+		} else {
+			log.Printf("Restore: restored databases")
+		}
+	}
+
+	log.Printf("Restore completed for %s from backup %s", deploymentName, req.BackupID)
+	return nil
+}
+
+func (m *Manager) extractArchive(archivePath, destDir string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		destPath := filepath.Join(destDir, header.Name)
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(destPath, 0755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return err
+			}
+			outFile, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				outFile.Close()
+				return err
+			}
+			outFile.Close()
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) restoreComposeFile(tempDir, deploymentPath string) error {
+	srcPath := filepath.Join(tempDir, "docker-compose.yml")
+	destPath := filepath.Join(deploymentPath, "docker-compose.yml")
+	return copyFile(srcPath, destPath)
+}
+
+func (m *Manager) restoreEnvFiles(tempDir, deploymentPath string) error {
+	envDir := filepath.Join(tempDir, "env")
+	if _, err := os.Stat(envDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	files, err := os.ReadDir(envDir)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		srcPath := filepath.Join(envDir, file.Name())
+		destPath := filepath.Join(deploymentPath, file.Name())
+		if err := copyFile(srcPath, destPath); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) restoreMetadataFile(tempDir, deploymentPath string) error {
+	srcPath := filepath.Join(tempDir, ".flatrun.yml")
+	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+		return nil
+	}
+	destPath := filepath.Join(deploymentPath, ".flatrun.yml")
+	return copyFile(srcPath, destPath)
+}
+
+func (m *Manager) restoreMountedData(tempDir, deploymentPath string, dataItems []string) error {
+	dataDir := filepath.Join(tempDir, "data")
+	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	for _, item := range dataItems {
+		srcPath := filepath.Join(dataDir, item)
+		destPath := filepath.Join(deploymentPath, item)
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			continue
+		}
+		if err := os.RemoveAll(destPath); err != nil {
+			log.Printf("Restore: warning - failed to remove existing %s: %v", item, err)
+		}
+		if err := copyDir(srcPath, destPath); err != nil {
+			return fmt.Errorf("failed to restore %s: %w", item, err)
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) restoreContainerData(ctx context.Context, deploymentName, tempDir string, items []string) error {
+	containerDir := filepath.Join(tempDir, "container_data")
+	if _, err := os.Stat(containerDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	for _, item := range items {
+		parts := strings.SplitN(item, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		service := parts[0]
+		containerPath := parts[1]
+
+		containerName := fmt.Sprintf("%s-%s", deploymentName, service)
+		srcPath := filepath.Join(containerDir, service, filepath.Base(containerPath))
+
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			continue
+		}
+
+		cmd := exec.CommandContext(ctx, "docker", "cp", srcPath, fmt.Sprintf("%s:%s", containerName, containerPath))
+		if err := cmd.Run(); err != nil {
+			log.Printf("Restore: warning - failed to restore %s to container %s: %v", containerPath, containerName, err)
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) restoreDatabases(ctx context.Context, deploymentName, tempDir string, dbFiles []string) error {
+	dbDir := filepath.Join(tempDir, "databases")
+	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	for _, dbFile := range dbFiles {
+		dumpPath := filepath.Join(dbDir, dbFile)
+		if _, err := os.Stat(dumpPath); os.IsNotExist(err) {
+			continue
+		}
+
+		if strings.Contains(dbFile, "_mysql.sql") {
+			service := strings.TrimSuffix(dbFile, "_mysql.sql")
+			if err := m.restoreMySQL(ctx, deploymentName, service, dumpPath); err != nil {
+				log.Printf("Restore: warning - failed to restore MySQL database %s: %v", service, err)
+			}
+		} else if strings.Contains(dbFile, "_postgres.sql") {
+			service := strings.TrimSuffix(dbFile, "_postgres.sql")
+			if err := m.restorePostgres(ctx, deploymentName, service, dumpPath); err != nil {
+				log.Printf("Restore: warning - failed to restore PostgreSQL database %s: %v", service, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) restoreMySQL(ctx context.Context, deploymentName, service, dumpPath string) error {
+	containerName := fmt.Sprintf("%s-%s", deploymentName, service)
+
+	dumpContent, err := os.ReadFile(dumpPath)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "mysql", "-u", "root", deploymentName)
+	cmd.Stdin = strings.NewReader(string(dumpContent))
+	return cmd.Run()
+}
+
+func (m *Manager) restorePostgres(ctx context.Context, deploymentName, service, dumpPath string) error {
+	containerName := fmt.Sprintf("%s-%s", deploymentName, service)
+
+	dumpContent, err := os.ReadFile(dumpPath)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "psql", "-U", "postgres", deploymentName)
+	cmd.Stdin = strings.NewReader(string(dumpContent))
+	return cmd.Run()
 }
 
 func copyFile(src, dst string) error {
