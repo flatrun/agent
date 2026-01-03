@@ -63,3 +63,29 @@ files:
       CACHE_DRIVER=file
       SESSION_DRIVER=file
       QUEUE_CONNECTION=sync
+backup:
+  container_paths:
+    - service: app
+      container_path: /app/storage
+      description: Storage directory (logs, cache, uploads)
+      required: true
+    - service: app
+      container_path: /app/.env
+      description: Environment configuration
+      required: true
+  databases:
+    - service: app
+      type: mysql
+      host_env: DB_HOST
+      port_env: DB_PORT
+      user_env: DB_USERNAME
+      password_env: DB_PASSWORD
+      database_env: DB_DATABASE
+  pre_hooks:
+    - service: app
+      command: php artisan down --retry=60
+      timeout: 30
+  post_hooks:
+    - service: app
+      command: php artisan up
+      timeout: 30
