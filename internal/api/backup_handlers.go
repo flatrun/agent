@@ -73,7 +73,7 @@ func (s *Server) createBackup(c *gin.Context) {
 		spec = deployment.Metadata.Backup
 	}
 
-	jobID := s.backupManager.StartBackupJob(c.Request.Context(), req.DeploymentName, spec)
+	jobID := s.backupManager.StartBackupJob(req.DeploymentName, spec)
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Backup job started"})
 }
 
@@ -95,7 +95,7 @@ func (s *Server) createDeploymentBackup(c *gin.Context) {
 		spec = deployment.Metadata.Backup
 	}
 
-	jobID := s.backupManager.StartBackupJob(c.Request.Context(), deploymentName, spec)
+	jobID := s.backupManager.StartBackupJob(deploymentName, spec)
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Backup job started"})
 }
 
@@ -217,7 +217,7 @@ func (s *Server) restoreBackup(c *gin.Context) {
 	}
 	req.BackupID = backupID
 
-	jobID := s.backupManager.StartRestoreJob(c.Request.Context(), &req)
+	jobID := s.backupManager.StartRestoreJob(&req)
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Restore job started"})
 }
 

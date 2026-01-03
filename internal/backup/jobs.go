@@ -128,7 +128,7 @@ func (t *JobTracker) Cleanup(olderThan time.Duration) {
 	}
 }
 
-func (m *Manager) StartBackupJob(ctx context.Context, deploymentName string, spec *BackupSpec) string {
+func (m *Manager) StartBackupJob(deploymentName string, spec *BackupSpec) string {
 	jobID := generateJobID("backup", deploymentName)
 	m.jobs.CreateJob(jobID, JobTypeBackup, deploymentName)
 
@@ -148,7 +148,7 @@ func (m *Manager) StartBackupJob(ctx context.Context, deploymentName string, spe
 	return jobID
 }
 
-func (m *Manager) StartRestoreJob(ctx context.Context, req *RestoreBackupRequest) string {
+func (m *Manager) StartRestoreJob(req *RestoreBackupRequest) string {
 	backup, err := m.GetBackup(req.BackupID)
 	if err != nil {
 		jobID := generateJobID("restore", req.BackupID)
