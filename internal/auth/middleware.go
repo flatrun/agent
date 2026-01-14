@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,13 @@ import (
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+)
+
+const (
+	ContextKeyActorType    = "audit_actor_type"
+	ContextKeyActorID      = "audit_actor_id"
+	ContextKeyActorName    = "audit_actor_name"
+	ContextKeyAPIKeyPrefix = "audit_api_key_prefix"
 )
 
 type Claims struct {
@@ -27,6 +35,7 @@ func NewMiddleware(cfg *config.AuthConfig) *Middleware {
 func (m *Middleware) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !m.config.Enabled {
+			c.Set(ContextKeyActorType, "anonymous")
 			c.Next()
 			return
 		}
@@ -54,12 +63,21 @@ func (m *Middleware) RequireAuth() gin.HandlerFunc {
 
 		switch scheme {
 		case "bearer":
-			if m.validateJWT(token) || m.validateAPIKey(token) {
+			if claims := m.validateJWTWithClaims(token); claims != nil {
+				c.Set(ContextKeyActorType, "jwt")
+				c.Set(ContextKeyActorID, claims.Username)
+				c.Set(ContextKeyActorName, claims.Username)
+				c.Next()
+				return
+			}
+			if keyIndex := m.validateAPIKeyWithIndex(token); keyIndex >= 0 {
+				m.setAPIKeyContext(c, token, keyIndex)
 				c.Next()
 				return
 			}
 		case "apikey":
-			if m.validateAPIKey(token) {
+			if keyIndex := m.validateAPIKeyWithIndex(token); keyIndex >= 0 {
+				m.setAPIKeyContext(c, token, keyIndex)
 				c.Next()
 				return
 			}
@@ -78,6 +96,35 @@ func (m *Middleware) RequireAuth() gin.HandlerFunc {
 	}
 }
 
+func (m *Middleware) setAPIKeyContext(c *gin.Context, token string, keyIndex int) {
+	c.Set(ContextKeyActorType, "api_key")
+	c.Set(ContextKeyActorID, fmt.Sprintf("key_%d", keyIndex))
+	if len(token) >= 8 {
+		c.Set(ContextKeyAPIKeyPrefix, token[:8]+"...")
+	} else {
+		c.Set(ContextKeyAPIKeyPrefix, token+"...")
+	}
+}
+
+func (m *Middleware) validateJWTWithClaims(tokenString string) *Claims {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(m.config.JWTSecret), nil
+	})
+
+	if err != nil {
+		return nil
+	}
+
+	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		if claims.ExpiresAt != nil && claims.ExpiresAt.Time.Before(time.Now()) {
+			return nil
+		}
+		return claims
+	}
+
+	return nil
+}
+
 func (m *Middleware) validateAPIKey(key string) bool {
 	for _, validKey := range m.config.APIKeys {
 		if subtle.ConstantTimeCompare([]byte(key), []byte(validKey)) == 1 {
@@ -85,6 +132,15 @@ func (m *Middleware) validateAPIKey(key string) bool {
 		}
 	}
 	return false
+}
+
+func (m *Middleware) validateAPIKeyWithIndex(key string) int {
+	for i, validKey := range m.config.APIKeys {
+		if subtle.ConstantTimeCompare([]byte(key), []byte(validKey)) == 1 {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *Middleware) validateJWT(tokenString string) bool {

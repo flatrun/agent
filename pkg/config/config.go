@@ -21,6 +21,7 @@ type Config struct {
 	Health          HealthConfig         `yaml:"health"`
 	Infrastructure  InfrastructureConfig `yaml:"infrastructure"`
 	Security        SecurityConfig       `yaml:"security"`
+	Audit           AuditConfig          `yaml:"audit"`
 }
 
 type DomainConfig struct {
@@ -93,6 +94,19 @@ type InfrastructureConfig struct {
 	DefaultDatabaseNetwork string               `yaml:"default_database_network" json:"default_database_network"`
 	Database               SharedDatabaseConfig `yaml:"database" json:"database"`
 	Redis                  SharedRedisConfig    `yaml:"redis" json:"redis"`
+	PowerDNS               PowerDNSConfig       `yaml:"powerdns" json:"powerdns"`
+}
+
+type PowerDNSConfig struct {
+	Enabled       bool   `yaml:"enabled" json:"enabled"`
+	Container     string `yaml:"container" json:"container"`
+	Image         string `yaml:"image" json:"image"`
+	APIPort       int    `yaml:"api_port" json:"api_port"`
+	DNSPort       int    `yaml:"dns_port" json:"dns_port"`
+	APIKey        string `yaml:"api_key" json:"api_key"`
+	DataPath      string `yaml:"data_path" json:"data_path"`
+	DefaultSOA    string `yaml:"default_soa" json:"default_soa"`
+	Nameservers   string `yaml:"nameservers" json:"nameservers"`
 }
 
 type SharedDatabaseConfig struct {
@@ -132,6 +146,15 @@ type SecurityConfig struct {
 
 	// Internal API token for nginx-to-agent communication (auto-generated if empty)
 	InternalAPIToken string `yaml:"internal_api_token" json:"-"`
+}
+
+type AuditConfig struct {
+	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	RetentionDays      int           `yaml:"retention_days" json:"retention_days"`
+	CaptureRequestBody bool          `yaml:"capture_request_body" json:"capture_request_body"`
+	ExcludedPaths      []string      `yaml:"excluded_paths" json:"excluded_paths"`
+	SensitiveFields    []string      `yaml:"sensitive_fields" json:"sensitive_fields"`
+	CleanupInterval    time.Duration `yaml:"cleanup_interval" json:"cleanup_interval"`
 }
 
 func FindConfigPath(providedPath string) string {
@@ -279,6 +302,38 @@ func setDefaults(cfg *Config) {
 		if _, err := rand.Read(bytes); err == nil {
 			cfg.Security.InternalAPIToken = hex.EncodeToString(bytes)
 		}
+	}
+	// PowerDNS defaults
+	if cfg.Infrastructure.PowerDNS.Container == "" {
+		cfg.Infrastructure.PowerDNS.Container = "powerdns"
+	}
+	if cfg.Infrastructure.PowerDNS.Image == "" {
+		cfg.Infrastructure.PowerDNS.Image = "powerdns/pdns-auth-48:latest"
+	}
+	if cfg.Infrastructure.PowerDNS.APIPort == 0 {
+		cfg.Infrastructure.PowerDNS.APIPort = 8081
+	}
+	if cfg.Infrastructure.PowerDNS.DNSPort == 0 {
+		cfg.Infrastructure.PowerDNS.DNSPort = 53
+	}
+	if cfg.Infrastructure.PowerDNS.APIKey == "" {
+		bytes := make([]byte, 24)
+		if _, err := rand.Read(bytes); err == nil {
+			cfg.Infrastructure.PowerDNS.APIKey = hex.EncodeToString(bytes)
+		}
+	}
+	// Audit defaults
+	if cfg.Audit.RetentionDays == 0 {
+		cfg.Audit.RetentionDays = 30
+	}
+	if cfg.Audit.CleanupInterval == 0 {
+		cfg.Audit.CleanupInterval = 24 * time.Hour
+	}
+	if cfg.Audit.ExcludedPaths == nil {
+		cfg.Audit.ExcludedPaths = []string{"/api/health"}
+	}
+	if cfg.Audit.SensitiveFields == nil {
+		cfg.Audit.SensitiveFields = []string{"password", "token", "secret", "api_key", "authorization"}
 	}
 }
 
