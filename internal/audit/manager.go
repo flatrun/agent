@@ -1,8 +1,11 @@
 package audit
 
 import (
+	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -173,73 +176,41 @@ func (m *Manager) ExportEvents(filter *AuditFilter, format string) ([]byte, erro
 }
 
 func (m *Manager) exportCSV(events []AuditEvent) ([]byte, error) {
-	var sb strings.Builder
-	sb.WriteString("id,event_id,timestamp,actor_type,actor_id,action,method,path,resource_type,resource_id,client_ip,response_status,response_time_ms,success,error_message\n")
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+
+	header := []string{"id", "event_id", "timestamp", "actor_type", "actor_id", "action", "method", "path", "resource_type", "resource_id", "client_ip", "response_status", "response_time_ms", "success", "error_message"}
+	if err := w.Write(header); err != nil {
+		return nil, err
+	}
 
 	for _, e := range events {
-		sb.WriteString(formatCSVRow(
-			e.ID, e.EventID, e.Timestamp.Format(time.RFC3339),
-			string(e.ActorType), e.ActorID, e.Action, e.Method, e.Path,
-			e.ResourceType, e.ResourceID, e.ClientIP,
-			e.ResponseStatus, e.ResponseTimeMs, e.Success, e.ErrorMessage,
-		))
-		sb.WriteString("\n")
-	}
-
-	return []byte(sb.String()), nil
-}
-
-func formatCSVRow(values ...interface{}) string {
-	var parts []string
-	for _, v := range values {
-		str := ""
-		switch val := v.(type) {
-		case string:
-			str = escapeCSV(val)
-		case int:
-			str = formatInt(val)
-		case int64:
-			str = formatInt64(val)
-		case bool:
-			if val {
-				str = "true"
-			} else {
-				str = "false"
-			}
-		default:
-			str = ""
+		row := []string{
+			strconv.FormatInt(e.ID, 10),
+			e.EventID,
+			e.Timestamp.Format(time.RFC3339),
+			string(e.ActorType),
+			e.ActorID,
+			e.Action,
+			e.Method,
+			e.Path,
+			e.ResourceType,
+			e.ResourceID,
+			e.ClientIP,
+			strconv.Itoa(e.ResponseStatus),
+			strconv.FormatInt(e.ResponseTimeMs, 10),
+			strconv.FormatBool(e.Success),
+			e.ErrorMessage,
 		}
-		parts = append(parts, str)
+		if err := w.Write(row); err != nil {
+			return nil, err
+		}
 	}
-	return strings.Join(parts, ",")
-}
 
-func escapeCSV(s string) string {
-	if strings.ContainsAny(s, ",\"\n") {
-		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, err
 	}
-	return s
-}
 
-func formatInt(i int) string {
-	return strings.TrimPrefix(strings.TrimPrefix(formatInt64(int64(i)), "-"), "+")
-}
-
-func formatInt64(i int64) string {
-	if i == 0 {
-		return "0"
-	}
-	negative := i < 0
-	if negative {
-		i = -i
-	}
-	var digits []byte
-	for i > 0 {
-		digits = append([]byte{byte('0' + i%10)}, digits...)
-		i /= 10
-	}
-	if negative {
-		return "-" + string(digits)
-	}
-	return string(digits)
+	return buf.Bytes(), nil
 }

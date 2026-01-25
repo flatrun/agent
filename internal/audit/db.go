@@ -28,8 +28,8 @@ func NewDB(deploymentsPath string) (*DB, error) {
 		return nil, err
 	}
 
-	conn.SetMaxOpenConns(1)
-	conn.SetMaxIdleConns(1)
+	conn.SetMaxOpenConns(10)
+	conn.SetMaxIdleConns(5)
 	conn.SetConnMaxLifetime(time.Hour)
 
 	db := &DB{conn: conn, path: dbPath}

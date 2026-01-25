@@ -7,16 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flatrun/agent/internal/contextkeys"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-)
-
-const (
-	ContextKeyActorType    = "audit_actor_type"
-	ContextKeyActorID      = "audit_actor_id"
-	ContextKeyActorName    = "audit_actor_name"
-	ContextKeyAPIKeyPrefix = "audit_api_key_prefix"
 )
 
 type Claims struct {
@@ -35,7 +29,7 @@ func NewMiddleware(cfg *config.AuthConfig) *Middleware {
 func (m *Middleware) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !m.config.Enabled {
-			c.Set(ContextKeyActorType, "anonymous")
+			c.Set(contextkeys.ActorType, "anonymous")
 			c.Next()
 			return
 		}
@@ -64,9 +58,9 @@ func (m *Middleware) RequireAuth() gin.HandlerFunc {
 		switch scheme {
 		case "bearer":
 			if claims := m.validateJWTWithClaims(token); claims != nil {
-				c.Set(ContextKeyActorType, "jwt")
-				c.Set(ContextKeyActorID, claims.Username)
-				c.Set(ContextKeyActorName, claims.Username)
+				c.Set(contextkeys.ActorType, "jwt")
+				c.Set(contextkeys.ActorID, claims.Username)
+				c.Set(contextkeys.ActorName, claims.Username)
 				c.Next()
 				return
 			}
@@ -97,12 +91,12 @@ func (m *Middleware) RequireAuth() gin.HandlerFunc {
 }
 
 func (m *Middleware) setAPIKeyContext(c *gin.Context, token string, keyIndex int) {
-	c.Set(ContextKeyActorType, "api_key")
-	c.Set(ContextKeyActorID, fmt.Sprintf("key_%d", keyIndex))
+	c.Set(contextkeys.ActorType, "api_key")
+	c.Set(contextkeys.ActorID, fmt.Sprintf("key_%d", keyIndex))
 	if len(token) >= 8 {
-		c.Set(ContextKeyAPIKeyPrefix, token[:8]+"...")
+		c.Set(contextkeys.APIKeyPrefix, token[:8]+"...")
 	} else {
-		c.Set(ContextKeyAPIKeyPrefix, token+"...")
+		c.Set(contextkeys.APIKeyPrefix, token+"...")
 	}
 }
 

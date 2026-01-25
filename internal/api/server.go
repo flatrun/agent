@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -399,10 +400,10 @@ func (s *Server) setupRoutes() {
 				dnsGroup.GET("/providers", s.listDNSProviders)
 
 				// Register DNS plugin routes
-				dnsPlugins.NewCloudflarePlugin().RegisterRoutes(dnsGroup)
-				dnsPlugins.NewRoute53Plugin().RegisterRoutes(dnsGroup)
-				dnsPlugins.NewDigitalOceanPlugin().RegisterRoutes(dnsGroup)
-				dnsPlugins.NewHetznerPlugin().RegisterRoutes(dnsGroup)
+				_ = dnsPlugins.NewCloudflarePlugin().RegisterRoutes(dnsGroup)
+				_ = dnsPlugins.NewRoute53Plugin().RegisterRoutes(dnsGroup)
+				_ = dnsPlugins.NewDigitalOceanPlugin().RegisterRoutes(dnsGroup)
+				_ = dnsPlugins.NewHetznerPlugin().RegisterRoutes(dnsGroup)
 
 				// PowerDNS routes
 				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(protected)
@@ -859,9 +860,11 @@ func parseEnvContent(content string) []EnvVar {
 func generateRandomPassword(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, length)
+	if _, err := cryptoRand.Read(b); err != nil {
+		return ""
+	}
 	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-		time.Sleep(time.Nanosecond)
+		b[i] = charset[int(b[i])%len(charset)]
 	}
 	return string(b)
 }
@@ -2082,7 +2085,10 @@ func (s *Server) createDatabaseService(db *DatabaseConfig) map[string]interface{
 		return nil
 	}
 
-	networkName := s.config.Infrastructure.DefaultProxyNetwork
+	networkName := s.config.Infrastructure.DefaultDatabaseNetwork
+	if networkName == "" {
+		networkName = "database"
+	}
 
 	return map[string]interface{}{
 		"image":       image,

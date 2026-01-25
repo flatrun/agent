@@ -6,8 +6,7 @@ import (
 )
 
 type BaseDNSPlugin struct {
-	info  plugins.PluginInfo
-	creds map[string]string
+	info plugins.PluginInfo
 }
 
 func (p *BaseDNSPlugin) Info() plugins.PluginInfo {

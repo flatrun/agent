@@ -3,20 +3,14 @@ package audit
 import (
 	"bytes"
 	"io"
+	"log"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/flatrun/agent/internal/contextkeys"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-)
-
-const (
-	ContextKeyActorType    = "audit_actor_type"
-	ContextKeyActorID      = "audit_actor_id"
-	ContextKeyActorName    = "audit_actor_name"
-	ContextKeyAPIKeyPrefix = "audit_api_key_prefix"
-	ContextKeyRequestID    = "audit_request_id"
 )
 
 type Middleware struct {
@@ -41,7 +35,7 @@ func (m *Middleware) Capture() gin.HandlerFunc {
 
 		startTime := time.Now()
 		requestID := uuid.New().String()
-		c.Set(ContextKeyRequestID, requestID)
+		c.Set(contextkeys.RequestID, requestID)
 
 		var requestBody string
 		if m.manager.ShouldCaptureBody() && c.Request.Body != nil {
@@ -59,9 +53,9 @@ func (m *Middleware) Capture() gin.HandlerFunc {
 			EventID:        requestID,
 			Timestamp:      startTime,
 			ActorType:      m.getActorType(c),
-			ActorID:        m.getStringContext(c, ContextKeyActorID),
-			ActorName:      m.getStringContext(c, ContextKeyActorName),
-			APIKeyPrefix:   m.getStringContext(c, ContextKeyAPIKeyPrefix),
+			ActorID:        m.getStringContext(c, contextkeys.ActorID),
+			ActorName:      m.getStringContext(c, contextkeys.ActorName),
+			APIKeyPrefix:   m.getStringContext(c, contextkeys.APIKeyPrefix),
 			Action:         m.determineAction(c),
 			Method:         c.Request.Method,
 			Path:           c.Request.URL.Path,
@@ -77,12 +71,16 @@ func (m *Middleware) Capture() gin.HandlerFunc {
 			ErrorMessage:   c.Errors.String(),
 		}
 
-		go m.manager.LogEvent(event)
+		go func() {
+			if err := m.manager.LogEvent(event); err != nil {
+				log.Printf("Failed to log audit event: %v", err)
+			}
+		}()
 	}
 }
 
 func (m *Middleware) getActorType(c *gin.Context) ActorType {
-	if val, exists := c.Get(ContextKeyActorType); exists {
+	if val, exists := c.Get(contextkeys.ActorType); exists {
 		if actorType, ok := val.(ActorType); ok {
 			return actorType
 		}
