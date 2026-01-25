@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,8 +16,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/backup"
+	"github.com/flatrun/agent/internal/dns"
+	dnsPlugins "github.com/flatrun/agent/pkg/plugins/dns"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/database"
@@ -59,6 +63,9 @@ type Server struct {
 	trafficManager     *traffic.Manager
 	backupManager      *backup.Manager
 	schedulerManager   *scheduler.Manager
+	auditManager       *audit.Manager
+	auditMiddleware    *audit.Middleware
+	powerDNSManager    *dns.PowerDNSManager
 }
 
 func New(cfg *config.Config, configPath string) *Server {
@@ -131,6 +138,27 @@ func New(cfg *config.Config, configPath string) *Server {
 		log.Printf("Warning: Failed to initialize backup manager: %v", err)
 	}
 
+	var auditManager *audit.Manager
+	var auditMiddleware *audit.Middleware
+	if cfg.Audit.Enabled {
+		auditConfig := &audit.Config{
+			Enabled:            cfg.Audit.Enabled,
+			RetentionDays:      cfg.Audit.RetentionDays,
+			CaptureRequestBody: cfg.Audit.CaptureRequestBody,
+			ExcludedPaths:      cfg.Audit.ExcludedPaths,
+			SensitiveFields:    cfg.Audit.SensitiveFields,
+			CleanupInterval:    cfg.Audit.CleanupInterval,
+		}
+		auditManager, err = audit.NewManager(cfg.DeploymentsPath, auditConfig)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize audit manager: %v", err)
+		} else {
+			auditMiddleware = audit.NewMiddleware(auditManager)
+		}
+	}
+
+	powerDNSManager := dns.NewPowerDNSManager(cfg)
+
 	s := &Server{
 		config:             cfg,
 		configPath:         configPath,
@@ -149,6 +177,9 @@ func New(cfg *config.Config, configPath string) *Server {
 		securityManager:    securityManager,
 		trafficManager:     trafficManager,
 		backupManager:      backupManager,
+		auditManager:       auditManager,
+		auditMiddleware:    auditMiddleware,
+		powerDNSManager:    powerDNSManager,
 	}
 
 	if backupManager != nil {
@@ -180,6 +211,9 @@ func (s *Server) setupRoutes() {
 
 		protected := api.Group("")
 		protected.Use(s.authMiddleware.RequireAuth())
+		if s.auditMiddleware != nil {
+			protected.Use(s.auditMiddleware.Capture())
+		}
 		{
 			protected.GET("/deployments", s.listDeployments)
 			protected.GET("/deployments/:name", s.getDeployment)
@@ -352,6 +386,28 @@ func (s *Server) setupRoutes() {
 			protected.POST("/scheduler/tasks/:id/run", s.runTaskNow)
 			protected.GET("/scheduler/tasks/:id/executions", s.getTaskExecutions)
 			protected.GET("/scheduler/executions", s.getRecentExecutions)
+
+			// Audit endpoints
+			protected.GET("/audit/events", s.listAuditEvents)
+			protected.GET("/audit/events/:id", s.getAuditEvent)
+			protected.GET("/audit/stats", s.getAuditStats)
+			protected.POST("/audit/export", s.exportAuditEvents)
+			protected.DELETE("/audit/cleanup", s.cleanupAuditEvents)
+
+			// DNS plugin routes
+			dnsGroup := protected.Group("/dns")
+			{
+				dnsGroup.GET("/providers", s.listDNSProviders)
+
+				// Register DNS plugin routes
+				_ = dnsPlugins.NewCloudflarePlugin().RegisterRoutes(dnsGroup)
+				_ = dnsPlugins.NewRoute53Plugin().RegisterRoutes(dnsGroup)
+				_ = dnsPlugins.NewDigitalOceanPlugin().RegisterRoutes(dnsGroup)
+				_ = dnsPlugins.NewHetznerPlugin().RegisterRoutes(dnsGroup)
+
+				// PowerDNS routes
+				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(protected)
+			}
 		}
 
 		// Ingest endpoints (no auth - called by nginx Lua)
@@ -804,9 +860,11 @@ func parseEnvContent(content string) []EnvVar {
 func generateRandomPassword(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, length)
+	if _, err := cryptoRand.Read(b); err != nil {
+		return ""
+	}
 	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-		time.Sleep(time.Nanosecond)
+		b[i] = charset[int(b[i])%len(charset)]
 	}
 	return string(b)
 }
@@ -2027,7 +2085,10 @@ func (s *Server) createDatabaseService(db *DatabaseConfig) map[string]interface{
 		return nil
 	}
 
-	networkName := s.config.Infrastructure.DefaultProxyNetwork
+	networkName := s.config.Infrastructure.DefaultDatabaseNetwork
+	if networkName == "" {
+		networkName = "database"
+	}
 
 	return map[string]interface{}{
 		"image":       image,

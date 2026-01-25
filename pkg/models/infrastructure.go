@@ -20,6 +20,7 @@ const (
 	InfraTypeCertbot  = "certbot"
 	InfraTypeDatabase = "database"
 	InfraTypeRedis    = "redis"
+	InfraTypePowerDNS = "powerdns"
 
 	InfraStatusRunning  = "running"
 	InfraStatusStopped  = "stopped"

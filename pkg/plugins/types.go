@@ -1,6 +1,10 @@
 package plugins
 
-import "github.com/gin-gonic/gin"
+import (
+	"context"
+
+	"github.com/gin-gonic/gin"
+)
 
 type PluginType string
 
@@ -9,16 +13,20 @@ const (
 	TypeWidget      PluginType = "widget"
 	TypeService     PluginType = "service"
 	TypeIntegration PluginType = "integration"
+	TypeDNS         PluginType = "dns"
 )
 
 type Capability string
 
 const (
-	CapAutoSSL    Capability = "auto_ssl"
-	CapAutoBackup Capability = "auto_backup"
-	CapAutoUpdate Capability = "auto_update"
-	CapMonitoring Capability = "monitoring"
-	CapScaling    Capability = "scaling"
+	CapAutoSSL             Capability = "auto_ssl"
+	CapAutoBackup          Capability = "auto_backup"
+	CapAutoUpdate          Capability = "auto_update"
+	CapMonitoring          Capability = "monitoring"
+	CapScaling             Capability = "scaling"
+	CapDNSZoneManagement   Capability = "dns_zone_management"
+	CapDNSRecordManagement Capability = "dns_record_management"
+	CapDNSAutoConfig       Capability = "dns_auto_config"
 )
 
 type PluginInfo struct {
@@ -104,4 +112,62 @@ type DeploymentStatus struct {
 	Status  string                 `json:"status"`
 	Health  string                 `json:"health"`
 	Metrics map[string]interface{} `json:"metrics"`
+}
+
+type DNSPlugin interface {
+	Plugin
+	ProviderName() string
+	RequiredCredentials() []CredentialField
+	SetCredentials(credentials map[string]string) error
+	ValidateCredentials() error
+	ListZones(ctx context.Context) ([]DNSZone, error)
+	GetZone(ctx context.Context, zoneID string) (*DNSZone, error)
+	ListRecords(ctx context.Context, zoneID string) ([]DNSRecord, error)
+	CreateRecord(ctx context.Context, zoneID string, record DNSRecordCreate) (*DNSRecord, error)
+	UpdateRecord(ctx context.Context, zoneID, recordID string, record DNSRecordUpdate) (*DNSRecord, error)
+	DeleteRecord(ctx context.Context, zoneID, recordID string) error
+}
+
+type CredentialField struct {
+	Name        string `json:"name" yaml:"name"`
+	Label       string `json:"label" yaml:"label"`
+	Type        string `json:"type" yaml:"type"`
+	Required    bool   `json:"required" yaml:"required"`
+	Placeholder string `json:"placeholder,omitempty" yaml:"placeholder,omitempty"`
+	HelpText    string `json:"help_text,omitempty" yaml:"help_text,omitempty"`
+}
+
+type DNSZone struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Status      string   `json:"status"`
+	NameServers []string `json:"name_servers,omitempty"`
+	RecordCount int      `json:"record_count"`
+}
+
+type DNSRecord struct {
+	ID       string `json:"id"`
+	ZoneID   string `json:"zone_id"`
+	Type     string `json:"type"`
+	Name     string `json:"name"`
+	Content  string `json:"content"`
+	TTL      int    `json:"ttl"`
+	Priority *int   `json:"priority,omitempty"`
+	Proxied  *bool  `json:"proxied,omitempty"`
+}
+
+type DNSRecordCreate struct {
+	Type     string `json:"type" binding:"required"`
+	Name     string `json:"name" binding:"required"`
+	Content  string `json:"content" binding:"required"`
+	TTL      int    `json:"ttl"`
+	Priority *int   `json:"priority,omitempty"`
+	Proxied  *bool  `json:"proxied,omitempty"`
+}
+
+type DNSRecordUpdate struct {
+	Content  *string `json:"content,omitempty"`
+	TTL      *int    `json:"ttl,omitempty"`
+	Priority *int    `json:"priority,omitempty"`
+	Proxied  *bool   `json:"proxied,omitempty"`
 }
