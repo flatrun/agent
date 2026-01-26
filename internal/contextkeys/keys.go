@@ -6,4 +6,5 @@ const (
 	ActorName    = "audit_actor_name"
 	APIKeyPrefix = "audit_api_key_prefix"
 	RequestID    = "audit_request_id"
+	Actor        = "auth_actor_context"
 )

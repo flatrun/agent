@@ -53,6 +53,7 @@ type Server struct {
 	networksManager    *networks.Manager
 	pluginRegistry     *plugins.Registry
 	authMiddleware     *auth.Middleware
+	authManager        *auth.Manager
 	proxyOrchestrator  *proxy.Orchestrator
 	filesManager       *files.Manager
 	servicesManager    *system.ServicesManager
@@ -88,6 +89,15 @@ func New(cfg *config.Config, configPath string) *Server {
 	pluginRegistry := plugins.NewRegistry(pluginsDir)
 	_ = pluginRegistry.LoadFromDisk()
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
+
+	var authManager *auth.Manager
+	if authMgr, authErr := auth.NewManager(cfg.DeploymentsPath, &cfg.Auth); authErr != nil {
+		log.Printf("Warning: Failed to initialize auth manager: %v", authErr)
+	} else {
+		authManager = authMgr
+		authMiddleware.SetManager(authManager)
+	}
+
 	proxyOrchestrator := proxy.NewOrchestrator(cfg)
 	filesManager := files.NewManager(cfg.DeploymentsPath)
 	servicesManager := system.NewServicesManager()
@@ -168,6 +178,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		networksManager:    networksManager,
 		pluginRegistry:     pluginRegistry,
 		authMiddleware:     authMiddleware,
+		authManager:        authManager,
 		proxyOrchestrator:  proxyOrchestrator,
 		filesManager:       filesManager,
 		servicesManager:    servicesManager,
@@ -393,6 +404,45 @@ func (s *Server) setupRoutes() {
 			protected.GET("/audit/stats", s.getAuditStats)
 			protected.POST("/audit/export", s.exportAuditEvents)
 			protected.DELETE("/audit/cleanup", s.cleanupAuditEvents)
+
+			// User management endpoints (require auth manager)
+			if s.authManager != nil {
+				// Current user endpoints (any authenticated user)
+				protected.GET("/users/me", s.getCurrentUser)
+				protected.PUT("/users/me", s.updateCurrentUser)
+				protected.PUT("/users/me/password", s.updateCurrentUserPassword)
+
+				// User management (admin only)
+				usersGroup := protected.Group("/users")
+				usersGroup.Use(s.authMiddleware.RequirePermission(auth.PermUsersRead))
+				{
+					usersGroup.GET("", s.listUsers)
+					usersGroup.GET("/:id", s.getUser)
+					usersGroup.POST("", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.createUser)
+					usersGroup.PUT("/:id", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.updateUser)
+					usersGroup.DELETE("/:id", s.authMiddleware.RequirePermission(auth.PermUsersDelete), s.deleteUser)
+
+					// User deployment access
+					usersGroup.GET("/:id/deployments", s.getUserDeployments)
+					usersGroup.POST("/:id/deployments", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.assignUserDeployment)
+					usersGroup.PUT("/:id/deployments/:name", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.updateUserDeployment)
+					usersGroup.DELETE("/:id/deployments/:name", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.removeUserDeployment)
+				}
+
+				// API key management
+				apiKeysGroup := protected.Group("/apikeys")
+				apiKeysGroup.Use(s.authMiddleware.RequirePermission(auth.PermAPIKeysRead))
+				{
+					apiKeysGroup.GET("", s.listAPIKeys)
+					apiKeysGroup.GET("/:id", s.getAPIKey)
+					apiKeysGroup.POST("", s.authMiddleware.RequirePermission(auth.PermAPIKeysWrite), s.createAPIKey)
+					apiKeysGroup.DELETE("/:id", s.authMiddleware.RequirePermission(auth.PermAPIKeysDelete), s.deleteAPIKey)
+					apiKeysGroup.POST("/:id/revoke", s.authMiddleware.RequirePermission(auth.PermAPIKeysDelete), s.revokeAPIKey)
+				}
+
+				// Get users with access to a deployment
+				protected.GET("/deployments/:name/users", s.authMiddleware.RequirePermission(auth.PermUsersRead), s.getDeploymentUsers)
+			}
 
 			// DNS plugin routes
 			dnsGroup := protected.Group("/dns")
