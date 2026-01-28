@@ -53,6 +53,7 @@ type Server struct {
 	networksManager    *networks.Manager
 	pluginRegistry     *plugins.Registry
 	authMiddleware     *auth.Middleware
+	authManager        *auth.Manager
 	proxyOrchestrator  *proxy.Orchestrator
 	filesManager       *files.Manager
 	servicesManager    *system.ServicesManager
@@ -88,6 +89,15 @@ func New(cfg *config.Config, configPath string) *Server {
 	pluginRegistry := plugins.NewRegistry(pluginsDir)
 	_ = pluginRegistry.LoadFromDisk()
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
+
+	var authManager *auth.Manager
+	if authMgr, authErr := auth.NewManager(cfg.DeploymentsPath, &cfg.Auth); authErr != nil {
+		log.Printf("Warning: Failed to initialize auth manager: %v", authErr)
+	} else {
+		authManager = authMgr
+		authMiddleware.SetManager(authManager)
+	}
+
 	proxyOrchestrator := proxy.NewOrchestrator(cfg)
 	filesManager := files.NewManager(cfg.DeploymentsPath)
 	servicesManager := system.NewServicesManager()
@@ -168,6 +178,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		networksManager:    networksManager,
 		pluginRegistry:     pluginRegistry,
 		authMiddleware:     authMiddleware,
+		authManager:        authManager,
 		proxyOrchestrator:  proxyOrchestrator,
 		filesManager:       filesManager,
 		servicesManager:    servicesManager,
@@ -215,187 +226,253 @@ func (s *Server) setupRoutes() {
 			protected.Use(s.auditMiddleware.Capture())
 		}
 		{
-			protected.GET("/deployments", s.listDeployments)
-			protected.GET("/deployments/:name", s.getDeployment)
-			protected.POST("/deployments", s.createDeployment)
-			protected.PUT("/deployments/:name", s.updateDeployment)
-			protected.PUT("/deployments/:name/metadata", s.updateDeploymentMetadata)
-			protected.DELETE("/deployments/:name", s.deleteDeployment)
-			protected.POST("/deployments/:name/start", s.startDeployment)
-			protected.POST("/deployments/:name/stop", s.stopDeployment)
-			protected.POST("/deployments/:name/restart", s.restartDeployment)
-			protected.POST("/deployments/:name/rebuild", s.rebuildDeployment)
-			protected.POST("/deployments/:name/pull", s.pullDeploymentImage)
-			protected.GET("/deployments/:name/images", s.getDeploymentImages)
-			protected.POST("/deployments/:name/actions/:actionId", s.executeQuickAction)
-			protected.GET("/deployments/:name/logs", s.getDeploymentLogs)
-			protected.GET("/deployments/:name/compose", s.getDeploymentCompose)
-			protected.GET("/networks", s.listNetworks)
-			protected.POST("/networks", s.createNetwork)
-			protected.DELETE("/networks/:name", s.deleteNetwork)
-			protected.POST("/networks/:name/connect", s.connectContainer)
-			protected.POST("/networks/:name/disconnect", s.disconnectContainer)
-			protected.GET("/certificates", s.listCertificates)
-			protected.POST("/certificates", s.requestCertificate)
-			protected.POST("/certificates/renew", s.renewCertificates)
-			protected.DELETE("/certificates/:domain", s.deleteCertificate)
+			// Deployment endpoints
+			protected.GET("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listDeployments)
+			protected.GET("/deployments/:name", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeployment)
+			protected.POST("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.createDeployment)
+			protected.PUT("/deployments/:name", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeployment)
+			protected.PUT("/deployments/:name/metadata", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentMetadata)
+			protected.DELETE("/deployments/:name", s.authMiddleware.RequirePermission(auth.PermDeploymentsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.deleteDeployment)
+			protected.POST("/deployments/:name/start", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.startDeployment)
+			protected.POST("/deployments/:name/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.stopDeployment)
+			protected.POST("/deployments/:name/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.restartDeployment)
+			protected.POST("/deployments/:name/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rebuildDeployment)
+			protected.POST("/deployments/:name/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.pullDeploymentImage)
+			protected.GET("/deployments/:name/images", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentImages)
+			protected.POST("/deployments/:name/actions/:actionId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.executeQuickAction)
+			protected.GET("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogs)
+			protected.GET("/deployments/:name/compose", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentCompose)
 
-			protected.GET("/proxy/status/:name", s.getProxyStatus)
-			protected.POST("/proxy/setup/:name", s.setupProxy)
-			protected.DELETE("/proxy/:name", s.teardownProxy)
-			protected.GET("/proxy/vhosts", s.listVirtualHosts)
-			protected.POST("/proxy/sync", s.syncAllProxies)
-			protected.POST("/deployments/:name/ssl/disable", s.disableSSL)
+			// Network endpoints
+			protected.GET("/networks", s.authMiddleware.RequirePermission(auth.PermNetworksRead), s.listNetworks)
+			protected.POST("/networks", s.authMiddleware.RequirePermission(auth.PermNetworksWrite), s.createNetwork)
+			protected.DELETE("/networks/:name", s.authMiddleware.RequirePermission(auth.PermNetworksDelete), s.deleteNetwork)
+			protected.POST("/networks/:name/connect", s.authMiddleware.RequirePermission(auth.PermNetworksWrite), s.connectContainer)
+			protected.POST("/networks/:name/disconnect", s.authMiddleware.RequirePermission(auth.PermNetworksWrite), s.disconnectContainer)
 
-			protected.GET("/settings", s.getSettings)
-			protected.PUT("/settings", s.updateSettings)
-			protected.PUT("/settings/security", s.updateSecuritySettings)
-			protected.GET("/subdomain/generate", s.generateSubdomain)
-			protected.GET("/plugins", s.listPlugins)
-			protected.GET("/plugins/:name", s.getPlugin)
-			protected.POST("/plugins/:name/deployments", s.createPluginDeployment)
-			protected.GET("/templates", s.listTemplates)
-			protected.GET("/templates/categories", s.getTemplateCategories)
-			protected.POST("/templates/refresh", s.refreshTemplates)
-			protected.GET("/templates/:id/compose", s.getTemplateCompose)
-			protected.POST("/templates/:id/generate", s.generateTemplateCompose)
-			protected.POST("/compose/update", s.updateCompose)
-			protected.GET("/stats", s.getSystemStats)
-			protected.GET("/containers", s.listContainers)
-			protected.POST("/containers/:id/start", s.startContainer)
-			protected.POST("/containers/:id/stop", s.stopContainer)
-			protected.POST("/containers/:id/restart", s.restartContainer)
-			protected.DELETE("/containers/:id", s.removeContainer)
-			protected.GET("/containers/:id/logs", s.getContainerLogs)
-			protected.GET("/containers/:id/stats", s.getContainerStats)
-			protected.GET("/containers/stats", s.getAllContainerStats)
-			protected.POST("/containers/:id/exec", s.containerExecHTTP)
-			protected.GET("/deployments/:name/stats", s.getDeploymentContainerStats)
-			protected.GET("/images", s.listImages)
-			protected.DELETE("/images/:id", s.removeImage)
-			protected.POST("/images/pull", s.pullImage)
-			protected.GET("/volumes", s.listVolumes)
-			protected.POST("/volumes", s.createVolume)
-			protected.DELETE("/volumes/:name", s.removeVolume)
-			protected.POST("/volumes/prune", s.pruneVolumes)
-			protected.GET("/ports", s.listPorts)
-			protected.POST("/ports/:pid/kill", s.killProcess)
+			// Certificate endpoints
+			protected.GET("/certificates", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.listCertificates)
+			protected.POST("/certificates", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.requestCertificate)
+			protected.POST("/certificates/renew", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.renewCertificates)
+			protected.DELETE("/certificates/:domain", s.authMiddleware.RequirePermission(auth.PermCertificatesDelete), s.deleteCertificate)
 
-			protected.GET("/system/services", s.listSystemServices)
-			protected.POST("/system/services/:name/start", s.startSystemService)
-			protected.POST("/system/services/:name/stop", s.stopSystemService)
-			protected.POST("/system/services/:name/restart", s.restartSystemService)
+			// Proxy endpoints
+			protected.GET("/proxy/status/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.getProxyStatus)
+			protected.POST("/proxy/setup/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.setupProxy)
+			protected.DELETE("/proxy/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesDelete), s.teardownProxy)
+			protected.GET("/proxy/vhosts", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.listVirtualHosts)
+			protected.POST("/proxy/sync", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.syncAllProxies)
+			protected.POST("/deployments/:name/ssl/disable", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.disableSSL)
 
-			protected.GET("/deployments/:name/files", s.listDeploymentFiles)
-			protected.GET("/deployments/:name/files/*path", s.getDeploymentFile)
-			protected.POST("/deployments/:name/files/*path", s.uploadDeploymentFile)
-			protected.DELETE("/deployments/:name/files/*path", s.deleteDeploymentFile)
-			protected.POST("/deployments/:name/mkdir/*path", s.createDeploymentDir)
-			protected.GET("/deployments/:name/files-info", s.getDeploymentFilesInfo)
+			// Settings endpoints
+			protected.GET("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getSettings)
+			protected.PUT("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSettings)
+			protected.PUT("/settings/security", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSecuritySettings)
 
-			protected.GET("/deployments/:name/env", s.getDeploymentEnv)
-			protected.PUT("/deployments/:name/env", s.updateDeploymentEnv)
+			// Compose, stats, subdomain (deployment-scoped)
+			protected.GET("/subdomain/generate", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.generateSubdomain)
+			protected.POST("/compose/update", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.updateCompose)
+			protected.GET("/stats", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.getSystemStats)
 
-			protected.POST("/databases/test", s.testDatabaseConnection)
-			protected.POST("/databases/list", s.listDatabasesInServer)
-			protected.POST("/databases/tables", s.listDatabaseTables)
-			protected.POST("/databases/tables/data", s.queryTableData)
-			protected.POST("/databases/tables/schema", s.describeTable)
-			protected.POST("/databases/query", s.executeDatabaseQuery)
-			protected.POST("/databases/users", s.listDatabaseUsers)
-			protected.POST("/databases/users/by-database", s.listUsersByDatabase)
-			protected.POST("/databases/create", s.createDatabaseInServer)
-			protected.POST("/databases/delete", s.deleteDatabaseInServer)
-			protected.POST("/databases/users/create", s.createDatabaseUser)
-			protected.POST("/databases/users/delete", s.deleteDatabaseUser)
-			protected.POST("/databases/privileges/grant", s.grantDatabasePrivileges)
+			// Template and plugin endpoints
+			protected.GET("/plugins", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.listPlugins)
+			protected.GET("/plugins/:name", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getPlugin)
+			protected.POST("/plugins/:name/deployments", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.createPluginDeployment)
+			protected.GET("/templates", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.listTemplates)
+			protected.GET("/templates/categories", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getTemplateCategories)
+			protected.POST("/templates/refresh", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.refreshTemplates)
+			protected.GET("/templates/:id/compose", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getTemplateCompose)
+			protected.POST("/templates/:id/generate", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.generateTemplateCompose)
 
-			protected.GET("/infrastructure", s.listInfrastructure)
-			protected.GET("/infrastructure/stats", s.getInfraStats)
-			protected.GET("/infrastructure/:name", s.getInfraService)
-			protected.POST("/infrastructure/:name/start", s.startInfraService)
-			protected.POST("/infrastructure/:name/stop", s.stopInfraService)
-			protected.POST("/infrastructure/:name/restart", s.restartInfraService)
-			protected.GET("/infrastructure/:name/logs", s.getInfraServiceLogs)
-			protected.POST("/infrastructure/migrate/:name", s.migrateToInfrastructure)
+			// Container endpoints
+			protected.GET("/containers", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.listContainers)
+			protected.POST("/containers/:id/start", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.startContainer)
+			protected.POST("/containers/:id/stop", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.stopContainer)
+			protected.POST("/containers/:id/restart", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.restartContainer)
+			protected.DELETE("/containers/:id", s.authMiddleware.RequirePermission(auth.PermContainersDelete), s.removeContainer)
+			protected.GET("/containers/:id/logs", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getContainerLogs)
+			protected.GET("/containers/:id/stats", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getContainerStats)
+			protected.GET("/containers/stats", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getAllContainerStats)
+			protected.POST("/containers/:id/exec", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.containerExecHTTP)
+			protected.GET("/deployments/:name/stats", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentContainerStats)
 
-			protected.GET("/registries", s.listRegistryTypes)
-			protected.GET("/registries/:slug", s.getRegistryType)
-			protected.POST("/registries", s.createRegistryType)
-			protected.PUT("/registries/:slug", s.updateRegistryType)
-			protected.DELETE("/registries/:slug", s.deleteRegistryType)
+			// Image endpoints
+			protected.GET("/images", s.authMiddleware.RequirePermission(auth.PermImagesRead), s.listImages)
+			protected.DELETE("/images/:id", s.authMiddleware.RequirePermission(auth.PermImagesDelete), s.removeImage)
+			protected.POST("/images/pull", s.authMiddleware.RequirePermission(auth.PermImagesWrite), s.pullImage)
 
-			protected.GET("/credentials", s.listCredentials)
-			protected.GET("/credentials/:id", s.getCredential)
-			protected.POST("/credentials", s.createCredential)
-			protected.PUT("/credentials/:id", s.updateCredential)
-			protected.DELETE("/credentials/:id", s.deleteCredential)
-			protected.POST("/credentials/:id/test", s.testCredential)
+			// Volume endpoints
+			protected.GET("/volumes", s.authMiddleware.RequirePermission(auth.PermVolumesRead), s.listVolumes)
+			protected.POST("/volumes", s.authMiddleware.RequirePermission(auth.PermVolumesWrite), s.createVolume)
+			protected.DELETE("/volumes/:name", s.authMiddleware.RequirePermission(auth.PermVolumesDelete), s.removeVolume)
+			protected.POST("/volumes/prune", s.authMiddleware.RequirePermission(auth.PermVolumesWrite), s.pruneVolumes)
+
+			// Port endpoints
+			protected.GET("/ports", s.authMiddleware.RequirePermission(auth.PermSystemRead), s.listPorts)
+			protected.POST("/ports/:pid/kill", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.killProcess)
+
+			// System service endpoints
+			protected.GET("/system/services", s.authMiddleware.RequirePermission(auth.PermSystemRead), s.listSystemServices)
+			protected.POST("/system/services/:name/start", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.startSystemService)
+			protected.POST("/system/services/:name/stop", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.stopSystemService)
+			protected.POST("/system/services/:name/restart", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.restartSystemService)
+
+			// Deployment file endpoints
+			protected.GET("/deployments/:name/files", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentFiles)
+			protected.GET("/deployments/:name/files/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentFile)
+			protected.POST("/deployments/:name/files/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.uploadDeploymentFile)
+			protected.DELETE("/deployments/:name/files/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.deleteDeploymentFile)
+			protected.POST("/deployments/:name/mkdir/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createDeploymentDir)
+			protected.GET("/deployments/:name/files-info", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentFilesInfo)
+
+			// Deployment environment endpoints
+			protected.GET("/deployments/:name/env", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentEnv)
+			protected.PUT("/deployments/:name/env", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentEnv)
+
+			// Database endpoints
+			protected.POST("/databases/test", s.authMiddleware.RequirePermission(auth.PermDatabasesRead), s.testDatabaseConnection)
+			protected.POST("/databases/list", s.authMiddleware.RequirePermission(auth.PermDatabasesRead), s.listDatabasesInServer)
+			protected.POST("/databases/tables", s.authMiddleware.RequirePermission(auth.PermDatabasesRead), s.listDatabaseTables)
+			protected.POST("/databases/tables/data", s.authMiddleware.RequirePermission(auth.PermDatabasesRead), s.queryTableData)
+			protected.POST("/databases/tables/schema", s.authMiddleware.RequirePermission(auth.PermDatabasesRead), s.describeTable)
+			protected.POST("/databases/query", s.authMiddleware.RequirePermission(auth.PermDatabasesWrite), s.executeDatabaseQuery)
+			protected.POST("/databases/users", s.authMiddleware.RequirePermission(auth.PermDatabasesRead), s.listDatabaseUsers)
+			protected.POST("/databases/users/by-database", s.authMiddleware.RequirePermission(auth.PermDatabasesRead), s.listUsersByDatabase)
+			protected.POST("/databases/create", s.authMiddleware.RequirePermission(auth.PermDatabasesWrite), s.createDatabaseInServer)
+			protected.POST("/databases/delete", s.authMiddleware.RequirePermission(auth.PermDatabasesWrite), s.deleteDatabaseInServer)
+			protected.POST("/databases/users/create", s.authMiddleware.RequirePermission(auth.PermDatabasesWrite), s.createDatabaseUser)
+			protected.POST("/databases/users/delete", s.authMiddleware.RequirePermission(auth.PermDatabasesWrite), s.deleteDatabaseUser)
+			protected.POST("/databases/privileges/grant", s.authMiddleware.RequirePermission(auth.PermDatabasesWrite), s.grantDatabasePrivileges)
+
+			// Infrastructure endpoints
+			protected.GET("/infrastructure", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.listInfrastructure)
+			protected.GET("/infrastructure/stats", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getInfraStats)
+			protected.GET("/infrastructure/:name", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getInfraService)
+			protected.POST("/infrastructure/:name/start", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.startInfraService)
+			protected.POST("/infrastructure/:name/stop", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.stopInfraService)
+			protected.POST("/infrastructure/:name/restart", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.restartInfraService)
+			protected.GET("/infrastructure/:name/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getInfraServiceLogs)
+			protected.POST("/infrastructure/migrate/:name", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.migrateToInfrastructure)
+
+			// Registry endpoints
+			protected.GET("/registries", s.authMiddleware.RequirePermission(auth.PermRegistriesRead), s.listRegistryTypes)
+			protected.GET("/registries/:slug", s.authMiddleware.RequirePermission(auth.PermRegistriesRead), s.getRegistryType)
+			protected.POST("/registries", s.authMiddleware.RequirePermission(auth.PermRegistriesWrite), s.createRegistryType)
+			protected.PUT("/registries/:slug", s.authMiddleware.RequirePermission(auth.PermRegistriesWrite), s.updateRegistryType)
+			protected.DELETE("/registries/:slug", s.authMiddleware.RequirePermission(auth.PermRegistriesDelete), s.deleteRegistryType)
+
+			// Credential endpoints
+			protected.GET("/credentials", s.authMiddleware.RequirePermission(auth.PermRegistriesRead), s.listCredentials)
+			protected.GET("/credentials/:id", s.authMiddleware.RequirePermission(auth.PermRegistriesRead), s.getCredential)
+			protected.POST("/credentials", s.authMiddleware.RequirePermission(auth.PermRegistriesWrite), s.createCredential)
+			protected.PUT("/credentials/:id", s.authMiddleware.RequirePermission(auth.PermRegistriesWrite), s.updateCredential)
+			protected.DELETE("/credentials/:id", s.authMiddleware.RequirePermission(auth.PermRegistriesDelete), s.deleteCredential)
+			protected.POST("/credentials/:id/test", s.authMiddleware.RequirePermission(auth.PermRegistriesRead), s.testCredential)
 
 			// Security endpoints
-			protected.GET("/security/stats", s.getSecurityStats)
-			protected.GET("/security/events", s.listSecurityEvents)
-			protected.GET("/security/events/:id", s.getSecurityEvent)
-			protected.POST("/security/cleanup", s.cleanupSecurityEvents)
-			protected.GET("/security/blocked-ips", s.listBlockedIPs)
-			protected.POST("/security/blocked-ips", s.blockIP)
-			protected.DELETE("/security/blocked-ips/:ip", s.unblockIP)
-			protected.GET("/security/ips/:ip/events", s.getEventsByIP)
-			protected.GET("/security/protected-routes", s.listProtectedRoutes)
-			protected.POST("/security/protected-routes", s.addProtectedRoute)
-			protected.PUT("/security/protected-routes/:id", s.updateProtectedRoute)
-			protected.DELETE("/security/protected-routes/:id", s.deleteProtectedRoute)
-			protected.GET("/security/whitelist", s.listWhitelist)
-			protected.POST("/security/whitelist", s.addWhitelistEntry)
-			protected.DELETE("/security/whitelist/:id", s.removeWhitelistEntry)
-			protected.GET("/security/realtime-capture", s.getRealtimeCaptureStatus)
-			protected.PUT("/security/realtime-capture", s.setRealtimeCaptureStatus)
-			protected.GET("/security/health", s.getSecurityHealth)
-			protected.POST("/security/refresh", s.refreshSecurityScripts)
-			protected.GET("/deployments/:name/security", s.getDeploymentSecurity)
-			protected.PUT("/deployments/:name/security", s.updateDeploymentSecurity)
-			protected.GET("/deployments/:name/security/events", s.getDeploymentSecurityEvents)
+			protected.GET("/security/stats", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.getSecurityStats)
+			protected.GET("/security/events", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.listSecurityEvents)
+			protected.GET("/security/events/:id", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.getSecurityEvent)
+			protected.POST("/security/cleanup", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.cleanupSecurityEvents)
+			protected.GET("/security/blocked-ips", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.listBlockedIPs)
+			protected.POST("/security/blocked-ips", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.blockIP)
+			protected.DELETE("/security/blocked-ips/:ip", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.unblockIP)
+			protected.GET("/security/ips/:ip/events", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.getEventsByIP)
+			protected.GET("/security/protected-routes", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.listProtectedRoutes)
+			protected.POST("/security/protected-routes", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.addProtectedRoute)
+			protected.PUT("/security/protected-routes/:id", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.updateProtectedRoute)
+			protected.DELETE("/security/protected-routes/:id", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.deleteProtectedRoute)
+			protected.GET("/security/whitelist", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.listWhitelist)
+			protected.POST("/security/whitelist", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.addWhitelistEntry)
+			protected.DELETE("/security/whitelist/:id", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.removeWhitelistEntry)
+			protected.GET("/security/realtime-capture", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.getRealtimeCaptureStatus)
+			protected.PUT("/security/realtime-capture", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.setRealtimeCaptureStatus)
+			protected.GET("/security/health", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.getSecurityHealth)
+			protected.POST("/security/refresh", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.refreshSecurityScripts)
+			protected.GET("/deployments/:name/security", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentSecurity)
+			protected.PUT("/deployments/:name/security", s.authMiddleware.RequirePermission(auth.PermSecurityWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentSecurity)
+			protected.GET("/deployments/:name/security/events", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentSecurityEvents)
 
 			// Traffic endpoints
-			protected.GET("/traffic/logs", s.getTrafficLogs)
-			protected.GET("/traffic/stats", s.getTrafficStats)
-			protected.GET("/traffic/unknown-domains", s.getUnknownDomainStats)
-			protected.POST("/traffic/cleanup", s.cleanupTrafficLogs)
-			protected.GET("/deployments/:name/traffic", s.getDeploymentTrafficStats)
+			protected.GET("/traffic/logs", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getTrafficLogs)
+			protected.GET("/traffic/stats", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getTrafficStats)
+			protected.GET("/traffic/unknown-domains", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getUnknownDomainStats)
+			protected.POST("/traffic/cleanup", s.authMiddleware.RequirePermission(auth.PermTrafficWrite), s.cleanupTrafficLogs)
+			protected.GET("/deployments/:name/traffic", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentTrafficStats)
 
 			// Backup endpoints
-			protected.GET("/backups", s.listBackups)
-			protected.GET("/backups/:id", s.getBackup)
-			protected.POST("/backups", s.createBackup)
-			protected.DELETE("/backups/:id", s.deleteBackup)
-			protected.GET("/backups/:id/download", s.downloadBackup)
-			protected.GET("/deployments/:name/backups", s.listDeploymentBackups)
-			protected.POST("/deployments/:name/backups", s.createDeploymentBackup)
-			protected.GET("/deployments/:name/backup-config", s.getDeploymentBackupConfig)
-			protected.PUT("/deployments/:name/backup-config", s.updateDeploymentBackupConfig)
-			protected.POST("/backups/:id/restore", s.restoreBackup)
-			protected.GET("/backups/jobs", s.listBackupJobs)
-			protected.GET("/backups/jobs/:id", s.getBackupJob)
+			protected.GET("/backups", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackups)
+			protected.GET("/backups/:id", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.getBackup)
+			protected.POST("/backups", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.createBackup)
+			protected.DELETE("/backups/:id", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.deleteBackup)
+			protected.GET("/backups/:id/download", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.downloadBackup)
+			protected.GET("/deployments/:name/backups", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentBackups)
+			protected.POST("/deployments/:name/backups", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createDeploymentBackup)
+			protected.GET("/deployments/:name/backup-config", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentBackupConfig)
+			protected.PUT("/deployments/:name/backup-config", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentBackupConfig)
+			protected.POST("/backups/:id/restore", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.restoreBackup)
+			protected.GET("/backups/jobs", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackupJobs)
+			protected.GET("/backups/jobs/:id", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.getBackupJob)
 
 			// Scheduler endpoints
-			protected.GET("/scheduler/tasks", s.listScheduledTasks)
-			protected.GET("/scheduler/tasks/:id", s.getScheduledTask)
-			protected.POST("/scheduler/tasks", s.createScheduledTask)
-			protected.PUT("/scheduler/tasks/:id", s.updateScheduledTask)
-			protected.DELETE("/scheduler/tasks/:id", s.deleteScheduledTask)
-			protected.POST("/scheduler/tasks/:id/run", s.runTaskNow)
-			protected.GET("/scheduler/tasks/:id/executions", s.getTaskExecutions)
-			protected.GET("/scheduler/executions", s.getRecentExecutions)
+			protected.GET("/scheduler/tasks", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.listScheduledTasks)
+			protected.GET("/scheduler/tasks/:id", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.getScheduledTask)
+			protected.POST("/scheduler/tasks", s.authMiddleware.RequirePermission(auth.PermSchedulerWrite), s.createScheduledTask)
+			protected.PUT("/scheduler/tasks/:id", s.authMiddleware.RequirePermission(auth.PermSchedulerWrite), s.updateScheduledTask)
+			protected.DELETE("/scheduler/tasks/:id", s.authMiddleware.RequirePermission(auth.PermSchedulerDelete), s.deleteScheduledTask)
+			protected.POST("/scheduler/tasks/:id/run", s.authMiddleware.RequirePermission(auth.PermSchedulerWrite), s.runTaskNow)
+			protected.GET("/scheduler/tasks/:id/executions", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.getTaskExecutions)
+			protected.GET("/scheduler/executions", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.getRecentExecutions)
 
 			// Audit endpoints
-			protected.GET("/audit/events", s.listAuditEvents)
-			protected.GET("/audit/events/:id", s.getAuditEvent)
-			protected.GET("/audit/stats", s.getAuditStats)
-			protected.POST("/audit/export", s.exportAuditEvents)
-			protected.DELETE("/audit/cleanup", s.cleanupAuditEvents)
+			protected.GET("/audit/events", s.authMiddleware.RequirePermission(auth.PermAuditRead), s.listAuditEvents)
+			protected.GET("/audit/events/:id", s.authMiddleware.RequirePermission(auth.PermAuditRead), s.getAuditEvent)
+			protected.GET("/audit/stats", s.authMiddleware.RequirePermission(auth.PermAuditRead), s.getAuditStats)
+			protected.POST("/audit/export", s.authMiddleware.RequirePermission(auth.PermAuditRead), s.exportAuditEvents)
+			protected.DELETE("/audit/cleanup", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.cleanupAuditEvents)
+
+			// User management endpoints (require auth manager)
+			if s.authManager != nil {
+				// Current user endpoints (any authenticated user)
+				protected.GET("/users/me", s.getCurrentUser)
+				protected.PUT("/users/me", s.updateCurrentUser)
+				protected.PUT("/users/me/password", s.updateCurrentUserPassword)
+
+				// User management (admin only)
+				usersGroup := protected.Group("/users")
+				usersGroup.Use(s.authMiddleware.RequirePermission(auth.PermUsersRead))
+				{
+					usersGroup.GET("", s.listUsers)
+					usersGroup.GET("/:id", s.getUser)
+					usersGroup.POST("", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.createUser)
+					usersGroup.PUT("/:id", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.updateUser)
+					usersGroup.DELETE("/:id", s.authMiddleware.RequirePermission(auth.PermUsersDelete), s.deleteUser)
+
+					// User deployment access
+					usersGroup.GET("/:id/deployments", s.getUserDeployments)
+					usersGroup.POST("/:id/deployments", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.assignUserDeployment)
+					usersGroup.PUT("/:id/deployments/:name", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.updateUserDeployment)
+					usersGroup.DELETE("/:id/deployments/:name", s.authMiddleware.RequirePermission(auth.PermUsersWrite), s.removeUserDeployment)
+				}
+
+				// API key management
+				apiKeysGroup := protected.Group("/apikeys")
+				apiKeysGroup.Use(s.authMiddleware.RequirePermission(auth.PermAPIKeysRead))
+				{
+					apiKeysGroup.GET("", s.listAPIKeys)
+					apiKeysGroup.GET("/:id", s.getAPIKey)
+					apiKeysGroup.POST("", s.authMiddleware.RequirePermission(auth.PermAPIKeysWrite), s.createAPIKey)
+					apiKeysGroup.DELETE("/:id", s.authMiddleware.RequirePermission(auth.PermAPIKeysDelete), s.deleteAPIKey)
+					apiKeysGroup.POST("/:id/revoke", s.authMiddleware.RequirePermission(auth.PermAPIKeysDelete), s.revokeAPIKey)
+				}
+
+				// Get users with access to a deployment
+				protected.GET("/deployments/:name/users", s.authMiddleware.RequirePermission(auth.PermUsersRead), s.getDeploymentUsers)
+			}
 
 			// DNS plugin routes
 			dnsGroup := protected.Group("/dns")
+			dnsGroup.Use(s.authMiddleware.RequirePermission(auth.PermDNSRead))
 			{
 				dnsGroup.GET("/providers", s.listDNSProviders)
 
@@ -438,14 +515,10 @@ func (s *Server) Stop() error {
 }
 
 func (s *Server) healthCheck(c *gin.Context) {
-	stats, _ := s.manager.GetStats()
-
 	c.JSON(http.StatusOK, gin.H{
-		"status":           "healthy",
-		"agent":            "flatrun",
-		"version":          version.Get(),
-		"deployments_path": s.config.DeploymentsPath,
-		"stats":            stats,
+		"status":  "healthy",
+		"agent":   "flatrun",
+		"version": version.Get(),
 	})
 }
 
@@ -456,6 +529,17 @@ func (s *Server) listDeployments(c *gin.Context) {
 			"error": err.Error(),
 		})
 		return
+	}
+
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		var filtered []models.Deployment
+		for _, d := range deployments {
+			if actor.CanAccessDeployment(d.Name, auth.AccessLevelRead) {
+				filtered = append(filtered, d)
+			}
+		}
+		deployments = filtered
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -575,6 +659,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 			"error": err.Error(),
 		})
 		return
+	}
+
+	if s.authManager != nil {
+		actor := auth.GetActorFromContext(c)
+		if actor != nil && actor.User != nil && actor.Role != auth.RoleAdmin {
+			_ = s.authManager.AssignDeployment(actor.User.ID, req.Name, auth.AccessLevelAdmin, actor.User.ID)
+		}
 	}
 
 	var dbEnvVars []EnvVar
@@ -1671,6 +1762,13 @@ func (s *Server) createPluginDeployment(c *gin.Context) {
 			"error": err.Error(),
 		})
 		return
+	}
+
+	if s.authManager != nil {
+		actor := auth.GetActorFromContext(c)
+		if actor != nil && actor.User != nil && actor.Role != auth.RoleAdmin {
+			_ = s.authManager.AssignDeployment(actor.User.ID, req.Name, auth.AccessLevelAdmin, actor.User.ID)
+		}
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -2904,12 +3002,43 @@ func (s *Server) setupProxyWithRetry(deployment *models.Deployment, maxRetries i
 }
 
 func (s *Server) getSystemStats(c *gin.Context) {
-	stats, err := s.manager.GetStats()
+	deployments, err := s.manager.ListDeployments()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
 		return
+	}
+
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		var filtered []models.Deployment
+		for _, d := range deployments {
+			if actor.CanAccessDeployment(d.Name, auth.AccessLevelRead) {
+				filtered = append(filtered, d)
+			}
+		}
+		deployments = filtered
+	}
+
+	depStats := gin.H{
+		"total_deployments": len(deployments),
+		"running":           0,
+		"stopped":           0,
+		"error":             0,
+		"unknown":           0,
+	}
+	for _, d := range deployments {
+		switch d.Status {
+		case "running":
+			depStats["running"] = depStats["running"].(int) + 1
+		case "stopped":
+			depStats["stopped"] = depStats["stopped"].(int) + 1
+		case "error":
+			depStats["error"] = depStats["error"].(int) + 1
+		default:
+			depStats["unknown"] = depStats["unknown"].(int) + 1
+		}
 	}
 
 	containerStats, _ := s.networksManager.GetContainerStats()
@@ -2929,7 +3058,7 @@ func (s *Server) getSystemStats(c *gin.Context) {
 	systemStats, _ := system.GetSystemStats()
 
 	c.JSON(http.StatusOK, gin.H{
-		"deployments": stats,
+		"deployments": depStats,
 		"containers":  containerStats,
 		"images":      imageStats,
 		"volumes":     volumeStats,
