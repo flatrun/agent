@@ -117,7 +117,14 @@ func (db *DB) migrate() error {
 	`
 
 	_, err := db.conn.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add permissions column to users table if missing (ignore error if column exists)
+	_, _ = db.conn.Exec(`ALTER TABLE users ADD COLUMN permissions TEXT`)
+
+	return nil
 }
 
 func (db *DB) CreateUser(user *User) (int64, error) {
@@ -125,10 +132,10 @@ func (db *DB) CreateUser(user *User) (int64, error) {
 	defer db.mu.Unlock()
 
 	result, err := db.conn.Exec(`
-		INSERT INTO users (uid, username, email, password_hash, role, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO users (uid, username, email, password_hash, role, permissions, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		user.UID, user.Username, user.Email, user.PasswordHash, user.Role,
-		user.IsActive, user.CreatedAt, user.UpdatedAt,
+		user.GetPermissionsJSON(), user.IsActive, user.CreatedAt, user.UpdatedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -141,13 +148,13 @@ func (db *DB) GetUserByID(id int64) (*User, error) {
 	defer db.mu.RUnlock()
 
 	var u User
-	var email sql.NullString
+	var email, perms sql.NullString
 	var lastLogin sql.NullTime
 
 	err := db.conn.QueryRow(`
-		SELECT id, uid, username, email, password_hash, role, is_active, created_at, updated_at, last_login_at
+		SELECT id, uid, username, email, password_hash, role, permissions, is_active, created_at, updated_at, last_login_at
 		FROM users WHERE id = ?`, id).Scan(
-		&u.ID, &u.UID, &u.Username, &email, &u.PasswordHash, &u.Role,
+		&u.ID, &u.UID, &u.Username, &email, &u.PasswordHash, &u.Role, &perms,
 		&u.IsActive, &u.CreatedAt, &u.UpdatedAt, &lastLogin,
 	)
 	if err != nil {
@@ -155,6 +162,7 @@ func (db *DB) GetUserByID(id int64) (*User, error) {
 	}
 
 	u.Email = email.String
+	u.Permissions = ParsePermissionsJSON(perms.String)
 	if lastLogin.Valid {
 		u.LastLoginAt = lastLogin.Time
 	}
@@ -166,13 +174,13 @@ func (db *DB) GetUserByUID(uid string) (*User, error) {
 	defer db.mu.RUnlock()
 
 	var u User
-	var email sql.NullString
+	var email, perms sql.NullString
 	var lastLogin sql.NullTime
 
 	err := db.conn.QueryRow(`
-		SELECT id, uid, username, email, password_hash, role, is_active, created_at, updated_at, last_login_at
+		SELECT id, uid, username, email, password_hash, role, permissions, is_active, created_at, updated_at, last_login_at
 		FROM users WHERE uid = ?`, uid).Scan(
-		&u.ID, &u.UID, &u.Username, &email, &u.PasswordHash, &u.Role,
+		&u.ID, &u.UID, &u.Username, &email, &u.PasswordHash, &u.Role, &perms,
 		&u.IsActive, &u.CreatedAt, &u.UpdatedAt, &lastLogin,
 	)
 	if err != nil {
@@ -180,6 +188,7 @@ func (db *DB) GetUserByUID(uid string) (*User, error) {
 	}
 
 	u.Email = email.String
+	u.Permissions = ParsePermissionsJSON(perms.String)
 	if lastLogin.Valid {
 		u.LastLoginAt = lastLogin.Time
 	}
@@ -191,13 +200,13 @@ func (db *DB) GetUserByUsername(username string) (*User, error) {
 	defer db.mu.RUnlock()
 
 	var u User
-	var email sql.NullString
+	var email, perms sql.NullString
 	var lastLogin sql.NullTime
 
 	err := db.conn.QueryRow(`
-		SELECT id, uid, username, email, password_hash, role, is_active, created_at, updated_at, last_login_at
+		SELECT id, uid, username, email, password_hash, role, permissions, is_active, created_at, updated_at, last_login_at
 		FROM users WHERE username = ?`, username).Scan(
-		&u.ID, &u.UID, &u.Username, &email, &u.PasswordHash, &u.Role,
+		&u.ID, &u.UID, &u.Username, &email, &u.PasswordHash, &u.Role, &perms,
 		&u.IsActive, &u.CreatedAt, &u.UpdatedAt, &lastLogin,
 	)
 	if err != nil {
@@ -205,6 +214,7 @@ func (db *DB) GetUserByUsername(username string) (*User, error) {
 	}
 
 	u.Email = email.String
+	u.Permissions = ParsePermissionsJSON(perms.String)
 	if lastLogin.Valid {
 		u.LastLoginAt = lastLogin.Time
 	}
@@ -216,7 +226,7 @@ func (db *DB) GetUsers() ([]User, error) {
 	defer db.mu.RUnlock()
 
 	rows, err := db.conn.Query(`
-		SELECT id, uid, username, email, password_hash, role, is_active, created_at, updated_at, last_login_at
+		SELECT id, uid, username, email, password_hash, role, permissions, is_active, created_at, updated_at, last_login_at
 		FROM users ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -226,17 +236,18 @@ func (db *DB) GetUsers() ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var u User
-		var email sql.NullString
+		var email, perms sql.NullString
 		var lastLogin sql.NullTime
 
 		if err := rows.Scan(
-			&u.ID, &u.UID, &u.Username, &email, &u.PasswordHash, &u.Role,
+			&u.ID, &u.UID, &u.Username, &email, &u.PasswordHash, &u.Role, &perms,
 			&u.IsActive, &u.CreatedAt, &u.UpdatedAt, &lastLogin,
 		); err != nil {
 			return nil, err
 		}
 
 		u.Email = email.String
+		u.Permissions = ParsePermissionsJSON(perms.String)
 		if lastLogin.Valid {
 			u.LastLoginAt = lastLogin.Time
 		}
@@ -250,9 +261,9 @@ func (db *DB) UpdateUser(user *User) error {
 	defer db.mu.Unlock()
 
 	_, err := db.conn.Exec(`
-		UPDATE users SET username = ?, email = ?, role = ?, is_active = ?, updated_at = ?
+		UPDATE users SET username = ?, email = ?, role = ?, permissions = ?, is_active = ?, updated_at = ?
 		WHERE id = ?`,
-		user.Username, user.Email, user.Role, user.IsActive, time.Now(), user.ID,
+		user.Username, user.Email, user.Role, user.GetPermissionsJSON(), user.IsActive, time.Now(), user.ID,
 	)
 	return err
 }

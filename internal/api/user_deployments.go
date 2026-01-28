@@ -43,12 +43,19 @@ func (s *Server) assignUserDeployment(c *gin.Context) {
 		return
 	}
 
-	if req.AccessLevel != "read" && req.AccessLevel != "write" && req.AccessLevel != "admin" {
+	if !auth.ValidAccessLevel(req.AccessLevel) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid access level. Must be read, write, or admin"})
 		return
 	}
 
 	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		if !actor.CanAccessDeployment(req.DeploymentName, auth.AccessLevelAdmin) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "No admin access to this deployment"})
+			return
+		}
+	}
+
 	grantedBy := int64(0)
 	if actor != nil && actor.User != nil {
 		grantedBy = actor.User.ID
@@ -89,9 +96,17 @@ func (s *Server) updateUserDeployment(c *gin.Context) {
 		return
 	}
 
-	if req.AccessLevel != "read" && req.AccessLevel != "write" && req.AccessLevel != "admin" {
+	if !auth.ValidAccessLevel(req.AccessLevel) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid access level"})
 		return
+	}
+
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		if !actor.CanAccessDeployment(deploymentName, auth.AccessLevelAdmin) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "No admin access to this deployment"})
+			return
+		}
 	}
 
 	if err := s.authManager.UpdateUserDeployment(userID, deploymentName, req.AccessLevel); err != nil {

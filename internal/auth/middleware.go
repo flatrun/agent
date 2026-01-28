@@ -137,6 +137,13 @@ func (m *Middleware) setJWTContext(c *gin.Context, claims *Claims, token string)
 	c.Set(contextkeys.ActorID, claims.Username)
 	c.Set(contextkeys.ActorName, claims.Username)
 
+	if m.manager != nil && claims.SessionID != "" {
+		session, err := m.manager.GetSessionByID(claims.SessionID)
+		if err != nil || !session.RevokedAt.IsZero() {
+			return fmt.Errorf("session revoked or invalid")
+		}
+	}
+
 	if m.manager != nil && claims.UserID > 0 {
 		user, err := m.manager.GetUser(claims.UserID)
 		if err != nil {
@@ -349,7 +356,15 @@ func (m *Middleware) Login(c *gin.Context) {
 			return
 		}
 
-		token, err := m.GenerateJWTForUser(user, "")
+		sessionID, err := GenerateSessionID()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to generate session",
+			})
+			return
+		}
+
+		token, err := m.GenerateJWTForUser(user, sessionID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "Failed to generate token",
@@ -358,7 +373,7 @@ func (m *Middleware) Login(c *gin.Context) {
 		}
 
 		tokenHash := sha256.Sum256([]byte(token))
-		_, _ = m.manager.CreateSession(user.ID, 0, hex.EncodeToString(tokenHash[:]), c.ClientIP(), time.Now().Add(24*time.Hour))
+		_, _ = m.manager.CreateSession(user.ID, 0, sessionID, hex.EncodeToString(tokenHash[:]), c.ClientIP(), time.Now().Add(24*time.Hour))
 
 		deployments, _ := m.manager.GetUserDeployments(user.ID)
 		depAccess := make([]gin.H, 0, len(deployments))
@@ -374,7 +389,7 @@ func (m *Middleware) Login(c *gin.Context) {
 			"expires_in":  86400,
 			"token_type":  "Bearer",
 			"user":        userResponse(user),
-			"permissions": GetRolePermissions(user.Role),
+			"permissions": EffectivePermissions(user, user.Role),
 			"deployments": depAccess,
 		})
 		return
@@ -390,13 +405,24 @@ func (m *Middleware) Login(c *gin.Context) {
 	if m.manager != nil {
 		apiKey, user, err := m.manager.ValidateAPIKey(req.APIKey)
 		if err == nil {
-			token, err := m.GenerateJWTForUser(user, "")
+			sessionID, err := GenerateSessionID()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": "Failed to generate session",
+				})
+				return
+			}
+
+			token, err := m.GenerateJWTForUser(user, sessionID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error": "Failed to generate token",
 				})
 				return
 			}
+
+			tokenHash := sha256.Sum256([]byte(token))
+			_, _ = m.manager.CreateSession(user.ID, apiKey.ID, sessionID, hex.EncodeToString(tokenHash[:]), c.ClientIP(), time.Now().Add(24*time.Hour))
 
 			role := user.Role
 			if apiKey.Role != "" {
@@ -562,7 +588,7 @@ func GetActorFromContext(c *gin.Context) *ActorContext {
 }
 
 func userResponse(u *User) gin.H {
-	return gin.H{
+	resp := gin.H{
 		"id":            u.ID,
 		"uid":           u.UID,
 		"username":      u.Username,
@@ -572,4 +598,8 @@ func userResponse(u *User) gin.H {
 		"created_at":    u.CreatedAt,
 		"last_login_at": u.LastLoginAt,
 	}
+	if len(u.Permissions) > 0 {
+		resp["permissions"] = u.Permissions
+	}
+	return resp
 }

@@ -257,7 +257,7 @@ func TestUpdateCurrentUserPassword(t *testing.T) {
 	server, router, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	_, _ = server.authManager.CreateUser("passuser", "", "oldpassword", auth.RoleViewer)
+	_, _ = server.authManager.CreateUser("passuser", "", "oldpassword", auth.RoleViewer, nil)
 
 	token := loginAndGetToken(t, router, "passuser", "oldpassword")
 
@@ -288,7 +288,7 @@ func TestUpdateCurrentUserPasswordWrongCurrent(t *testing.T) {
 	server, router, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	_, _ = server.authManager.CreateUser("wrongpass", "", "correctpassword", auth.RoleViewer)
+	_, _ = server.authManager.CreateUser("wrongpass", "", "correctpassword", auth.RoleViewer, nil)
 
 	token := loginAndGetToken(t, router, "wrongpass", "correctpassword")
 
@@ -314,7 +314,7 @@ func TestViewerCannotAccessUsersList(t *testing.T) {
 	server, router, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	_, _ = server.authManager.CreateUser("viewer", "", "viewerpass", auth.RoleViewer)
+	_, _ = server.authManager.CreateUser("viewer", "", "viewerpass", auth.RoleViewer, nil)
 
 	token := loginAndGetToken(t, router, "viewer", "viewerpass")
 
@@ -333,7 +333,7 @@ func TestOperatorCannotAccessUsersList(t *testing.T) {
 	server, router, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	_, _ = server.authManager.CreateUser("operator", "", "operatorpass", auth.RoleOperator)
+	_, _ = server.authManager.CreateUser("operator", "", "operatorpass", auth.RoleOperator, nil)
 
 	token := loginAndGetToken(t, router, "operator", "operatorpass")
 
@@ -352,7 +352,7 @@ func TestUpdateUser(t *testing.T) {
 	server, router, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	user, _ := server.authManager.CreateUser("updateme", "", "password", auth.RoleViewer)
+	user, _ := server.authManager.CreateUser("updateme", "", "password", auth.RoleViewer, nil)
 
 	token := loginAndGetToken(t, router, "admin", "testadminpass")
 
@@ -393,7 +393,7 @@ func TestDeleteUser(t *testing.T) {
 	server, router, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	user, _ := server.authManager.CreateUser("deleteme", "", "password", auth.RoleViewer)
+	user, _ := server.authManager.CreateUser("deleteme", "", "password", auth.RoleViewer, nil)
 
 	token := loginAndGetToken(t, router, "admin", "testadminpass")
 

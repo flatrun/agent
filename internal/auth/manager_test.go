@@ -80,7 +80,7 @@ func TestManagerCreateUser(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, err := manager.CreateUser("testuser", "test@example.com", "password123", RoleOperator)
+	user, err := manager.CreateUser("testuser", "test@example.com", "password123", RoleOperator, nil)
 	if err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestManagerCreateUserInvalidRole(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	_, err := manager.CreateUser("baduser", "", "pass", Role("invalid"))
+	_, err := manager.CreateUser("baduser", "", "pass", Role("invalid"), nil)
 	if err != ErrInvalidRole {
 		t.Errorf("Expected ErrInvalidRole, got %v", err)
 	}
@@ -112,7 +112,7 @@ func TestManagerGetUser(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	created, _ := manager.CreateUser("findme", "", "pass", RoleViewer)
+	created, _ := manager.CreateUser("findme", "", "pass", RoleViewer, nil)
 
 	found, err := manager.GetUser(created.ID)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestManagerValidateCredentials(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	_, _ = manager.CreateUser("authuser", "", "correctpassword", RoleOperator)
+	_, _ = manager.CreateUser("authuser", "", "correctpassword", RoleOperator, nil)
 
 	user, err := manager.ValidateCredentials("authuser", "correctpassword")
 	if err != nil {
@@ -154,7 +154,7 @@ func TestManagerValidateCredentialsWrongPassword(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	_, _ = manager.CreateUser("authuser", "", "correctpassword", RoleOperator)
+	_, _ = manager.CreateUser("authuser", "", "correctpassword", RoleOperator, nil)
 
 	_, err := manager.ValidateCredentials("authuser", "wrongpassword")
 	if err != ErrInvalidPassword {
@@ -176,7 +176,7 @@ func TestManagerValidateCredentialsInactiveUser(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("inactive", "", "pass", RoleViewer)
+	user, _ := manager.CreateUser("inactive", "", "pass", RoleViewer, nil)
 	user.IsActive = false
 	_ = manager.UpdateUser(user)
 
@@ -190,7 +190,7 @@ func TestManagerDeleteUser(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("todelete", "", "pass", RoleViewer)
+	user, _ := manager.CreateUser("todelete", "", "pass", RoleViewer, nil)
 	actorID := int64(99999)
 
 	err := manager.DeleteUser(user.ID, actorID)
@@ -208,7 +208,7 @@ func TestManagerDeleteUserCannotDeleteSelf(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("selfdelete", "", "pass", RoleAdmin)
+	user, _ := manager.CreateUser("selfdelete", "", "pass", RoleAdmin, nil)
 
 	err := manager.DeleteUser(user.ID, user.ID)
 	if err != ErrCannotDeleteSelf {
@@ -220,7 +220,7 @@ func TestManagerUpdatePassword(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("passchange", "", "oldpass", RoleViewer)
+	user, _ := manager.CreateUser("passchange", "", "oldpass", RoleViewer, nil)
 
 	err := manager.UpdatePassword(user.ID, "newpassword")
 	if err != nil {
@@ -242,7 +242,7 @@ func TestManagerCreateAPIKey(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("keyowner", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("keyowner", "", "pass", RoleOperator, nil)
 
 	key, plainKey, err := manager.CreateAPIKey(user.ID, "Test Key", "Testing", "", nil, nil, time.Time{})
 	if err != nil {
@@ -266,7 +266,7 @@ func TestManagerValidateAPIKey(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("keyuser", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("keyuser", "", "pass", RoleOperator, nil)
 	_, plainKey, _ := manager.CreateAPIKey(user.ID, "Valid Key", "", "", nil, nil, time.Time{})
 
 	key, foundUser, err := manager.ValidateAPIKey(plainKey)
@@ -287,7 +287,7 @@ func TestManagerValidateAPIKeyExpired(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("expiredkey", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("expiredkey", "", "pass", RoleOperator, nil)
 	_, plainKey, _ := manager.CreateAPIKey(user.ID, "Expired Key", "", "", nil, nil, time.Now().Add(-1*time.Hour))
 
 	_, _, err := manager.ValidateAPIKey(plainKey)
@@ -300,7 +300,7 @@ func TestManagerValidateAPIKeyInactive(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("inactivekey", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("inactivekey", "", "pass", RoleOperator, nil)
 	key, plainKey, _ := manager.CreateAPIKey(user.ID, "Inactive Key", "", "", nil, nil, time.Time{})
 
 	_ = manager.DeactivateAPIKey(key.ID)
@@ -325,10 +325,10 @@ func TestManagerSessionLifecycle(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("sessionuser", "", "pass", RoleViewer)
+	user, _ := manager.CreateUser("sessionuser", "", "pass", RoleViewer, nil)
 
 	tokenHash := HashAPIKey("test-token")
-	session, err := manager.CreateSession(user.ID, 0, tokenHash, "127.0.0.1", time.Now().Add(24*time.Hour))
+	session, err := manager.CreateSession(user.ID, 0, "", tokenHash, "127.0.0.1", time.Now().Add(24*time.Hour))
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestManagerDeploymentAccess(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("deployuser", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("deployuser", "", "pass", RoleOperator, nil)
 	admin, _ := manager.GetUserByUsername("admin")
 
 	err := manager.AssignDeployment(user.ID, "my-app", "write", admin.ID)
@@ -387,7 +387,7 @@ func TestManagerDeploymentAccessMap(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("mapuser", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("mapuser", "", "pass", RoleOperator, nil)
 	admin, _ := manager.GetUserByUsername("admin")
 
 	_ = manager.AssignDeployment(user.ID, "app-a", "read", admin.ID)
@@ -411,7 +411,7 @@ func TestManagerUpdateDeploymentAccess(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("updateaccess", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("updateaccess", "", "pass", RoleOperator, nil)
 	admin, _ := manager.GetUserByUsername("admin")
 
 	_ = manager.AssignDeployment(user.ID, "my-app", "read", admin.ID)
@@ -431,7 +431,7 @@ func TestManagerRemoveDeploymentAccess(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("removeaccess", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("removeaccess", "", "pass", RoleOperator, nil)
 	admin, _ := manager.GetUserByUsername("admin")
 
 	_ = manager.AssignDeployment(user.ID, "to-remove", "write", admin.ID)
@@ -451,7 +451,7 @@ func TestManagerBuildActorContext(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("actoruser", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("actoruser", "", "pass", RoleOperator, nil)
 	admin, _ := manager.GetUserByUsername("admin")
 	_ = manager.AssignDeployment(user.ID, "my-app", "write", admin.ID)
 
@@ -477,7 +477,7 @@ func TestManagerBuildActorContextWithAPIKey(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user, _ := manager.CreateUser("apikeyactor", "", "pass", RoleOperator)
+	user, _ := manager.CreateUser("apikeyactor", "", "pass", RoleOperator, nil)
 	key, _, _ := manager.CreateAPIKey(user.ID, "Test Key", "", RoleViewer, []string{"deployments:read"}, nil, time.Time{})
 
 	fetchedKey, _ := manager.GetAPIKey(key.ID)
@@ -537,8 +537,8 @@ func TestManagerGetDeploymentUsers(t *testing.T) {
 	manager, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	user1, _ := manager.CreateUser("depuser1", "", "pass", RoleOperator)
-	user2, _ := manager.CreateUser("depuser2", "", "pass", RoleViewer)
+	user1, _ := manager.CreateUser("depuser1", "", "pass", RoleOperator, nil)
+	user2, _ := manager.CreateUser("depuser2", "", "pass", RoleViewer, nil)
 	admin, _ := manager.GetUserByUsername("admin")
 
 	_ = manager.AssignDeployment(user1.ID, "shared-app", "write", admin.ID)

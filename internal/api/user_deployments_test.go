@@ -105,7 +105,7 @@ func TestAssignUserDeployment(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	user, _ := server.authManager.CreateUser("deployuser", "", "password", auth.RoleOperator)
+	user, _ := server.authManager.CreateUser("deployuser", "", "password", auth.RoleOperator, nil)
 
 	token := depLogin(t, router, "admin", "testadminpass")
 
@@ -144,7 +144,7 @@ func TestGetUserDeployments(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	user, _ := server.authManager.CreateUser("listuser", "", "password", auth.RoleOperator)
+	user, _ := server.authManager.CreateUser("listuser", "", "password", auth.RoleOperator, nil)
 	admin, _ := server.authManager.GetUserByUsername("admin")
 
 	_ = server.authManager.AssignDeployment(user.ID, "app-a", "read", admin.ID)
@@ -179,7 +179,7 @@ func TestUpdateUserDeployment(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	user, _ := server.authManager.CreateUser("updateuser", "", "password", auth.RoleOperator)
+	user, _ := server.authManager.CreateUser("updateuser", "", "password", auth.RoleOperator, nil)
 	admin, _ := server.authManager.GetUserByUsername("admin")
 
 	_ = server.authManager.AssignDeployment(user.ID, "my-app", "read", admin.ID)
@@ -212,7 +212,7 @@ func TestRemoveUserDeployment(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	user, _ := server.authManager.CreateUser("removeuser", "", "password", auth.RoleOperator)
+	user, _ := server.authManager.CreateUser("removeuser", "", "password", auth.RoleOperator, nil)
 	admin, _ := server.authManager.GetUserByUsername("admin")
 
 	_ = server.authManager.AssignDeployment(user.ID, "to-remove", "write", admin.ID)
@@ -239,8 +239,8 @@ func TestGetDeploymentUsers(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	user1, _ := server.authManager.CreateUser("depuser1", "", "password", auth.RoleOperator)
-	user2, _ := server.authManager.CreateUser("depuser2", "", "password", auth.RoleViewer)
+	user1, _ := server.authManager.CreateUser("depuser1", "", "password", auth.RoleOperator, nil)
+	user2, _ := server.authManager.CreateUser("depuser2", "", "password", auth.RoleViewer, nil)
 	admin, _ := server.authManager.GetUserByUsername("admin")
 
 	_ = server.authManager.AssignDeployment(user1.ID, "shared-app", "write", admin.ID)
@@ -275,7 +275,7 @@ func TestOperatorCannotAssignDeployment(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	_, _ = server.authManager.CreateUser("operator", "", "operatorpass", auth.RoleOperator)
+	_, _ = server.authManager.CreateUser("operator", "", "operatorpass", auth.RoleOperator, nil)
 
 	token := depLogin(t, router, "operator", "operatorpass")
 
@@ -301,7 +301,7 @@ func TestViewerCannotViewUserDeployments(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	_, _ = server.authManager.CreateUser("viewer", "", "viewerpass", auth.RoleViewer)
+	_, _ = server.authManager.CreateUser("viewer", "", "viewerpass", auth.RoleViewer, nil)
 
 	token := depLogin(t, router, "viewer", "viewerpass")
 
@@ -320,7 +320,7 @@ func TestAssignDeploymentInvalidAccessLevel(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	user, _ := server.authManager.CreateUser("badaccess", "", "password", auth.RoleOperator)
+	user, _ := server.authManager.CreateUser("badaccess", "", "password", auth.RoleOperator, nil)
 
 	token := depLogin(t, router, "admin", "testadminpass")
 
@@ -346,7 +346,7 @@ func TestAssignMultipleDeployments(t *testing.T) {
 	server, router, cleanup := setupUserDeploymentsTestServer(t)
 	defer cleanup()
 
-	user, _ := server.authManager.CreateUser("multiuser", "", "password", auth.RoleOperator)
+	user, _ := server.authManager.CreateUser("multiuser", "", "password", auth.RoleOperator, nil)
 
 	token := depLogin(t, router, "admin", "testadminpass")
 

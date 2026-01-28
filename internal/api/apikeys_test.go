@@ -159,10 +159,9 @@ func TestCreateAPIKeyWithExpiration(t *testing.T) {
 
 	token := apiKeyLogin(t, router, "admin", "testadminpass")
 
-	expiresAt := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
 	body := map[string]interface{}{
 		"name":       "Expiring Key",
-		"expires_at": expiresAt,
+		"expires_in": 86400,
 	}
 	jsonBody, _ := json.Marshal(body)
 
@@ -175,6 +174,18 @@ func TestCreateAPIKeyWithExpiration(t *testing.T) {
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("Expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	apiKey, ok := resp["api_key"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Response missing api_key")
+	}
+	if apiKey["expires_at"] == nil || apiKey["expires_at"] == "" {
+		t.Error("Expected expires_at to be set")
 	}
 }
 
@@ -330,7 +341,7 @@ func TestOperatorCanAccessOwnAPIKeys(t *testing.T) {
 	server, router, cleanup := setupAPIKeyTestServer(t)
 	defer cleanup()
 
-	operator, _ := server.authManager.CreateUser("operator", "", "operatorpass", auth.RoleOperator)
+	operator, _ := server.authManager.CreateUser("operator", "", "operatorpass", auth.RoleOperator, nil)
 
 	_, _, _ = server.authManager.CreateAPIKey(operator.ID, "Operator's Key", "", "", nil, nil, time.Time{})
 
@@ -359,7 +370,7 @@ func TestViewerCannotCreateAPIKey(t *testing.T) {
 	server, router, cleanup := setupAPIKeyTestServer(t)
 	defer cleanup()
 
-	_, _ = server.authManager.CreateUser("viewer", "", "viewerpass", auth.RoleViewer)
+	_, _ = server.authManager.CreateUser("viewer", "", "viewerpass", auth.RoleViewer, nil)
 
 	token := apiKeyLogin(t, router, "viewer", "viewerpass")
 

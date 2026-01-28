@@ -69,7 +69,7 @@ func (m *Manager) ensureAdminUser() error {
 		log.Println("WARNING: No users exist and FLATRUN_ADMIN_PASSWORD not set. Creating admin user with default password 'admin'. Please change this immediately!")
 	}
 
-	_, err = m.CreateUser("admin", "", adminPassword, RoleAdmin)
+	_, err = m.CreateUser("admin", "", adminPassword, RoleAdmin, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create admin user: %w", err)
 	}
@@ -78,7 +78,7 @@ func (m *Manager) ensureAdminUser() error {
 	return nil
 }
 
-func (m *Manager) CreateUser(username, email, password string, role Role) (*User, error) {
+func (m *Manager) CreateUser(username, email, password string, role Role, permissions []string) (*User, error) {
 	if !role.IsValid() {
 		return nil, ErrInvalidRole
 	}
@@ -100,6 +100,7 @@ func (m *Manager) CreateUser(username, email, password string, role Role) (*User
 		Email:        email,
 		PasswordHash: passwordHash,
 		Role:         role,
+		Permissions:  permissions,
 		IsActive:     true,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -273,10 +274,13 @@ func (m *Manager) DeactivateAPIKey(id int64) error {
 	return m.db.DeactivateAPIKey(id)
 }
 
-func (m *Manager) CreateSession(userID int64, apiKeyID int64, tokenHash, clientIP string, expiresAt time.Time) (*Session, error) {
-	sessionID, err := GenerateSessionID()
-	if err != nil {
-		return nil, err
+func (m *Manager) CreateSession(userID int64, apiKeyID int64, sessionID, tokenHash, clientIP string, expiresAt time.Time) (*Session, error) {
+	if sessionID == "" {
+		var err error
+		sessionID, err = GenerateSessionID()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	session := &Session{
@@ -300,6 +304,14 @@ func (m *Manager) CreateSession(userID int64, apiKeyID int64, tokenHash, clientI
 
 func (m *Manager) GetSessionByToken(tokenHash string) (*Session, error) {
 	session, err := m.db.GetSessionByTokenHash(tokenHash)
+	if err == sql.ErrNoRows {
+		return nil, ErrSessionNotFound
+	}
+	return session, err
+}
+
+func (m *Manager) GetSessionByID(sessionID string) (*Session, error) {
+	session, err := m.db.GetSessionByID(sessionID)
 	if err == sql.ErrNoRows {
 		return nil, ErrSessionNotFound
 	}
@@ -365,6 +377,10 @@ func (m *Manager) BuildActorContext(user *User, apiKey *APIKey) (*ActorContext, 
 			return nil, err
 		}
 		actor.Deployments = deployments
+	}
+
+	if user != nil && len(user.Permissions) > 0 {
+		actor.Permissions = user.Permissions
 	}
 
 	if apiKey != nil {

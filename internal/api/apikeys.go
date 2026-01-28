@@ -9,6 +9,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func (s *Server) getAPIKeyWithAuth(c *gin.Context) (*auth.APIKey, bool) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid API key ID"})
+		return nil, false
+	}
+
+	key, err := s.authManager.GetAPIKey(id)
+	if err == auth.ErrAPIKeyNotFound {
+		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
+		return nil, false
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
+		return nil, false
+	}
+
+	actor := auth.GetActorFromContext(c)
+	if actor.Role != auth.RoleAdmin && (actor.User == nil || actor.User.ID != key.UserID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+		return nil, false
+	}
+
+	return key, true
+}
+
 func (s *Server) listAPIKeys(c *gin.Context) {
 	actor := auth.GetActorFromContext(c)
 	if actor == nil {
@@ -42,26 +69,8 @@ func (s *Server) listAPIKeys(c *gin.Context) {
 }
 
 func (s *Server) getAPIKey(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid API key ID"})
-		return
-	}
-
-	key, err := s.authManager.GetAPIKey(id)
-	if err == auth.ErrAPIKeyNotFound {
-		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
-		return
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
-		return
-	}
-
-	actor := auth.GetActorFromContext(c)
-	if actor.Role != auth.RoleAdmin && (actor.User == nil || actor.User.ID != key.UserID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+	key, ok := s.getAPIKeyWithAuth(c)
+	if !ok {
 		return
 	}
 
@@ -105,6 +114,12 @@ func (s *Server) createAPIKey(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot create admin API key"})
 			return
 		}
+		for _, p := range req.Permissions {
+			if !actor.HasPermission(auth.Permission(p)) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Cannot grant permission you don't have: " + p})
+				return
+			}
+		}
 	}
 
 	var expiresAt time.Time
@@ -136,30 +151,12 @@ func (s *Server) createAPIKey(c *gin.Context) {
 }
 
 func (s *Server) deleteAPIKey(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid API key ID"})
+	key, ok := s.getAPIKeyWithAuth(c)
+	if !ok {
 		return
 	}
 
-	key, err := s.authManager.GetAPIKey(id)
-	if err == auth.ErrAPIKeyNotFound {
-		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
-		return
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
-		return
-	}
-
-	actor := auth.GetActorFromContext(c)
-	if actor.Role != auth.RoleAdmin && (actor.User == nil || actor.User.ID != key.UserID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
-		return
-	}
-
-	if err := s.authManager.DeleteAPIKey(id); err != nil {
+	if err := s.authManager.DeleteAPIKey(key.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete API key"})
 		return
 	}
@@ -168,30 +165,12 @@ func (s *Server) deleteAPIKey(c *gin.Context) {
 }
 
 func (s *Server) revokeAPIKey(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid API key ID"})
+	key, ok := s.getAPIKeyWithAuth(c)
+	if !ok {
 		return
 	}
 
-	key, err := s.authManager.GetAPIKey(id)
-	if err == auth.ErrAPIKeyNotFound {
-		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
-		return
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
-		return
-	}
-
-	actor := auth.GetActorFromContext(c)
-	if actor.Role != auth.RoleAdmin && (actor.User == nil || actor.User.ID != key.UserID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
-		return
-	}
-
-	if err := s.authManager.DeactivateAPIKey(id); err != nil {
+	if err := s.authManager.DeactivateAPIKey(key.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke API key"})
 		return
 	}

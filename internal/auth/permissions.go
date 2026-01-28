@@ -34,6 +34,45 @@ const (
 	PermSettingsWrite Permission = "settings:write"
 
 	PermAuditRead Permission = "audit:read"
+
+	PermContainersRead   Permission = "containers:read"
+	PermContainersWrite  Permission = "containers:write"
+	PermContainersDelete Permission = "containers:delete"
+
+	PermImagesRead   Permission = "images:read"
+	PermImagesWrite  Permission = "images:write"
+	PermImagesDelete Permission = "images:delete"
+
+	PermVolumesRead   Permission = "volumes:read"
+	PermVolumesWrite  Permission = "volumes:write"
+	PermVolumesDelete Permission = "volumes:delete"
+
+	PermDatabasesRead   Permission = "databases:read"
+	PermDatabasesWrite  Permission = "databases:write"
+	PermDatabasesDelete Permission = "databases:delete"
+
+	PermInfrastructureRead  Permission = "infrastructure:read"
+	PermInfrastructureWrite Permission = "infrastructure:write"
+
+	PermSchedulerRead   Permission = "scheduler:read"
+	PermSchedulerWrite  Permission = "scheduler:write"
+	PermSchedulerDelete Permission = "scheduler:delete"
+
+	PermSystemRead  Permission = "system:read"
+	PermSystemWrite Permission = "system:write"
+
+	PermDNSRead  Permission = "dns:read"
+	PermDNSWrite Permission = "dns:write"
+
+	PermRegistriesRead   Permission = "registries:read"
+	PermRegistriesWrite  Permission = "registries:write"
+	PermRegistriesDelete Permission = "registries:delete"
+
+	PermTemplatesRead  Permission = "templates:read"
+	PermTemplatesWrite Permission = "templates:write"
+
+	PermTrafficRead  Permission = "traffic:read"
+	PermTrafficWrite Permission = "traffic:write"
 )
 
 var adminPermissions = []Permission{
@@ -46,6 +85,17 @@ var adminPermissions = []Permission{
 	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
 	PermSettingsRead, PermSettingsWrite,
 	PermAuditRead,
+	PermContainersRead, PermContainersWrite, PermContainersDelete,
+	PermImagesRead, PermImagesWrite, PermImagesDelete,
+	PermVolumesRead, PermVolumesWrite, PermVolumesDelete,
+	PermDatabasesRead, PermDatabasesWrite, PermDatabasesDelete,
+	PermInfrastructureRead, PermInfrastructureWrite,
+	PermSchedulerRead, PermSchedulerWrite, PermSchedulerDelete,
+	PermSystemRead, PermSystemWrite,
+	PermDNSRead, PermDNSWrite,
+	PermRegistriesRead, PermRegistriesWrite, PermRegistriesDelete,
+	PermTemplatesRead, PermTemplatesWrite,
+	PermTrafficRead, PermTrafficWrite,
 }
 
 var operatorPermissions = []Permission{
@@ -56,6 +106,17 @@ var operatorPermissions = []Permission{
 	PermBackupsRead, PermBackupsWrite,
 	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
 	PermSettingsRead,
+	PermContainersRead, PermContainersWrite,
+	PermImagesRead, PermImagesWrite,
+	PermVolumesRead, PermVolumesWrite,
+	PermDatabasesRead, PermDatabasesWrite,
+	PermInfrastructureRead, PermInfrastructureWrite,
+	PermSchedulerRead, PermSchedulerWrite,
+	PermSystemRead, PermSystemWrite,
+	PermDNSRead, PermDNSWrite,
+	PermRegistriesRead, PermRegistriesWrite,
+	PermTemplatesRead,
+	PermTrafficRead,
 }
 
 var viewerPermissions = []Permission{
@@ -66,6 +127,17 @@ var viewerPermissions = []Permission{
 	PermBackupsRead,
 	PermAPIKeysRead,
 	PermSettingsRead,
+	PermContainersRead,
+	PermImagesRead,
+	PermVolumesRead,
+	PermDatabasesRead,
+	PermInfrastructureRead,
+	PermSchedulerRead,
+	PermSystemRead,
+	PermDNSRead,
+	PermRegistriesRead,
+	PermTemplatesRead,
+	PermTrafficRead,
 }
 
 func GetRolePermissions(role Role) []Permission {
@@ -108,4 +180,15 @@ func GetAllPermissions() []Permission {
 
 func (p Permission) String() string {
 	return string(p)
+}
+
+func EffectivePermissions(user *User, role Role) []Permission {
+	if user != nil && len(user.Permissions) > 0 {
+		perms := make([]Permission, 0, len(user.Permissions))
+		for _, p := range user.Permissions {
+			perms = append(perms, Permission(p))
+		}
+		return perms
+	}
+	return GetRolePermissions(role)
 }

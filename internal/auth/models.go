@@ -13,6 +13,16 @@ const (
 	RoleViewer   Role = "viewer"
 )
 
+const (
+	AccessLevelRead  = "read"
+	AccessLevelWrite = "write"
+	AccessLevelAdmin = "admin"
+)
+
+func ValidAccessLevel(level string) bool {
+	return level == AccessLevelRead || level == AccessLevelWrite || level == AccessLevelAdmin
+}
+
 func (r Role) IsValid() bool {
 	switch r {
 	case RoleAdmin, RoleOperator, RoleViewer:
@@ -28,10 +38,19 @@ type User struct {
 	Email        string    `json:"email,omitempty"`
 	PasswordHash string    `json:"-"`
 	Role         Role      `json:"role"`
+	Permissions  []string  `json:"permissions,omitempty"`
 	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	LastLoginAt  time.Time `json:"last_login_at,omitempty"`
+}
+
+func (u *User) GetPermissionsJSON() string {
+	if len(u.Permissions) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(u.Permissions)
+	return string(b)
 }
 
 type APIKey struct {
@@ -132,9 +151,9 @@ func (a *ActorContext) CanAccessDeployment(name string, requiredLevel string) bo
 
 func accessLevelSufficient(has, required string) bool {
 	levels := map[string]int{
-		"read":  1,
-		"write": 2,
-		"admin": 3,
+		AccessLevelRead:  1,
+		AccessLevelWrite: 2,
+		AccessLevelAdmin: 3,
 	}
 	return levels[has] >= levels[required]
 }

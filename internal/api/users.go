@@ -17,7 +17,10 @@ func (s *Server) listUsers(c *gin.Context) {
 
 	response := make([]gin.H, 0, len(users))
 	for _, u := range users {
-		response = append(response, userToResponse(&u))
+		resp := userToResponse(&u)
+		deps, _ := s.authManager.GetUserDeployments(u.ID)
+		resp["deployment_count"] = len(deps)
+		response = append(response, resp)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"users": response})
@@ -51,10 +54,11 @@ func (s *Server) getUser(c *gin.Context) {
 
 func (s *Server) createUser(c *gin.Context) {
 	var req struct {
-		Username string    `json:"username" binding:"required"`
-		Email    string    `json:"email"`
-		Password string    `json:"password" binding:"required"`
-		Role     auth.Role `json:"role" binding:"required"`
+		Username    string    `json:"username" binding:"required"`
+		Email       string    `json:"email"`
+		Password    string    `json:"password" binding:"required"`
+		Role        auth.Role `json:"role" binding:"required"`
+		Permissions []string  `json:"permissions"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -67,7 +71,13 @@ func (s *Server) createUser(c *gin.Context) {
 		return
 	}
 
-	user, err := s.authManager.CreateUser(req.Username, req.Email, req.Password, req.Role)
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin && req.Role == auth.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can create admin users"})
+		return
+	}
+
+	user, err := s.authManager.CreateUser(req.Username, req.Email, req.Password, req.Role, req.Permissions)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user: " + err.Error()})
 		return
@@ -95,10 +105,11 @@ func (s *Server) updateUser(c *gin.Context) {
 	}
 
 	var req struct {
-		Username string    `json:"username"`
-		Email    string    `json:"email"`
-		Role     auth.Role `json:"role"`
-		IsActive *bool     `json:"is_active"`
+		Username    string    `json:"username"`
+		Email       string    `json:"email"`
+		Role        auth.Role `json:"role"`
+		Permissions *[]string `json:"permissions"`
+		IsActive    *bool     `json:"is_active"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -117,7 +128,15 @@ func (s *Server) updateUser(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
 			return
 		}
+		actor := auth.GetActorFromContext(c)
+		if req.Role == auth.RoleAdmin && actor != nil && actor.Role != auth.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can assign the admin role"})
+			return
+		}
 		user.Role = req.Role
+	}
+	if req.Permissions != nil {
+		user.Permissions = *req.Permissions
 	}
 	if req.IsActive != nil {
 		user.IsActive = *req.IsActive
@@ -165,7 +184,7 @@ func (s *Server) getCurrentUser(c *gin.Context) {
 	}
 
 	deployments, _ := s.authManager.GetUserDeployments(actor.User.ID)
-	permissions := auth.GetRolePermissions(actor.Role)
+	permissions := auth.EffectivePermissions(actor.User, actor.Role)
 
 	c.JSON(http.StatusOK, gin.H{
 		"user":        userToResponse(actor.User),
@@ -234,7 +253,7 @@ func (s *Server) updateCurrentUserPassword(c *gin.Context) {
 }
 
 func userToResponse(u *auth.User) gin.H {
-	return gin.H{
+	resp := gin.H{
 		"id":            u.ID,
 		"uid":           u.UID,
 		"username":      u.Username,
@@ -245,6 +264,10 @@ func userToResponse(u *auth.User) gin.H {
 		"updated_at":    u.UpdatedAt,
 		"last_login_at": u.LastLoginAt,
 	}
+	if len(u.Permissions) > 0 {
+		resp["permissions"] = u.Permissions
+	}
+	return resp
 }
 
 func deploymentsToResponse(deployments []auth.UserDeployment) []gin.H {

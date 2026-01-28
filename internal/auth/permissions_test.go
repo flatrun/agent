@@ -69,6 +69,23 @@ func TestViewerCannotWrite(t *testing.T) {
 		PermDeploymentsDelete,
 		PermUsersWrite,
 		PermUsersDelete,
+		PermContainersWrite,
+		PermContainersDelete,
+		PermImagesWrite,
+		PermImagesDelete,
+		PermVolumesWrite,
+		PermVolumesDelete,
+		PermDatabasesWrite,
+		PermDatabasesDelete,
+		PermInfrastructureWrite,
+		PermSchedulerWrite,
+		PermSchedulerDelete,
+		PermSystemWrite,
+		PermDNSWrite,
+		PermRegistriesWrite,
+		PermRegistriesDelete,
+		PermTemplatesWrite,
+		PermTrafficWrite,
 	}
 
 	for _, perm := range writePerms {
@@ -83,6 +100,17 @@ func TestViewerCanRead(t *testing.T) {
 		PermDeploymentsRead,
 		PermCertificatesRead,
 		PermNetworksRead,
+		PermContainersRead,
+		PermImagesRead,
+		PermVolumesRead,
+		PermDatabasesRead,
+		PermInfrastructureRead,
+		PermSchedulerRead,
+		PermSystemRead,
+		PermDNSRead,
+		PermRegistriesRead,
+		PermTemplatesRead,
+		PermTrafficRead,
 	}
 
 	for _, perm := range readPerms {
@@ -103,6 +131,39 @@ func TestOperatorPermissions(t *testing.T) {
 
 	if HasPermission(RoleOperator, nil, PermDeploymentsDelete) {
 		t.Error("Operator should not be able to delete deployments")
+	}
+
+	// Operator can write new resource groups
+	operatorWritePerms := []Permission{
+		PermContainersWrite,
+		PermImagesWrite,
+		PermVolumesWrite,
+		PermDatabasesWrite,
+		PermInfrastructureWrite,
+		PermSchedulerWrite,
+		PermSystemWrite,
+		PermDNSWrite,
+		PermRegistriesWrite,
+	}
+	for _, perm := range operatorWritePerms {
+		if !HasPermission(RoleOperator, nil, perm) {
+			t.Errorf("Operator should have permission %s", perm)
+		}
+	}
+
+	// Operator cannot delete new resource groups
+	operatorNoDeletePerms := []Permission{
+		PermContainersDelete,
+		PermImagesDelete,
+		PermVolumesDelete,
+		PermDatabasesDelete,
+		PermSchedulerDelete,
+		PermRegistriesDelete,
+	}
+	for _, perm := range operatorNoDeletePerms {
+		if HasPermission(RoleOperator, nil, perm) {
+			t.Errorf("Operator should not have permission %s", perm)
+		}
 	}
 }
 
