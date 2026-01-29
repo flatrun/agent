@@ -3,6 +3,7 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -122,6 +123,11 @@ func (m *Manager) CreateDeployment(name string, composeContent string) error {
 	return m.discovery.CreateDeployment(name, composeContent)
 }
 
+func (m *Manager) ApplyMountOwnership(name string, mounts []MountOwnership) error {
+	deploymentPath := filepath.Join(m.basePath, name)
+	return m.discovery.ApplyMountOwnership(deploymentPath, mounts)
+}
+
 func (m *Manager) DeleteDeployment(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -145,7 +151,90 @@ func (m *Manager) StartDeployment(name string) (string, error) {
 		return "", err
 	}
 
-	return m.executor.Up(deployment.Path)
+	output, err := m.executor.Up(deployment.Path)
+	if err != nil {
+		return output, err
+	}
+
+	go m.applyMountOwnershipFromContainer(name, deployment.Path)
+
+	return output, nil
+}
+
+func (m *Manager) applyMountOwnershipFromContainer(name, deploymentPath string) {
+	composeContent, _, err := m.discovery.GetComposeFile(name)
+	if err != nil {
+		return
+	}
+
+	bindMounts := ExtractBindMounts(composeContent)
+	if len(bindMounts) == 0 {
+		return
+	}
+
+	containerName := m.getMainContainerName(deploymentPath)
+	if containerName == "" {
+		containerName = name
+	}
+
+	user, err := InspectContainerUser(containerName)
+	if err != nil {
+		return
+	}
+
+	if user == "0:0" {
+		return
+	}
+
+	var mounts []MountOwnership
+	for _, path := range bindMounts {
+		mounts = append(mounts, MountOwnership{
+			HostPath: path,
+			User:     user,
+		})
+	}
+
+	_ = m.discovery.ApplyMountOwnership(deploymentPath, mounts)
+}
+
+func (m *Manager) getMainContainerName(deploymentPath string) string {
+	output, err := m.executor.PS(deploymentPath)
+	if err != nil {
+		return ""
+	}
+
+	var containers []composeContainer
+	trimmed := strings.TrimSpace(output)
+
+	if strings.HasPrefix(trimmed, "[") {
+		_ = json.Unmarshal([]byte(trimmed), &containers)
+	}
+
+	if len(containers) == 0 {
+		for _, line := range strings.Split(output, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || line == "[]" {
+				continue
+			}
+			var container composeContainer
+			if err := json.Unmarshal([]byte(line), &container); err != nil {
+				continue
+			}
+			containers = append(containers, container)
+		}
+	}
+
+	for _, c := range containers {
+		if c.Service == "app" || c.Service == "web" {
+			return c.Name
+		}
+	}
+
+	if len(containers) > 0 {
+		return containers[0].Name
+	}
+
+	return ""
 }
 
 func (m *Manager) StopDeployment(name string) (string, error) {
@@ -181,7 +270,14 @@ func (m *Manager) RebuildDeployment(name string) (string, error) {
 		return "", err
 	}
 
-	return m.executor.Rebuild(deployment.Path)
+	output, err := m.executor.Rebuild(deployment.Path)
+	if err != nil {
+		return output, err
+	}
+
+	go m.applyMountOwnershipFromContainer(name, deployment.Path)
+
+	return output, nil
 }
 
 func (m *Manager) PullDeployment(name string, onlyLatest bool) (string, error) {

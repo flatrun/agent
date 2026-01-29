@@ -5,9 +5,9 @@ services:
     ports:
       - "${PORT:-8080}:80"
     volumes:
-      - nextcloud_data:/var/www/html/data
-      - nextcloud_config:/var/www/html/config
-      - nextcloud_apps:/var/www/html/custom_apps
+      - ./data:/var/www/html/data
+      - ./config:/var/www/html/config
+      - ./apps:/var/www/html/custom_apps
     environment:
       - MYSQL_HOST=${DB_HOST:-db}
       - MYSQL_DATABASE=${DB_DATABASE:-nextcloud}
@@ -19,11 +19,6 @@ services:
     networks:
       - default
       - database
-
-volumes:
-  nextcloud_data:
-  nextcloud_config:
-  nextcloud_apps:
 
 networks:
   database:

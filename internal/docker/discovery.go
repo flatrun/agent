@@ -3,6 +3,7 @@ package docker
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ type composeService struct {
 	Image    string        `yaml:"image"`
 	Ports    []interface{} `yaml:"ports"`
 	Networks []string      `yaml:"networks"`
+	Volumes  []string      `yaml:"volumes"`
 }
 
 func (d *Discovery) FindDeployments() ([]models.Deployment, error) {
@@ -281,7 +283,6 @@ func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string) e
 			if err := os.MkdirAll(fullPath, 0777); err != nil {
 				return err
 			}
-			// Ensure directory is writable by any user (for non-root containers)
 			if err := os.Chmod(fullPath, 0777); err != nil {
 				return err
 			}
@@ -312,6 +313,122 @@ func extractBindMountPath(volume string) string {
 	}
 
 	return hostPath
+}
+
+// MountOwnership describes ownership and subdirectory requirements for a bind mount.
+type MountOwnership struct {
+	HostPath       string
+	User           string // "UID:GID" or empty
+	Subdirectories []string
+}
+
+// ApplyMountOwnership sets ownership and creates subdirectories for bind mounts.
+// When User is specified (UID:GID format), directories are chowned to that user.
+// When User is empty, directories are chmod'd to 0777 as a fallback for non-template deploys.
+func (d *Discovery) ApplyMountOwnership(deploymentPath string, mounts []MountOwnership) error {
+	for _, m := range mounts {
+		base := m.HostPath
+		if !filepath.IsAbs(base) {
+			base = filepath.Join(deploymentPath, base)
+		}
+
+		if err := os.MkdirAll(base, 0755); err != nil {
+			return fmt.Errorf("create mount dir %s: %w", base, err)
+		}
+
+		dirs := []string{base}
+		for _, sub := range m.Subdirectories {
+			subPath := filepath.Join(base, sub)
+			if err := os.MkdirAll(subPath, 0755); err != nil {
+				return fmt.Errorf("create subdirectory %s: %w", subPath, err)
+			}
+			dirs = append(dirs, subPath)
+		}
+
+		if m.User != "" {
+			uid, gid, err := parseUIDGID(m.User)
+			if err != nil {
+				return fmt.Errorf("parse user %q: %w", m.User, err)
+			}
+			for _, dir := range dirs {
+				if err := os.Chown(dir, uid, gid); err != nil {
+					return fmt.Errorf("chown %s: %w", dir, err)
+				}
+			}
+		} else {
+			for _, dir := range dirs {
+				if err := os.Chmod(dir, 0777); err != nil {
+					return fmt.Errorf("chmod %s: %w", dir, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func parseUIDGID(user string) (int, int, error) {
+	parts := strings.SplitN(user, ":", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("expected UID:GID format, got %q", user)
+	}
+	uid, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid UID %q: %w", parts[0], err)
+	}
+	gid, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid GID %q: %w", parts[1], err)
+	}
+	return uid, gid, nil
+}
+
+// InspectContainerUser gets the UID:GID of the running process inside a container.
+func InspectContainerUser(containerName string) (string, error) {
+	uidCmd := exec.Command("docker", "exec", containerName, "id", "-u")
+	uidOut, err := uidCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("get container uid: %w", err)
+	}
+
+	gidCmd := exec.Command("docker", "exec", containerName, "id", "-g")
+	gidOut, err := gidCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("get container gid: %w", err)
+	}
+
+	uid := strings.TrimSpace(string(uidOut))
+	gid := strings.TrimSpace(string(gidOut))
+
+	return uid + ":" + gid, nil
+}
+
+// ExtractBindMounts parses compose content and returns bind mount host paths.
+func ExtractBindMounts(composeContent string) []string {
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(composeContent), &compose); err != nil {
+		return nil
+	}
+
+	var paths []string
+	seen := make(map[string]bool)
+
+	for _, service := range compose.Services {
+		for _, volume := range service.Volumes {
+			hostPath := extractBindMountPath(volume)
+			if hostPath == "" {
+				continue
+			}
+			if !strings.HasPrefix(hostPath, "./") && !strings.HasPrefix(hostPath, "../") {
+				continue
+			}
+			if !seen[hostPath] {
+				seen[hostPath] = true
+				paths = append(paths, hostPath)
+			}
+		}
+	}
+
+	return paths
 }
 
 // ensureComposeName adds or updates the name attribute in a compose file
