@@ -10,17 +10,20 @@ mounts:
     name: User Data
     container_path: /var/www/html/data
     description: User files and data storage
-    type: volume
+    type: file
     required: true
+    user: "33:33"
   - id: config
     name: Configuration
     container_path: /var/www/html/config
     description: Nextcloud configuration files
-    type: volume
+    type: file
     required: true
+    user: "33:33"
   - id: apps
     name: Custom Apps
     container_path: /var/www/html/custom_apps
     description: Custom Nextcloud applications
-    type: volume
+    type: file
     required: false
+    user: "33:33"

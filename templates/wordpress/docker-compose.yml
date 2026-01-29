@@ -14,15 +14,12 @@ services:
             $$_SERVER['HTTPS'] = 'on';
         }
     volumes:
-      - ${NAME}_data:/var/www/html
+      - ./data:/var/www/html
     expose:
       - "80"
     networks:
       - proxy
     restart: unless-stopped
-
-volumes:
-  ${NAME}_data:
 
 networks:
   proxy:

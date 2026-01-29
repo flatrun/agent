@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -220,5 +221,211 @@ services:
 		if info.Mode().Perm() != 0777 {
 			t.Errorf("app directory should have 0777 permissions, got %o", info.Mode().Perm())
 		}
+	}
+}
+
+func TestApplyMountOwnership(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "test-ownership-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	d := NewDiscovery(tmpDir)
+	deploymentPath := filepath.Join(tmpDir, "test-deploy")
+	if err := os.MkdirAll(deploymentPath, 0755); err != nil {
+		t.Fatalf("Failed to create deployment dir: %v", err)
+	}
+
+	t.Run("creates subdirectories with user ownership", func(t *testing.T) {
+		currentUID := os.Getuid()
+		currentGID := os.Getgid()
+		user := fmt.Sprintf("%d:%d", currentUID, currentGID)
+
+		mounts := []MountOwnership{
+			{
+				HostPath:       "./storage",
+				User:           user,
+				Subdirectories: []string{"framework/cache", "framework/sessions", "logs"},
+			},
+		}
+
+		err := d.ApplyMountOwnership(deploymentPath, mounts)
+		if err != nil {
+			t.Fatalf("ApplyMountOwnership failed: %v", err)
+		}
+
+		basePath := filepath.Join(deploymentPath, "storage")
+		if _, err := os.Stat(basePath); err != nil {
+			t.Errorf("Expected storage dir to exist: %v", err)
+		}
+
+		for _, sub := range []string{"framework/cache", "framework/sessions", "logs"} {
+			subPath := filepath.Join(basePath, sub)
+			if _, err := os.Stat(subPath); err != nil {
+				t.Errorf("Expected subdirectory %q to exist: %v", sub, err)
+			}
+		}
+	})
+
+	t.Run("falls back to 0777 when no user specified", func(t *testing.T) {
+		mounts := []MountOwnership{
+			{
+				HostPath: "./nouser",
+			},
+		}
+
+		err := d.ApplyMountOwnership(deploymentPath, mounts)
+		if err != nil {
+			t.Fatalf("ApplyMountOwnership failed: %v", err)
+		}
+
+		info, err := os.Stat(filepath.Join(deploymentPath, "nouser"))
+		if err != nil {
+			t.Fatalf("Expected nouser dir to exist: %v", err)
+		}
+		if info.Mode().Perm() != 0777 {
+			t.Errorf("Expected 0777 permissions, got %o", info.Mode().Perm())
+		}
+	})
+
+	t.Run("rejects invalid user format", func(t *testing.T) {
+		mounts := []MountOwnership{
+			{
+				HostPath: "./baduser",
+				User:     "notvalid",
+			},
+		}
+
+		err := d.ApplyMountOwnership(deploymentPath, mounts)
+		if err == nil {
+			t.Fatal("Expected error for invalid user format")
+		}
+	})
+}
+
+func TestParseUIDGID(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantUID   int
+		wantGID   int
+		wantError bool
+	}{
+		{name: "valid pair", input: "33:33", wantUID: 33, wantGID: 33},
+		{name: "different values", input: "1000:1001", wantUID: 1000, wantGID: 1001},
+		{name: "root", input: "0:0", wantUID: 0, wantGID: 0},
+		{name: "missing colon", input: "1000", wantError: true},
+		{name: "non-numeric uid", input: "abc:100", wantError: true},
+		{name: "non-numeric gid", input: "100:abc", wantError: true},
+		{name: "empty string", input: "", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uid, gid, err := parseUIDGID(tt.input)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("parseUIDGID(%q) expected error, got nil", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseUIDGID(%q) unexpected error: %v", tt.input, err)
+			}
+			if uid != tt.wantUID {
+				t.Errorf("parseUIDGID(%q) uid = %d, want %d", tt.input, uid, tt.wantUID)
+			}
+			if gid != tt.wantGID {
+				t.Errorf("parseUIDGID(%q) gid = %d, want %d", tt.input, gid, tt.wantGID)
+			}
+		})
+	}
+}
+
+func TestExtractBindMounts(t *testing.T) {
+	tests := []struct {
+		name     string
+		compose  string
+		expected []string
+	}{
+		{
+			name: "single bind mount",
+			compose: `services:
+  app:
+    image: nginx
+    volumes:
+      - ./data:/var/data
+`,
+			expected: []string{"./data"},
+		},
+		{
+			name: "multiple bind mounts",
+			compose: `services:
+  app:
+    image: nginx
+    volumes:
+      - ./app:/app
+      - ./config:/etc/config
+`,
+			expected: []string{"./app", "./config"},
+		},
+		{
+			name: "skips named volumes",
+			compose: `services:
+  app:
+    image: nginx
+    volumes:
+      - ./data:/data
+      - myvolume:/var/lib
+`,
+			expected: []string{"./data"},
+		},
+		{
+			name: "multiple services",
+			compose: `services:
+  web:
+    volumes:
+      - ./web:/app
+  worker:
+    volumes:
+      - ./worker:/app
+`,
+			expected: []string{"./web", "./worker"},
+		},
+		{
+			name: "deduplicates shared mounts",
+			compose: `services:
+  web:
+    volumes:
+      - ./shared:/data
+  worker:
+    volumes:
+      - ./shared:/data
+`,
+			expected: []string{"./shared"},
+		},
+		{
+			name: "no volumes",
+			compose: `services:
+  app:
+    image: nginx
+`,
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ExtractBindMounts(tt.compose)
+			if len(result) != len(tt.expected) {
+				t.Fatalf("ExtractBindMounts returned %d paths, want %d: got %v", len(result), len(tt.expected), result)
+			}
+			for i, path := range tt.expected {
+				if result[i] != path {
+					t.Errorf("ExtractBindMounts[%d] = %q, want %q", i, result[i], path)
+				}
+			}
+		})
 	}
 }

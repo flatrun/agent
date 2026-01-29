@@ -33,18 +33,26 @@ mounts:
     description: Laravel application source code
     type: file
     required: true
+    user: "1000:1000"
   - id: env
     name: Environment Config
     container_path: /app/.env
     description: Laravel environment configuration file
     type: file
     required: true
+    user: "1000:1000"
   - id: storage
     name: Storage
     container_path: /app/storage
     description: Logs, cache, and file uploads
-    type: volume
+    type: file
     required: false
+    user: "1000:1000"
+    subdirectories:
+      - framework/cache
+      - framework/sessions
+      - framework/views
+      - logs
 files:
   - path: .env
     content: |

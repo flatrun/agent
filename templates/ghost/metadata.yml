@@ -10,5 +10,6 @@ mounts:
     name: Content
     container_path: /var/lib/ghost/content
     description: Ghost content, themes, and images
-    type: volume
+    type: file
     required: true
+    user: "1000:1000"

@@ -11,15 +11,12 @@ services:
       database__connection__password: ${DB_PASSWORD:-changeme}
       database__connection__database: ${DB_DATABASE:-ghost}
     volumes:
-      - ghost_content:/var/lib/ghost/content
+      - ./data:/var/lib/ghost/content
     expose:
       - "2368"
     networks:
       - proxy
     restart: unless-stopped
-
-volumes:
-  ghost_content:
 
 networks:
   proxy:

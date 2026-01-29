@@ -12,18 +12,21 @@ mounts:
     description: Bind mount for entire WordPress installation (advanced)
     type: file
     required: false
+    user: "33:33"
   - id: uploads
     name: Media Uploads
     container_path: /var/www/html/wp-content/uploads
     description: Bind mount for media uploads only
     type: file
     required: false
+    user: "33:33"
   - id: plugins
     name: Plugins
     container_path: /var/www/html/wp-content/plugins
     description: Bind mount for WordPress plugins
     type: file
     required: false
+    user: "33:33"
 backup:
   container_paths:
     - service: wordpress

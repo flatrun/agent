@@ -692,6 +692,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 
 	if req.TemplateID != "" {
 		s.processTemplateFiles(req.Name, req.TemplateID, allEnvVars)
+		s.applyTemplateMountOwnership(req.Name, req.TemplateID)
 	}
 
 	if req.Metadata != nil {
@@ -1795,12 +1796,14 @@ type TemplateMetadata struct {
 }
 
 type TemplateMount struct {
-	ID            string `json:"id" yaml:"id"`
-	Name          string `json:"name" yaml:"name"`
-	ContainerPath string `json:"container_path" yaml:"container_path"`
-	Description   string `json:"description" yaml:"description"`
-	Type          string `json:"type" yaml:"type"`
-	Required      bool   `json:"required" yaml:"required"`
+	ID             string   `json:"id" yaml:"id"`
+	Name           string   `json:"name" yaml:"name"`
+	ContainerPath  string   `json:"container_path" yaml:"container_path"`
+	Description    string   `json:"description" yaml:"description"`
+	Type           string   `json:"type" yaml:"type"`
+	Required       bool     `json:"required" yaml:"required"`
+	User           string   `json:"user,omitempty" yaml:"user,omitempty"`
+	Subdirectories []string `json:"subdirectories,omitempty" yaml:"subdirectories,omitempty"`
 }
 
 type Template struct {
@@ -2676,6 +2679,44 @@ func (s *Server) processTemplateFiles(deploymentName, templateID string, envVars
 		}
 
 		_ = os.WriteFile(filePath, []byte(content), 0644)
+	}
+}
+
+func (s *Server) applyTemplateMountOwnership(deploymentName, templateID string) {
+	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
+
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return
+	}
+
+	var metadata TemplateMetadata
+	if err := yaml.Unmarshal(metadataContent, &metadata); err != nil {
+		return
+	}
+
+	if len(metadata.Mounts) == 0 {
+		return
+	}
+
+	var mounts []docker.MountOwnership
+	for _, m := range metadata.Mounts {
+		if m.Type != "file" {
+			continue
+		}
+		hostPath := "./" + m.ID
+		mounts = append(mounts, docker.MountOwnership{
+			HostPath:       hostPath,
+			User:           m.User,
+			Subdirectories: m.Subdirectories,
+		})
+	}
+
+	if len(mounts) > 0 {
+		if err := s.manager.ApplyMountOwnership(deploymentName, mounts); err != nil {
+			log.Printf("Warning: failed to apply mount ownership for %s: %v", deploymentName, err)
+		}
 	}
 }
 
