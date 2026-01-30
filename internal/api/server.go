@@ -1002,8 +1002,24 @@ func (s *Server) updateDeployment(c *gin.Context) {
 func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 	name := c.Param("name")
 
-	var metadata models.ServiceMetadata
-	if err := c.ShouldBindJSON(&metadata); err != nil {
+	bodyBytes, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to read request body",
+		})
+		return
+	}
+
+	var sentFields map[string]json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &sentFields); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	var incoming models.ServiceMetadata
+	if err := json.Unmarshal(bodyBytes, &incoming); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -1018,14 +1034,16 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		return
 	}
 
-	if err := s.manager.SaveMetadata(name, &metadata); err != nil {
+	metadata := mergeMetadata(deployment.Metadata, &incoming, sentFields)
+
+	if err := s.manager.SaveMetadata(name, metadata); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
 		return
 	}
 
-	deployment.Metadata = &metadata
+	deployment.Metadata = metadata
 
 	var proxyResult *proxy.SetupResult
 	if metadata.Networking.Expose {
@@ -1039,6 +1057,47 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		"name":         name,
 		"proxy_result": proxyResult,
 	})
+}
+
+func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[string]json.RawMessage) *models.ServiceMetadata {
+	if existing == nil {
+		return incoming
+	}
+	if incoming == nil {
+		return existing
+	}
+
+	merged := *existing
+
+	if _, ok := sentFields["name"]; ok {
+		merged.Name = incoming.Name
+	}
+	if _, ok := sentFields["type"]; ok {
+		merged.Type = incoming.Type
+	}
+	if _, ok := sentFields["credential_id"]; ok {
+		merged.CredentialID = incoming.CredentialID
+	}
+	if _, ok := sentFields["networking"]; ok {
+		merged.Networking = incoming.Networking
+	}
+	if _, ok := sentFields["ssl"]; ok {
+		merged.SSL = incoming.SSL
+	}
+	if _, ok := sentFields["healthcheck"]; ok {
+		merged.HealthCheck = incoming.HealthCheck
+	}
+	if _, ok := sentFields["quick_actions"]; ok {
+		merged.QuickActions = incoming.QuickActions
+	}
+	if _, ok := sentFields["security"]; ok {
+		merged.Security = incoming.Security
+	}
+	if _, ok := sentFields["backup"]; ok {
+		merged.Backup = incoming.Backup
+	}
+
+	return &merged
 }
 
 func (s *Server) deleteDeployment(c *gin.Context) {
