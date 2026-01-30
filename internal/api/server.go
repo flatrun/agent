@@ -19,11 +19,10 @@ import (
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/backup"
-	"github.com/flatrun/agent/internal/dns"
-	dnsPlugins "github.com/flatrun/agent/pkg/plugins/dns"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/database"
+	"github.com/flatrun/agent/internal/dns"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/files"
 	"github.com/flatrun/agent/internal/infra"
@@ -36,6 +35,7 @@ import (
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/plugins"
+	dnsPlugins "github.com/flatrun/agent/pkg/plugins/dns"
 	"github.com/flatrun/agent/pkg/subdomain"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/flatrun/agent/templates"
@@ -705,10 +705,12 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	var registryLoginError string
+	var credentialID string
 	if req.RegistryCredential != nil {
 		var username, password string
 
 		if req.RegistryCredential.CredentialID != "" {
+			credentialID = req.RegistryCredential.CredentialID
 			cred, err := s.credentialsManager.GetCredential(req.RegistryCredential.CredentialID)
 			if err != nil {
 				registryLoginError = "Failed to load credential: " + err.Error()
@@ -722,7 +724,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 			password = req.RegistryCredential.Password
 
 			if req.RegistryCredential.SaveCredential && req.RegistryCredential.CredentialName != "" {
-				_, err := s.credentialsManager.CreateCredential(
+				newCred, err := s.credentialsManager.CreateCredential(
 					req.RegistryCredential.CredentialName,
 					"docker-hub",
 					username,
@@ -732,6 +734,8 @@ func (s *Server) createDeployment(c *gin.Context) {
 				)
 				if err != nil {
 					log.Printf("Warning: failed to save credential: %v", err)
+				} else {
+					credentialID = newCred.ID
 				}
 			}
 		}
@@ -741,6 +745,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 				registryLoginError = err.Error()
 				log.Printf("Warning: registry login failed: %v", err)
 			}
+		}
+	}
+
+	if credentialID != "" && req.Metadata != nil {
+		req.Metadata.CredentialID = credentialID
+		if err := s.manager.SaveMetadata(req.Name, req.Metadata); err != nil {
+			log.Printf("Warning: failed to update metadata with credential ID: %v", err)
 		}
 	}
 
@@ -1166,6 +1177,25 @@ func (s *Server) pullDeploymentImage(c *gin.Context) {
 		OnlyLatest bool `json:"only_latest"`
 	}
 	_ = c.ShouldBindJSON(&req)
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found: " + err.Error(),
+		})
+		return
+	}
+
+	if deployment.Metadata != nil && deployment.Metadata.CredentialID != "" {
+		cred, err := s.credentialsManager.GetCredential(deployment.Metadata.CredentialID)
+		if err != nil {
+			log.Printf("Warning: failed to load credential %s for pull: %v", deployment.Metadata.CredentialID, err)
+		} else {
+			if err := credentials.DockerLogin("", cred.Username, cred.Password); err != nil {
+				log.Printf("Warning: registry login failed for pull: %v", err)
+			}
+		}
+	}
 
 	output, err := s.manager.PullDeployment(name, req.OnlyLatest)
 	if err != nil {
