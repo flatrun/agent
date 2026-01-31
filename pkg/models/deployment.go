@@ -34,6 +34,7 @@ type ServiceMetadata struct {
 	Backup       *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
 	CredentialID string                    `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
 	Domains      []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
+	Databases    []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
 }
 
 type DomainConfig struct {
@@ -45,6 +46,21 @@ type DomainConfig struct {
 	StripPrefix   bool      `yaml:"strip_prefix,omitempty" json:"strip_prefix,omitempty"`
 	SSL           SSLConfig `yaml:"ssl" json:"ssl"`
 	Aliases       []string  `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+}
+
+type DatabaseConfig struct {
+	ID           string `yaml:"id" json:"id"`
+	Alias        string `yaml:"alias" json:"alias"`
+	Type         string `yaml:"type" json:"type"`
+	Mode         string `yaml:"mode" json:"mode"`
+	Service      string `yaml:"service,omitempty" json:"service,omitempty"`
+	Host         string `yaml:"host,omitempty" json:"host,omitempty"`
+	Port         int    `yaml:"port,omitempty" json:"port,omitempty"`
+	Container    string `yaml:"container,omitempty" json:"container,omitempty"`
+	DatabaseName string `yaml:"database_name,omitempty" json:"database_name,omitempty"`
+	Username     string `yaml:"username,omitempty" json:"username,omitempty"`
+	EnvPrefix    string `yaml:"env_prefix,omitempty" json:"env_prefix,omitempty"`
+	IsShared     bool   `yaml:"is_shared,omitempty" json:"is_shared,omitempty"`
 }
 
 func (m *ServiceMetadata) GetDomains() []DomainConfig {
@@ -81,6 +97,26 @@ func (m *ServiceMetadata) GetUniqueDomainNames() []string {
 
 func (m *ServiceMetadata) HasMultipleDomains() bool {
 	return len(m.Domains) > 1
+}
+
+func (m *ServiceMetadata) GetDatabases() []DatabaseConfig {
+	return m.Databases
+}
+
+func (m *ServiceMetadata) GetPrimaryDatabase() *DatabaseConfig {
+	if len(m.Databases) == 0 {
+		return nil
+	}
+	for i := range m.Databases {
+		if m.Databases[i].Alias == "primary" {
+			return &m.Databases[i]
+		}
+	}
+	return &m.Databases[0]
+}
+
+func (m *ServiceMetadata) HasMultipleDatabases() bool {
+	return len(m.Databases) > 1
 }
 
 type BackupSpec struct {

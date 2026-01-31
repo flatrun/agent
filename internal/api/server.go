@@ -577,6 +577,20 @@ func (s *Server) getDeployment(c *gin.Context) {
 	})
 }
 
+type DatabaseConfigRequest struct {
+	Alias             string `json:"alias"`
+	Type              string `json:"type"`
+	Mode              string `json:"mode"`
+	Service           string `json:"service,omitempty"`
+	ExistingContainer string `json:"existing_container,omitempty"`
+	ExternalHost      string `json:"external_host,omitempty"`
+	ExternalPort      int    `json:"external_port,omitempty"`
+	DatabaseName      string `json:"database_name,omitempty"`
+	Username          string `json:"username,omitempty"`
+	Password          string `json:"password,omitempty"`
+	EnvPrefix         string `json:"env_prefix,omitempty"`
+}
+
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
 		Name                      string                  `json:"name" binding:"required"`
@@ -587,6 +601,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 		AutoStart                 bool                    `json:"auto_start"`
 		UseSharedDatabase         bool                    `json:"use_shared_database"`
 		ExistingDatabaseContainer string                  `json:"existing_database_container,omitempty"`
+		Databases                 []DatabaseConfigRequest `json:"databases,omitempty"`
 		RegistryCredential        *struct {
 			CredentialID   string `json:"credential_id,omitempty"`
 			Username       string `json:"username,omitempty"`
@@ -676,7 +691,19 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	var dbEnvVars []EnvVar
-	if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
+	var databaseConfigs []models.DatabaseConfig
+
+	if len(req.Databases) > 0 {
+		envVars, configs, err := s.createDatabasesForDeployment(req.Name, req.Databases)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Deployment created but failed to create databases: " + err.Error(),
+			})
+			return
+		}
+		dbEnvVars = envVars
+		databaseConfigs = configs
+	} else if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
 		dbResult, err := s.createDatabaseForDeployment(req.Name)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -685,6 +712,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 			return
 		}
 		dbEnvVars = dbResult
+		databaseConfigs = []models.DatabaseConfig{{
+			ID:       "primary",
+			Alias:    "primary",
+			Type:     s.config.Infrastructure.Database.Type,
+			Mode:     "shared",
+			IsShared: true,
+		}}
 	}
 
 	allEnvVars := append(req.EnvVars, dbEnvVars...)
@@ -703,6 +737,9 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	if req.Metadata != nil {
+		if len(databaseConfigs) > 0 {
+			req.Metadata.Databases = databaseConfigs
+		}
 		if err := s.manager.SaveMetadata(req.Name, req.Metadata); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "Deployment created but failed to save metadata: " + err.Error(),
@@ -865,6 +902,160 @@ func (s *Server) createDatabaseForDeployment(deploymentName string) ([]EnvVar, e
 	return envVars, nil
 }
 
+func (s *Server) createDatabasesForDeployment(deploymentName string, databases []DatabaseConfigRequest) ([]EnvVar, []models.DatabaseConfig, error) {
+	var allEnvVars []EnvVar
+	var configs []models.DatabaseConfig
+	isFirst := true
+
+	for i, dbReq := range databases {
+		alias := dbReq.Alias
+		if alias == "" {
+			if isFirst {
+				alias = "primary"
+			} else {
+				alias = fmt.Sprintf("db%d", i+1)
+			}
+		}
+
+		envPrefix := dbReq.EnvPrefix
+		if envPrefix == "" {
+			envPrefix = strings.ToUpper(alias)
+		}
+
+		config := models.DatabaseConfig{
+			ID:        fmt.Sprintf("%s-%s", deploymentName, alias),
+			Alias:     alias,
+			Type:      dbReq.Type,
+			Mode:      dbReq.Mode,
+			Service:   dbReq.Service,
+			EnvPrefix: envPrefix,
+		}
+
+		var envVars []EnvVar
+
+		switch dbReq.Mode {
+		case "shared":
+			if !s.config.Infrastructure.Database.Enabled {
+				continue
+			}
+			dbConfig := s.config.Infrastructure.Database
+			dbName := strings.ReplaceAll(deploymentName, "-", "_") + "_" + alias + "_db"
+			dbUser := strings.ReplaceAll(deploymentName, "-", "_") + "_" + alias + "_user"
+			dbPassword := generateRandomPassword(16)
+
+			connConfig := &database.ConnectionConfig{
+				Type:      dbConfig.Type,
+				Host:      dbConfig.Host,
+				Port:      dbConfig.Port,
+				Username:  dbConfig.RootUser,
+				Password:  dbConfig.RootPassword,
+				Container: dbConfig.Container,
+			}
+
+			if err := s.databaseManager.CreateDatabase(connConfig, dbName); err != nil {
+				return nil, nil, fmt.Errorf("failed to create database %s: %w", alias, err)
+			}
+
+			if err := s.databaseManager.CreateUser(connConfig, dbUser, dbPassword, "%"); err != nil {
+				return nil, nil, fmt.Errorf("failed to create user for %s: %w", alias, err)
+			}
+
+			if err := s.databaseManager.GrantPrivileges(connConfig, dbUser, dbName, "%"); err != nil {
+				return nil, nil, fmt.Errorf("failed to grant privileges for %s: %w", alias, err)
+			}
+
+			dbHost := dbConfig.Host
+			if dbHost == "" {
+				dbHost = dbConfig.Container
+			}
+
+			config.Host = dbHost
+			config.Port = dbConfig.Port
+			config.Container = dbConfig.Container
+			config.DatabaseName = dbName
+			config.Username = dbUser
+			config.IsShared = true
+
+			envVars = s.generateDatabaseEnvVars(envPrefix, dbHost, dbConfig.Port, dbName, dbUser, dbPassword, dbConfig.Type, isFirst)
+
+		case "existing":
+			config.Container = dbReq.ExistingContainer
+			config.Host = dbReq.ExistingContainer
+			if dbReq.DatabaseName != "" {
+				config.DatabaseName = dbReq.DatabaseName
+			}
+			if dbReq.Username != "" {
+				config.Username = dbReq.Username
+			}
+
+		case "external":
+			config.Host = dbReq.ExternalHost
+			config.Port = dbReq.ExternalPort
+			if dbReq.DatabaseName != "" {
+				config.DatabaseName = dbReq.DatabaseName
+			}
+			if dbReq.Username != "" {
+				config.Username = dbReq.Username
+			}
+			if dbReq.Password != "" {
+				envVars = s.generateDatabaseEnvVars(envPrefix, dbReq.ExternalHost, dbReq.ExternalPort, dbReq.DatabaseName, dbReq.Username, dbReq.Password, dbReq.Type, isFirst)
+			}
+		}
+
+		allEnvVars = append(allEnvVars, envVars...)
+		configs = append(configs, config)
+		isFirst = false
+	}
+
+	return allEnvVars, configs, nil
+}
+
+func (s *Server) generateDatabaseEnvVars(prefix string, host string, port int, dbName, username, password, dbType string, includeLegacy bool) []EnvVar {
+	var envVars []EnvVar
+
+	envVars = append(envVars,
+		EnvVar{Key: prefix + "_HOST", Value: host},
+		EnvVar{Key: prefix + "_PORT", Value: fmt.Sprintf("%d", port)},
+		EnvVar{Key: prefix + "_DATABASE", Value: dbName},
+		EnvVar{Key: prefix + "_USERNAME", Value: username},
+		EnvVar{Key: prefix + "_PASSWORD", Value: password},
+	)
+
+	var databaseURL string
+	switch dbType {
+	case "mysql", "mariadb":
+		databaseURL = fmt.Sprintf("mysql://%s:%s@%s:%d/%s", username, password, host, port, dbName)
+	case "postgres":
+		databaseURL = fmt.Sprintf("postgres://%s:%s@%s:%d/%s", username, password, host, port, dbName)
+	case "mongodb":
+		databaseURL = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", username, password, host, port, dbName)
+	case "redis":
+		if password != "" {
+			databaseURL = fmt.Sprintf("redis://:%s@%s:%d", password, host, port)
+		} else {
+			databaseURL = fmt.Sprintf("redis://%s:%d", host, port)
+		}
+	}
+	if databaseURL != "" {
+		envVars = append(envVars, EnvVar{Key: prefix + "_URL", Value: databaseURL})
+	}
+
+	if includeLegacy {
+		envVars = append(envVars,
+			EnvVar{Key: "DB_HOST", Value: host},
+			EnvVar{Key: "DB_PORT", Value: fmt.Sprintf("%d", port)},
+			EnvVar{Key: "DB_DATABASE", Value: dbName},
+			EnvVar{Key: "DB_USERNAME", Value: username},
+			EnvVar{Key: "DB_PASSWORD", Value: password},
+		)
+		if databaseURL != "" {
+			envVars = append(envVars, EnvVar{Key: "DATABASE_URL", Value: databaseURL})
+		}
+	}
+
+	return envVars
+}
+
 func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, deploymentName)
 	envFilePath := filepath.Join(deploymentPath, ".env.flatrun")
@@ -903,6 +1094,35 @@ func (s *Server) deleteDatabaseForDeployment(deploymentName string) error {
 
 	if err := s.databaseManager.DropDatabase(connConfig, dbName); err != nil {
 		return fmt.Errorf("failed to drop database: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Server) deleteDatabaseByAlias(deploymentName, alias string) error {
+	dbConfig := s.config.Infrastructure.Database
+	dbName := strings.ReplaceAll(deploymentName, "-", "_") + "_" + alias + "_db"
+	dbUser := strings.ReplaceAll(deploymentName, "-", "_") + "_" + alias + "_user"
+
+	connConfig := &database.ConnectionConfig{
+		Type:      dbConfig.Type,
+		Host:      dbConfig.Host,
+		Port:      dbConfig.Port,
+		Username:  dbConfig.RootUser,
+		Password:  dbConfig.RootPassword,
+		Container: dbConfig.Container,
+	}
+
+	if err := s.databaseManager.RevokePrivileges(connConfig, dbUser, dbName); err != nil {
+		log.Printf("Warning: failed to revoke privileges for %s: %v", dbUser, err)
+	}
+
+	if err := s.databaseManager.DropUser(connConfig, dbUser); err != nil {
+		log.Printf("Warning: failed to drop user %s: %v", dbUser, err)
+	}
+
+	if err := s.databaseManager.DropDatabase(connConfig, dbName); err != nil {
+		return fmt.Errorf("failed to drop database %s: %w", alias, err)
 	}
 
 	return nil
@@ -1126,23 +1346,38 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 		}
 	}
 
-	if deployment != nil && deployment.Metadata != nil {
-		domain := deployment.Metadata.Networking.Domain
+	if deployment != nil && deployment.Metadata != nil && deleteSSL {
+		domainsToDelete := deployment.Metadata.GetUniqueDomainNames()
+		if len(domainsToDelete) == 0 && deployment.Metadata.Networking.Domain != "" {
+			domainsToDelete = []string{deployment.Metadata.Networking.Domain}
+		}
 
-		if deleteSSL && domain != "" && deployment.Metadata.SSL.Enabled {
+		for _, domain := range domainsToDelete {
 			if err := s.proxyOrchestrator.SSLManager().DeleteCertificate(domain); err != nil {
 				log.Printf("Warning: failed to delete SSL certificate for %s: %v", domain, err)
 			} else {
-				deletedItems = append(deletedItems, "ssl_certificate")
+				deletedItems = append(deletedItems, fmt.Sprintf("ssl_certificate:%s", domain))
 			}
 		}
 	}
 
 	if deleteDatabase && s.config.Infrastructure.Database.Enabled {
-		if err := s.deleteDatabaseForDeployment(name); err != nil {
-			log.Printf("Warning: failed to delete database for %s: %v", name, err)
+		if deployment != nil && deployment.Metadata != nil && len(deployment.Metadata.Databases) > 0 {
+			for _, dbConfig := range deployment.Metadata.Databases {
+				if dbConfig.IsShared {
+					if err := s.deleteDatabaseByAlias(name, dbConfig.Alias); err != nil {
+						log.Printf("Warning: failed to delete database %s for %s: %v", dbConfig.Alias, name, err)
+					} else {
+						deletedItems = append(deletedItems, fmt.Sprintf("database:%s", dbConfig.Alias))
+					}
+				}
+			}
 		} else {
-			deletedItems = append(deletedItems, "database")
+			if err := s.deleteDatabaseForDeployment(name); err != nil {
+				log.Printf("Warning: failed to delete database for %s: %v", name, err)
+			} else {
+				deletedItems = append(deletedItems, "database")
+			}
 		}
 	}
 
