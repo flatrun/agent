@@ -33,6 +33,54 @@ type ServiceMetadata struct {
 	Security     *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
 	Backup       *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
 	CredentialID string                    `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
+	Domains      []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
+}
+
+type DomainConfig struct {
+	ID            string    `yaml:"id" json:"id"`
+	Service       string    `yaml:"service" json:"service"`
+	ContainerPort int       `yaml:"container_port" json:"container_port"`
+	Domain        string    `yaml:"domain" json:"domain"`
+	PathPrefix    string    `yaml:"path_prefix,omitempty" json:"path_prefix,omitempty"`
+	StripPrefix   bool      `yaml:"strip_prefix,omitempty" json:"strip_prefix,omitempty"`
+	SSL           SSLConfig `yaml:"ssl" json:"ssl"`
+	Aliases       []string  `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+}
+
+func (m *ServiceMetadata) GetDomains() []DomainConfig {
+	if len(m.Domains) > 0 {
+		return m.Domains
+	}
+	if !m.Networking.Expose || m.Networking.Domain == "" {
+		return nil
+	}
+	return []DomainConfig{{
+		ID:            "default",
+		Service:       m.Name,
+		ContainerPort: m.Networking.ContainerPort,
+		Domain:        m.Networking.Domain,
+		SSL:           m.SSL,
+	}}
+}
+
+func (m *ServiceMetadata) GetUniqueDomainNames() []string {
+	domains := m.GetDomains()
+	domainSet := make(map[string]struct{})
+	for _, d := range domains {
+		domainSet[d.Domain] = struct{}{}
+		for _, alias := range d.Aliases {
+			domainSet[alias] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(domainSet))
+	for name := range domainSet {
+		result = append(result, name)
+	}
+	return result
+}
+
+func (m *ServiceMetadata) HasMultipleDomains() bool {
+	return len(m.Domains) > 1
 }
 
 type BackupSpec struct {

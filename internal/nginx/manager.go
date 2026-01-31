@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
@@ -83,39 +84,12 @@ func (m *Manager) CreateVirtualHost(deployment *models.Deployment) error {
 		return fmt.Errorf("deployment has no metadata")
 	}
 
-	if !deployment.Metadata.Networking.Expose {
+	domains := deployment.Metadata.GetDomains()
+	if len(domains) == 0 {
 		return nil
 	}
 
-	if deployment.Metadata.Networking.Domain == "" {
-		return fmt.Errorf("domain is required for exposed deployments")
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if err := os.MkdirAll(m.configPath, 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	configContent, err := m.generateConfig(deployment)
-	if err != nil {
-		return fmt.Errorf("failed to generate nginx config: %w", err)
-	}
-
-	configFile := filepath.Join(m.configPath, deployment.Name+".conf")
-	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("failed to write nginx config: %w", err)
-	}
-
-	// Update per-deployment rate limits if security is enabled
-	if deployment.Metadata.Security != nil && deployment.Metadata.Security.Enabled {
-		if err := m.updateRateLimitsInternal(deployment.Name, deployment.Metadata.Security.RateLimits); err != nil {
-			return fmt.Errorf("failed to update rate limits: %w", err)
-		}
-	}
-
-	return nil
+	return m.CreateMultiDomainVirtualHost(deployment)
 }
 
 func (m *Manager) DeleteVirtualHost(deploymentName string) error {
@@ -369,6 +343,189 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 	return buf.String(), nil
 }
 
+func (m *Manager) generateMultiDomainConfig(deployment *models.Deployment) (string, error) {
+	domains := deployment.Metadata.GetDomains()
+	if len(domains) == 0 {
+		return "", fmt.Errorf("no domains configured")
+	}
+
+	securityEnabled := false
+	var blockedIPs []string
+	var rateLimits []rateLimitData
+	if deployment.Metadata.Security != nil && deployment.Metadata.Security.Enabled {
+		securityEnabled = true
+		blockedIPs = deployment.Metadata.Security.BlockedIPs
+
+		for _, rl := range deployment.Metadata.Security.RateLimits {
+			if !rl.Enabled {
+				continue
+			}
+			zone := fmt.Sprintf("%s_%s", deployment.Name, sanitizeZoneName(rl.Path))
+			burst := rl.Burst
+			if burst <= 0 {
+				burst = rl.Rate / 2
+				if burst < 1 {
+					burst = 1
+				}
+			}
+			rateLimits = append(rateLimits, rateLimitData{
+				Path:  rl.Path,
+				Zone:  zone,
+				Rate:  rl.Rate,
+				Burst: burst,
+			})
+		}
+	}
+
+	servers := m.groupDomainsByHost(domains, deployment.Name)
+
+	data := multiRouteTemplateData{
+		DeploymentName:       deployment.Name,
+		ContainerWebrootPath: m.containerWebrootPath,
+		SecurityEnabled:      securityEnabled,
+		BlockedIPs:           blockedIPs,
+		RateLimits:           rateLimits,
+		Servers:              servers,
+	}
+
+	allSSL := true
+	anySSL := false
+	for _, server := range servers {
+		if server.HasSSL {
+			anySSL = true
+		} else {
+			allSSL = false
+		}
+	}
+
+	var tmplStr string
+	if allSSL {
+		tmplStr = multiRouteSSLTemplate
+	} else if anySSL {
+		tmplStr = multiRouteMixedTemplate
+	} else {
+		tmplStr = multiRouteHTTPTemplate
+	}
+
+	tmpl, err := template.New("nginx-multi").Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse multi-domain template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to execute multi-domain template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentName string) []serverData {
+	hostDomains := make(map[string][]models.DomainConfig)
+	for _, d := range domains {
+		hostDomains[d.Domain] = append(hostDomains[d.Domain], d)
+	}
+
+	var servers []serverData
+	for host, domainList := range hostDomains {
+		sort.Slice(domainList, func(i, j int) bool {
+			return len(domainList[i].PathPrefix) > len(domainList[j].PathPrefix)
+		})
+
+		var locations []locationData
+		hasSSL := false
+		sslDomain := host
+		var serverAliases []string
+
+		for _, d := range domainList {
+			path := d.PathPrefix
+			if path == "" {
+				path = "/"
+			}
+
+			service := d.Service
+			if service == "" {
+				service = deploymentName
+			}
+
+			port := d.ContainerPort
+			if port == 0 {
+				port = 80
+			}
+
+			locations = append(locations, locationData{
+				Path:          path,
+				Service:       service,
+				ContainerPort: port,
+				Protocol:      "http",
+				StripPrefix:   d.StripPrefix,
+				OriginalPath:  d.PathPrefix,
+			})
+
+			if d.SSL.Enabled {
+				hasSSL = true
+			}
+
+			for _, alias := range d.Aliases {
+				if alias != host {
+					serverAliases = append(serverAliases, alias)
+				}
+			}
+		}
+
+		servers = append(servers, serverData{
+			Domain:        host,
+			SSLEnabled:    hasSSL,
+			HasSSL:        hasSSL,
+			SSLDomain:     sslDomain,
+			Locations:     locations,
+			ServerAliases: serverAliases,
+		})
+	}
+
+	sort.Slice(servers, func(i, j int) bool {
+		return servers[i].Domain < servers[j].Domain
+	})
+
+	return servers
+}
+
+func (m *Manager) CreateMultiDomainVirtualHost(deployment *models.Deployment) error {
+	if deployment.Metadata == nil {
+		return fmt.Errorf("deployment has no metadata")
+	}
+
+	domains := deployment.Metadata.GetDomains()
+	if len(domains) == 0 {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := os.MkdirAll(m.configPath, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	configContent, err := m.generateMultiDomainConfig(deployment)
+	if err != nil {
+		return fmt.Errorf("failed to generate multi-domain nginx config: %w", err)
+	}
+
+	configFile := filepath.Join(m.configPath, deployment.Name+".conf")
+	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
+		return fmt.Errorf("failed to write nginx config: %w", err)
+	}
+
+	if deployment.Metadata.Security != nil && deployment.Metadata.Security.Enabled {
+		if err := m.updateRateLimitsInternal(deployment.Name, deployment.Metadata.Security.RateLimits); err != nil {
+			return fmt.Errorf("failed to update rate limits: %w", err)
+		}
+	}
+
+	return nil
+}
+
 type VirtualHostInfo struct {
 	Name       string `json:"name"`
 	ConfigFile string `json:"config_file"`
@@ -387,6 +544,33 @@ type templateData struct {
 	SecurityEnabled      bool
 	BlockedIPs           []string
 	RateLimits           []rateLimitData
+}
+
+type multiRouteTemplateData struct {
+	DeploymentName       string
+	ContainerWebrootPath string
+	SecurityEnabled      bool
+	BlockedIPs           []string
+	RateLimits           []rateLimitData
+	Servers              []serverData
+}
+
+type serverData struct {
+	Domain       string
+	SSLEnabled   bool
+	Locations    []locationData
+	HasSSL       bool
+	SSLDomain    string
+	ServerAliases []string
+}
+
+type locationData struct {
+	Path          string
+	Service       string
+	ContainerPort int
+	Protocol      string
+	StripPrefix   bool
+	OriginalPath  string
 }
 
 type rateLimitData struct {
@@ -533,6 +717,284 @@ server {
 {{- end}}
 }
 `
+
+const multiRouteHTTPTemplate = `{{- range .Servers}}
+server {
+    listen 80;
+    server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+{{- range $.BlockedIPs}}
+    deny {{.}};
+{{- end}}
+{{- range .Locations}}
+
+    location {{.Path}} {
+        set $upstream {{.Service}}:{{.ContainerPort}};
+{{- if .StripPrefix}}
+        rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
+{{- end}}
+        proxy_pass {{.Protocol}}://$upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
+{{- range $.RateLimits}}
+
+    location {{.Path}} {
+        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
+        limit_req_status 429;
+        set $upstream {{$.DeploymentName}}:80;
+        proxy_pass http://$upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
+
+    location /.well-known/acme-challenge/ {
+        root {{$.ContainerWebrootPath}};
+    }
+}
+{{end}}`
+
+const multiRouteSSLTemplate = `{{- range .Servers}}
+server {
+    listen 80;
+    server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
+
+    location /.well-known/acme-challenge/ {
+        root {{$.ContainerWebrootPath}};
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
+
+    ssl_certificate /etc/letsencrypt/live/{{.SSLDomain}}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{.SSLDomain}}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+{{- range $.BlockedIPs}}
+    deny {{.}};
+{{- end}}
+{{- range .Locations}}
+
+    location {{.Path}} {
+        set $upstream {{.Service}}:{{.ContainerPort}};
+{{- if .StripPrefix}}
+        rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
+{{- end}}
+        proxy_pass {{.Protocol}}://$upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
+{{- range $.RateLimits}}
+
+    location {{.Path}} {
+        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
+        limit_req_status 429;
+        set $upstream {{$.DeploymentName}}:80;
+        proxy_pass http://$upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
+}
+{{end}}`
+
+const multiRouteMixedTemplate = `{{- range .Servers}}
+{{- if .HasSSL}}
+server {
+    listen 80;
+    server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
+
+    location /.well-known/acme-challenge/ {
+        root {{$.ContainerWebrootPath}};
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
+
+    ssl_certificate /etc/letsencrypt/live/{{.SSLDomain}}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{.SSLDomain}}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+{{- range $.BlockedIPs}}
+    deny {{.}};
+{{- end}}
+{{- range .Locations}}
+
+    location {{.Path}} {
+        set $upstream {{.Service}}:{{.ContainerPort}};
+{{- if .StripPrefix}}
+        rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
+{{- end}}
+        proxy_pass {{.Protocol}}://$upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
+{{- range $.RateLimits}}
+
+    location {{.Path}} {
+        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
+        limit_req_status 429;
+        set $upstream {{$.DeploymentName}}:80;
+        proxy_pass http://$upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
+}
+{{- else}}
+server {
+    listen 80;
+    server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+{{- range $.BlockedIPs}}
+    deny {{.}};
+{{- end}}
+{{- range .Locations}}
+
+    location {{.Path}} {
+        set $upstream {{.Service}}:{{.ContainerPort}};
+{{- if .StripPrefix}}
+        rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
+{{- end}}
+        proxy_pass {{.Protocol}}://$upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
+{{- range $.RateLimits}}
+
+    location {{.Path}} {
+        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
+        limit_req_status 429;
+        set $upstream {{$.DeploymentName}}:80;
+        proxy_pass http://$upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+{{- if $.SecurityEnabled}}
+        log_by_lua_block {
+            security.capture_event()
+        }
+{{- end}}
+    }
+{{- end}}
+
+    location /.well-known/acme-challenge/ {
+        root {{$.ContainerWebrootPath}};
+    }
+}
+{{- end}}
+{{end}}`
 
 func sanitizeZoneName(path string) string {
 	name := strings.ReplaceAll(path, "/", "_")

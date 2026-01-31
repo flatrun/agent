@@ -40,6 +40,7 @@ import (
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/flatrun/agent/templates"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -263,6 +264,12 @@ func (s *Server) setupRoutes() {
 			protected.GET("/proxy/vhosts", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.listVirtualHosts)
 			protected.POST("/proxy/sync", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.syncAllProxies)
 			protected.POST("/deployments/:name/ssl/disable", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.disableSSL)
+
+			// Domain endpoints
+			protected.GET("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDomains)
+			protected.POST("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDomain)
+			protected.PUT("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDomain)
+			protected.DELETE("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteDomain)
 
 			// Settings endpoints
 			protected.GET("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getSettings)
@@ -3129,6 +3136,239 @@ func (s *Server) setupProxyWithRetry(deployment *models.Deployment, maxRetries i
 		}
 	}
 	return nil, lastErr
+}
+
+func (s *Server) listDomains(c *gin.Context) {
+	name := c.Param("name")
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	if deployment.Metadata == nil {
+		c.JSON(http.StatusOK, gin.H{"domains": []models.DomainConfig{}})
+		return
+	}
+
+	domains := deployment.Metadata.GetDomains()
+	c.JSON(http.StatusOK, gin.H{"domains": domains})
+}
+
+func (s *Server) addDomain(c *gin.Context) {
+	name := c.Param("name")
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	var domain models.DomainConfig
+	if err := c.ShouldBindJSON(&domain); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid domain data: " + err.Error()})
+		return
+	}
+
+	if domain.Domain == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Domain is required"})
+		return
+	}
+
+	if domain.ID == "" {
+		domain.ID = generateDomainID()
+	}
+
+	if deployment.Metadata == nil {
+		deployment.Metadata = &models.ServiceMetadata{}
+	}
+
+	if len(deployment.Metadata.Domains) == 0 && deployment.Metadata.Networking.Expose {
+		existingDomain := models.DomainConfig{
+			ID:            "default",
+			Service:       deployment.Metadata.Name,
+			ContainerPort: deployment.Metadata.Networking.ContainerPort,
+			Domain:        deployment.Metadata.Networking.Domain,
+			SSL:           deployment.Metadata.SSL,
+		}
+		deployment.Metadata.Domains = []models.DomainConfig{existingDomain}
+	}
+
+	deployment.Metadata.Domains = append(deployment.Metadata.Domains, domain)
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save domain: " + err.Error()})
+		return
+	}
+
+	var result *proxy.SetupResult
+	if s.proxyOrchestrator != nil {
+		var err error
+		result, err = s.proxyOrchestrator.SetupDeployment(deployment)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":      "Domain added successfully",
+		"domain":       domain,
+		"proxy_result": result,
+	})
+}
+
+func (s *Server) updateDomain(c *gin.Context) {
+	name := c.Param("name")
+	domainID := c.Param("domainId")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	if deployment.Metadata == nil || len(deployment.Metadata.Domains) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	var updatedDomain models.DomainConfig
+	if err := c.ShouldBindJSON(&updatedDomain); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid domain data: " + err.Error()})
+		return
+	}
+
+	found := false
+	for i, d := range deployment.Metadata.Domains {
+		if d.ID == domainID {
+			updatedDomain.ID = domainID
+			deployment.Metadata.Domains[i] = updatedDomain
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save domain: " + err.Error()})
+		return
+	}
+
+	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Domain updated successfully",
+		"domain":       updatedDomain,
+		"proxy_result": result,
+	})
+}
+
+func (s *Server) deleteDomain(c *gin.Context) {
+	name := c.Param("name")
+	domainID := c.Param("domainId")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	if deployment.Metadata == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	// Handle legacy "default" domain from networking config
+	if domainID == "default" && len(deployment.Metadata.Domains) == 0 {
+		if !deployment.Metadata.Networking.Expose || deployment.Metadata.Networking.Domain == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+			return
+		}
+		// Clear the legacy networking config
+		deployment.Metadata.Networking.Expose = false
+		deployment.Metadata.Networking.Domain = ""
+		deployment.Metadata.SSL.Enabled = false
+		deployment.Metadata.SSL.AutoCert = false
+
+		if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metadata: " + err.Error()})
+			return
+		}
+
+		if s.proxyOrchestrator != nil {
+			if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
+				log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Domain deleted successfully"})
+		return
+	}
+
+	if len(deployment.Metadata.Domains) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	found := false
+	newDomains := make([]models.DomainConfig, 0)
+	for _, d := range deployment.Metadata.Domains {
+		if d.ID == domainID {
+			found = true
+			continue
+		}
+		newDomains = append(newDomains, d)
+	}
+
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	if len(newDomains) == 0 {
+		deployment.Metadata.Domains = nil
+	} else {
+		deployment.Metadata.Domains = newDomains
+	}
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metadata: " + err.Error()})
+		return
+	}
+
+	if s.proxyOrchestrator != nil {
+		if len(newDomains) == 0 {
+			if deployment.Metadata.Networking.Expose {
+				if _, err := s.proxyOrchestrator.SetupDeployment(deployment); err != nil {
+					log.Printf("Warning: failed to setup legacy proxy for %s: %v", name, err)
+				}
+			} else {
+				if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
+					log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
+				}
+			}
+		} else {
+			if _, err := s.proxyOrchestrator.SetupDeployment(deployment); err != nil {
+				log.Printf("Warning: failed to update proxy for %s: %v", name, err)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Domain deleted successfully",
+	})
+}
+
+func generateDomainID() string {
+	return uuid.New().String()
 }
 
 func (s *Server) getSystemStats(c *gin.Context) {

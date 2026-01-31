@@ -47,29 +47,46 @@ func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupRes
 		DeploymentName: deployment.Name,
 	}
 
-	if deployment.Metadata == nil || !deployment.Metadata.Networking.Expose {
+	if deployment.Metadata == nil {
+		result.Skipped = true
+		result.Message = "deployment has no metadata"
+		return result, nil
+	}
+
+	domains := deployment.Metadata.GetDomains()
+	if len(domains) == 0 {
 		result.Skipped = true
 		result.Message = "deployment not configured for exposure"
 		return result, nil
 	}
 
-	domain := deployment.Metadata.Networking.Domain
-	if domain == "" {
-		return nil, fmt.Errorf("domain is required for exposed deployments")
+	return o.setupMultiDomainDeployment(deployment, domains)
+}
+
+func (o *Orchestrator) setupMultiDomainDeployment(deployment *models.Deployment, domains []models.DomainConfig) (*SetupResult, error) {
+	result := &SetupResult{
+		DeploymentName: deployment.Name,
+		Domains:        deployment.Metadata.GetUniqueDomainNames(),
 	}
 
-	if err := o.ssl.ValidateDomain(domain); err != nil {
-		return nil, fmt.Errorf("invalid domain: %w", err)
+	for _, domainName := range result.Domains {
+		if err := o.ssl.ValidateDomain(domainName); err != nil {
+			return nil, fmt.Errorf("invalid domain %s: %w", domainName, err)
+		}
 	}
 
-	result.Domain = domain
-
-	wantsSSL := deployment.Metadata.SSL.Enabled && deployment.Metadata.SSL.AutoCert
-	certExists := o.ssl.CertificateExists(domain)
-
-	if wantsSSL && !certExists {
-		deployment.Metadata.SSL.Enabled = false
+	if len(result.Domains) > 0 {
+		result.Domain = result.Domains[0]
 	}
+
+	for i := range domains {
+		if domains[i].SSL.Enabled && domains[i].SSL.AutoCert {
+			if !o.ssl.CertificateExists(domains[i].Domain) {
+				domains[i].SSL.Enabled = false
+			}
+		}
+	}
+	deployment.Metadata.Domains = domains
 
 	if err := o.nginx.CreateVirtualHost(deployment); err != nil {
 		return nil, fmt.Errorf("failed to create virtual host: %w", err)
@@ -87,37 +104,32 @@ func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupRes
 		result.NginxReloaded = true
 	}
 
-	if wantsSSL {
-		if certExists {
+	certResults, err := o.ssl.RequestCertificatesForDomains(domains)
+	if err != nil {
+		log.Printf("warning: failed to request certificates: %v", err)
+		result.SSLError = err.Error()
+	} else {
+		result.CertificateResults = certResults.Results
+		result.CertificateRequested = len(certResults.Results) > 0
+		if certResults.Success {
 			result.CertificateExists = true
-		} else {
-			certResult, err := o.ssl.RequestCertificate(domain)
-			if err != nil {
-				log.Printf("warning: failed to request certificate for %s: %v", domain, err)
-				result.SSLError = err.Error()
-			} else {
-				result.CertificateRequested = true
-				result.SSLMessage = certResult.Message
-				// Verify certificate was actually created
-				if o.ssl.CertificateExists(domain) {
-					result.CertificateExists = true
-				} else {
-					log.Printf("warning: certificate request succeeded but cert not found for %s", domain)
-					result.CertificateRequested = false
-					result.SSLError = "certificate request succeeded but certificate file not found"
-				}
+		}
+
+		needsUpdate := false
+		for i := range domains {
+			if domains[i].SSL.AutoCert && o.ssl.CertificateExists(domains[i].Domain) {
+				domains[i].SSL.Enabled = true
+				needsUpdate = true
 			}
 		}
 
-		if result.CertificateExists {
-			deployment.Metadata.SSL.Enabled = true
+		if needsUpdate {
+			deployment.Metadata.Domains = domains
 			if err := o.nginx.UpdateVirtualHost(deployment); err != nil {
 				log.Printf("warning: failed to update virtual host with SSL: %v", err)
 			}
 			if err := o.nginx.TestConfig(); err != nil {
-				log.Printf("warning: SSL config test failed, reverting to HTTP: %v", err)
-				deployment.Metadata.SSL.Enabled = false
-				_ = o.nginx.UpdateVirtualHost(deployment)
+				log.Printf("warning: SSL config test failed: %v", err)
 			}
 			if err := o.nginx.Reload(); err != nil {
 				log.Printf("warning: failed to reload nginx after SSL: %v", err)
@@ -142,7 +154,9 @@ func (o *Orchestrator) TeardownDeployment(deploymentName string) error {
 }
 
 func (o *Orchestrator) UpdateDeployment(deployment *models.Deployment) (*SetupResult, error) {
-	if deployment.Metadata == nil || !deployment.Metadata.Networking.Expose {
+	hasDomains := deployment.Metadata != nil && len(deployment.Metadata.GetDomains()) > 0
+
+	if !hasDomains {
 		if o.nginx.VirtualHostExists(deployment.Name) {
 			if err := o.TeardownDeployment(deployment.Name); err != nil {
 				return nil, err
@@ -197,18 +211,36 @@ func (o *Orchestrator) GetDeploymentProxyStatus(deployment *models.Deployment) *
 		return status
 	}
 
-	status.Exposed = deployment.Metadata.Networking.Expose
-	status.Domain = deployment.Metadata.Networking.Domain
+	domainConfigs := deployment.Metadata.GetDomains()
+	if len(domainConfigs) == 0 {
+		return status
+	}
+
+	status.DomainConfigs = domainConfigs
+	status.Domains = deployment.Metadata.GetUniqueDomainNames()
+	status.Exposed = true
 	status.VirtualHostExists = o.nginx.VirtualHostExists(deployment.Name)
 
-	if deployment.Metadata.SSL.Enabled && status.Domain != "" {
-		status.SSLEnabled = true
-		status.CertificateExists = o.ssl.CertificateExists(status.Domain)
+	if len(status.Domains) > 0 {
+		status.Domain = status.Domains[0]
+	}
 
-		if status.CertificateExists {
-			cert, err := o.ssl.GetCertificate(status.Domain)
+	for _, d := range domainConfigs {
+		if d.SSL.Enabled {
+			status.SSLEnabled = true
+			break
+		}
+	}
+
+	for _, domainName := range status.Domains {
+		if o.ssl.CertificateExists(domainName) {
+			status.CertificateExists = true
+			cert, err := o.ssl.GetCertificate(domainName)
 			if err == nil {
-				status.Certificate = cert
+				status.Certificates = append(status.Certificates, *cert)
+				if status.Certificate == nil {
+					status.Certificate = cert
+				}
 			}
 		}
 	}
@@ -229,25 +261,30 @@ func (o *Orchestrator) GetExpiringCertificates(days int) ([]models.Certificate, 
 }
 
 type SetupResult struct {
-	DeploymentName       string `json:"deployment_name"`
-	Domain               string `json:"domain,omitempty"`
-	Success              bool   `json:"success"`
-	Skipped              bool   `json:"skipped"`
-	Message              string `json:"message,omitempty"`
-	VirtualHostCreated   bool   `json:"virtual_host_created"`
-	NginxReloaded        bool   `json:"nginx_reloaded"`
-	CertificateRequested bool   `json:"certificate_requested"`
-	CertificateExists    bool   `json:"certificate_exists"`
-	SSLMessage           string `json:"ssl_message,omitempty"`
-	SSLError             string `json:"ssl_error,omitempty"`
+	DeploymentName       string                   `json:"deployment_name"`
+	Domain               string                   `json:"domain,omitempty"`
+	Domains              []string                 `json:"domains,omitempty"`
+	Success              bool                     `json:"success"`
+	Skipped              bool                     `json:"skipped"`
+	Message              string                   `json:"message,omitempty"`
+	VirtualHostCreated   bool                     `json:"virtual_host_created"`
+	NginxReloaded        bool                     `json:"nginx_reloaded"`
+	CertificateRequested bool                     `json:"certificate_requested"`
+	CertificateExists    bool                     `json:"certificate_exists"`
+	CertificateResults   []*ssl.CertificateResult `json:"certificate_results,omitempty"`
+	SSLMessage           string                   `json:"ssl_message,omitempty"`
+	SSLError             string                   `json:"ssl_error,omitempty"`
 }
 
 type ProxyStatus struct {
-	DeploymentName    string              `json:"deployment_name"`
-	Exposed           bool                `json:"exposed"`
-	Domain            string              `json:"domain,omitempty"`
-	VirtualHostExists bool                `json:"virtual_host_exists"`
-	SSLEnabled        bool                `json:"ssl_enabled"`
-	CertificateExists bool                `json:"certificate_exists"`
-	Certificate       *models.Certificate `json:"certificate,omitempty"`
+	DeploymentName    string                `json:"deployment_name"`
+	Exposed           bool                  `json:"exposed"`
+	Domain            string                `json:"domain,omitempty"`
+	Domains           []string              `json:"domains,omitempty"`
+	DomainConfigs     []models.DomainConfig `json:"domains_config,omitempty"`
+	VirtualHostExists bool                  `json:"virtual_host_exists"`
+	SSLEnabled        bool                  `json:"ssl_enabled"`
+	CertificateExists bool                  `json:"certificate_exists"`
+	Certificate       *models.Certificate   `json:"certificate,omitempty"`
+	Certificates      []models.Certificate  `json:"certificates,omitempty"`
 }
