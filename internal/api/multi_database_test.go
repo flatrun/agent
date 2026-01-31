@@ -111,11 +111,12 @@ func TestGenerateDatabaseEnvVars(t *testing.T) {
 	}
 }
 
-func TestDatabaseConfigRequest_Validation(t *testing.T) {
+func TestDatabaseConfigRequest_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
 		req     DatabaseConfigRequest
 		wantErr bool
+		errMsg  string
 	}{
 		{
 			name: "valid shared database config",
@@ -150,21 +151,129 @@ func TestDatabaseConfigRequest_Validation(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "valid create mode config",
+			req: DatabaseConfigRequest{
+				Alias: "newdb",
+				Type:  "mariadb",
+				Mode:  "create",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid database type",
+			req: DatabaseConfigRequest{
+				Alias: "test",
+				Type:  "oracle",
+				Mode:  "shared",
+			},
+			wantErr: true,
+			errMsg:  "invalid database type",
+		},
+		{
+			name: "invalid mode",
+			req: DatabaseConfigRequest{
+				Alias: "test",
+				Type:  "mysql",
+				Mode:  "invalid",
+			},
+			wantErr: true,
+			errMsg:  "invalid database mode",
+		},
+		{
+			name: "existing mode missing container",
+			req: DatabaseConfigRequest{
+				Alias: "test",
+				Type:  "mysql",
+				Mode:  "existing",
+			},
+			wantErr: true,
+			errMsg:  "existing_container is required",
+		},
+		{
+			name: "external mode missing host",
+			req: DatabaseConfigRequest{
+				Alias:        "test",
+				Type:         "postgres",
+				Mode:         "external",
+				ExternalPort: 5432,
+			},
+			wantErr: true,
+			errMsg:  "external_host is required",
+		},
+		{
+			name: "external mode missing port",
+			req: DatabaseConfigRequest{
+				Alias:        "test",
+				Type:         "postgres",
+				Mode:         "external",
+				ExternalHost: "db.example.com",
+			},
+			wantErr: true,
+			errMsg:  "external_port must be a positive integer",
+		},
+		{
+			name: "external mode with zero port",
+			req: DatabaseConfigRequest{
+				Alias:        "test",
+				Type:         "postgres",
+				Mode:         "external",
+				ExternalHost: "db.example.com",
+				ExternalPort: 0,
+			},
+			wantErr: true,
+			errMsg:  "external_port must be a positive integer",
+		},
+		{
+			name: "external mode with negative port",
+			req: DatabaseConfigRequest{
+				Alias:        "test",
+				Type:         "postgres",
+				Mode:         "external",
+				ExternalHost: "db.example.com",
+				ExternalPort: -1,
+			},
+			wantErr: true,
+			errMsg:  "external_port must be a positive integer",
+		},
+		{
+			name: "valid mongodb config",
+			req: DatabaseConfigRequest{
+				Alias: "mongo",
+				Type:  "mongodb",
+				Mode:  "shared",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.req.Alias == "" && !tt.wantErr {
-				t.Error("alias should not be empty for valid config")
-			}
-			if tt.req.Type == "" && !tt.wantErr {
-				t.Error("type should not be empty for valid config")
-			}
-			if tt.req.Mode == "" && !tt.wantErr {
-				t.Error("mode should not be empty for valid config")
+			err := tt.req.Validate()
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Validate() expected error containing %q, got nil", tt.errMsg)
+					return
+				}
+				if tt.errMsg != "" && !containsSubstring(err.Error(), tt.errMsg) {
+					t.Errorf("Validate() error = %q, want error containing %q", err.Error(), tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Validate() unexpected error: %v", err)
+				}
 			}
 		})
 	}
+}
+
+func containsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMultipleDatabaseConfigs(t *testing.T) {

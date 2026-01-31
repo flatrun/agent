@@ -591,6 +591,39 @@ type DatabaseConfigRequest struct {
 	EnvPrefix         string `json:"env_prefix,omitempty"`
 }
 
+func (d *DatabaseConfigRequest) Validate() error {
+	validTypes := map[string]bool{
+		"mysql": true, "postgres": true, "mariadb": true,
+		"mongodb": true, "redis": true,
+	}
+	if !validTypes[d.Type] {
+		return fmt.Errorf("invalid database type: %s (must be mysql, postgres, mariadb, mongodb, or redis)", d.Type)
+	}
+
+	validModes := map[string]bool{
+		"shared": true, "create": true, "existing": true, "external": true,
+	}
+	if !validModes[d.Mode] {
+		return fmt.Errorf("invalid database mode: %s (must be shared, create, existing, or external)", d.Mode)
+	}
+
+	switch d.Mode {
+	case "existing":
+		if d.ExistingContainer == "" {
+			return fmt.Errorf("existing_container is required for mode 'existing'")
+		}
+	case "external":
+		if d.ExternalHost == "" {
+			return fmt.Errorf("external_host is required for mode 'external'")
+		}
+		if d.ExternalPort <= 0 {
+			return fmt.Errorf("external_port must be a positive integer for mode 'external'")
+		}
+	}
+
+	return nil
+}
+
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
 		Name                      string                  `json:"name" binding:"required"`
@@ -694,6 +727,15 @@ func (s *Server) createDeployment(c *gin.Context) {
 	var databaseConfigs []models.DatabaseConfig
 
 	if len(req.Databases) > 0 {
+		for i, dbReq := range req.Databases {
+			if err := dbReq.Validate(); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("invalid database configuration at index %d: %s", i, err.Error()),
+				})
+				return
+			}
+		}
+
 		envVars, configs, err := s.createDatabasesForDeployment(req.Name, req.Databases)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
