@@ -320,3 +320,67 @@ type RenewalResult struct {
 	Message        string   `json:"message"`
 	RenewedDomains []string `json:"renewed_domains,omitempty"`
 }
+
+type MultiCertificateResult struct {
+	Results []*CertificateResult `json:"results"`
+	Success bool                 `json:"success"`
+}
+
+func (m *Manager) RequestCertificatesForDomains(domains []models.DomainConfig) (*MultiCertificateResult, error) {
+	domainSet := make(map[string]bool)
+	for _, d := range domains {
+		if d.SSL.Enabled && d.SSL.AutoCert && d.Domain != "" {
+			domainSet[d.Domain] = true
+			for _, alias := range d.Aliases {
+				domainSet[alias] = true
+			}
+		}
+	}
+
+	result := &MultiCertificateResult{
+		Results: make([]*CertificateResult, 0),
+		Success: true,
+	}
+
+	for domain := range domainSet {
+		if m.CertificateExists(domain) {
+			result.Results = append(result.Results, &CertificateResult{
+				Domain:  domain,
+				Success: true,
+				Message: "Certificate already exists",
+			})
+			continue
+		}
+
+		certResult, err := m.RequestCertificate(domain)
+		if err != nil {
+			result.Results = append(result.Results, &CertificateResult{
+				Domain:  domain,
+				Success: false,
+				Message: err.Error(),
+			})
+			result.Success = false
+		} else {
+			result.Results = append(result.Results, certResult)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *Manager) GetDomainsNeedingCertificates(domains []models.DomainConfig) []string {
+	var result []string
+	for _, d := range domains {
+		if d.SSL.Enabled && d.SSL.AutoCert && d.Domain != "" {
+			if !m.CertificateExists(d.Domain) {
+				result = append(result, d.Domain)
+			}
+			for _, alias := range d.Aliases {
+				if !m.CertificateExists(alias) {
+					result = append(result, alias)
+				}
+			}
+		}
+	}
+	return result
+}

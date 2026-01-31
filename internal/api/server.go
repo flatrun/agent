@@ -40,6 +40,7 @@ import (
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/flatrun/agent/templates"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -263,6 +264,12 @@ func (s *Server) setupRoutes() {
 			protected.GET("/proxy/vhosts", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.listVirtualHosts)
 			protected.POST("/proxy/sync", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.syncAllProxies)
 			protected.POST("/deployments/:name/ssl/disable", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.disableSSL)
+
+			// Domain endpoints
+			protected.GET("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDomains)
+			protected.POST("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDomain)
+			protected.PUT("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDomain)
+			protected.DELETE("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteDomain)
 
 			// Settings endpoints
 			protected.GET("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getSettings)
@@ -570,6 +577,53 @@ func (s *Server) getDeployment(c *gin.Context) {
 	})
 }
 
+type DatabaseConfigRequest struct {
+	Alias             string `json:"alias"`
+	Type              string `json:"type"`
+	Mode              string `json:"mode"`
+	Service           string `json:"service,omitempty"`
+	ExistingContainer string `json:"existing_container,omitempty"`
+	ExternalHost      string `json:"external_host,omitempty"`
+	ExternalPort      int    `json:"external_port,omitempty"`
+	DatabaseName      string `json:"database_name,omitempty"`
+	Username          string `json:"username,omitempty"`
+	Password          string `json:"password,omitempty"`
+	EnvPrefix         string `json:"env_prefix,omitempty"`
+}
+
+func (d *DatabaseConfigRequest) Validate() error {
+	validTypes := map[string]bool{
+		"mysql": true, "postgres": true, "mariadb": true,
+		"mongodb": true, "redis": true,
+	}
+	if !validTypes[d.Type] {
+		return fmt.Errorf("invalid database type: %s (must be mysql, postgres, mariadb, mongodb, or redis)", d.Type)
+	}
+
+	validModes := map[string]bool{
+		"shared": true, "create": true, "existing": true, "external": true,
+	}
+	if !validModes[d.Mode] {
+		return fmt.Errorf("invalid database mode: %s (must be shared, create, existing, or external)", d.Mode)
+	}
+
+	switch d.Mode {
+	case "existing":
+		if d.ExistingContainer == "" {
+			return fmt.Errorf("existing_container is required for mode 'existing'")
+		}
+	case "external":
+		if d.ExternalHost == "" {
+			return fmt.Errorf("external_host is required for mode 'external'")
+		}
+		if d.ExternalPort <= 0 {
+			return fmt.Errorf("external_port must be a positive integer for mode 'external'")
+		}
+	}
+
+	return nil
+}
+
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
 		Name                      string                  `json:"name" binding:"required"`
@@ -580,6 +634,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 		AutoStart                 bool                    `json:"auto_start"`
 		UseSharedDatabase         bool                    `json:"use_shared_database"`
 		ExistingDatabaseContainer string                  `json:"existing_database_container,omitempty"`
+		Databases                 []DatabaseConfigRequest `json:"databases,omitempty"`
 		RegistryCredential        *struct {
 			CredentialID   string `json:"credential_id,omitempty"`
 			Username       string `json:"username,omitempty"`
@@ -669,7 +724,28 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	var dbEnvVars []EnvVar
-	if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
+	var databaseConfigs []models.DatabaseConfig
+
+	if len(req.Databases) > 0 {
+		for i, dbReq := range req.Databases {
+			if err := dbReq.Validate(); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("invalid database configuration at index %d: %s", i, err.Error()),
+				})
+				return
+			}
+		}
+
+		envVars, configs, err := s.createDatabasesForDeployment(req.Name, req.Databases)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Deployment created but failed to create databases: " + err.Error(),
+			})
+			return
+		}
+		dbEnvVars = envVars
+		databaseConfigs = configs
+	} else if req.UseSharedDatabase && s.config.Infrastructure.Database.Enabled {
 		dbResult, err := s.createDatabaseForDeployment(req.Name)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -678,6 +754,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 			return
 		}
 		dbEnvVars = dbResult
+		databaseConfigs = []models.DatabaseConfig{{
+			ID:       "primary",
+			Alias:    "primary",
+			Type:     s.config.Infrastructure.Database.Type,
+			Mode:     "shared",
+			IsShared: true,
+		}}
 	}
 
 	allEnvVars := append(req.EnvVars, dbEnvVars...)
@@ -696,6 +779,9 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	if req.Metadata != nil {
+		if len(databaseConfigs) > 0 {
+			req.Metadata.Databases = databaseConfigs
+		}
 		if err := s.manager.SaveMetadata(req.Name, req.Metadata); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "Deployment created but failed to save metadata: " + err.Error(),
@@ -858,6 +944,160 @@ func (s *Server) createDatabaseForDeployment(deploymentName string) ([]EnvVar, e
 	return envVars, nil
 }
 
+func (s *Server) createDatabasesForDeployment(deploymentName string, databases []DatabaseConfigRequest) ([]EnvVar, []models.DatabaseConfig, error) {
+	var allEnvVars []EnvVar
+	var configs []models.DatabaseConfig
+	isFirst := true
+
+	for i, dbReq := range databases {
+		alias := dbReq.Alias
+		if alias == "" {
+			if isFirst {
+				alias = "primary"
+			} else {
+				alias = fmt.Sprintf("db%d", i+1)
+			}
+		}
+
+		envPrefix := dbReq.EnvPrefix
+		if envPrefix == "" {
+			envPrefix = strings.ToUpper(alias)
+		}
+
+		config := models.DatabaseConfig{
+			ID:        fmt.Sprintf("%s-%s", deploymentName, alias),
+			Alias:     alias,
+			Type:      dbReq.Type,
+			Mode:      dbReq.Mode,
+			Service:   dbReq.Service,
+			EnvPrefix: envPrefix,
+		}
+
+		var envVars []EnvVar
+
+		switch dbReq.Mode {
+		case "shared":
+			if !s.config.Infrastructure.Database.Enabled {
+				continue
+			}
+			dbConfig := s.config.Infrastructure.Database
+			dbName := strings.ReplaceAll(deploymentName, "-", "_") + "_" + alias + "_db"
+			dbUser := strings.ReplaceAll(deploymentName, "-", "_") + "_" + alias + "_user"
+			dbPassword := generateRandomPassword(16)
+
+			connConfig := &database.ConnectionConfig{
+				Type:      dbConfig.Type,
+				Host:      dbConfig.Host,
+				Port:      dbConfig.Port,
+				Username:  dbConfig.RootUser,
+				Password:  dbConfig.RootPassword,
+				Container: dbConfig.Container,
+			}
+
+			if err := s.databaseManager.CreateDatabase(connConfig, dbName); err != nil {
+				return nil, nil, fmt.Errorf("failed to create database %s: %w", alias, err)
+			}
+
+			if err := s.databaseManager.CreateUser(connConfig, dbUser, dbPassword, "%"); err != nil {
+				return nil, nil, fmt.Errorf("failed to create user for %s: %w", alias, err)
+			}
+
+			if err := s.databaseManager.GrantPrivileges(connConfig, dbUser, dbName, "%"); err != nil {
+				return nil, nil, fmt.Errorf("failed to grant privileges for %s: %w", alias, err)
+			}
+
+			dbHost := dbConfig.Host
+			if dbHost == "" {
+				dbHost = dbConfig.Container
+			}
+
+			config.Host = dbHost
+			config.Port = dbConfig.Port
+			config.Container = dbConfig.Container
+			config.DatabaseName = dbName
+			config.Username = dbUser
+			config.IsShared = true
+
+			envVars = s.generateDatabaseEnvVars(envPrefix, dbHost, dbConfig.Port, dbName, dbUser, dbPassword, dbConfig.Type, isFirst)
+
+		case "existing":
+			config.Container = dbReq.ExistingContainer
+			config.Host = dbReq.ExistingContainer
+			if dbReq.DatabaseName != "" {
+				config.DatabaseName = dbReq.DatabaseName
+			}
+			if dbReq.Username != "" {
+				config.Username = dbReq.Username
+			}
+
+		case "external":
+			config.Host = dbReq.ExternalHost
+			config.Port = dbReq.ExternalPort
+			if dbReq.DatabaseName != "" {
+				config.DatabaseName = dbReq.DatabaseName
+			}
+			if dbReq.Username != "" {
+				config.Username = dbReq.Username
+			}
+			if dbReq.Password != "" {
+				envVars = s.generateDatabaseEnvVars(envPrefix, dbReq.ExternalHost, dbReq.ExternalPort, dbReq.DatabaseName, dbReq.Username, dbReq.Password, dbReq.Type, isFirst)
+			}
+		}
+
+		allEnvVars = append(allEnvVars, envVars...)
+		configs = append(configs, config)
+		isFirst = false
+	}
+
+	return allEnvVars, configs, nil
+}
+
+func (s *Server) generateDatabaseEnvVars(prefix string, host string, port int, dbName, username, password, dbType string, includeLegacy bool) []EnvVar {
+	var envVars []EnvVar
+
+	envVars = append(envVars,
+		EnvVar{Key: prefix + "_HOST", Value: host},
+		EnvVar{Key: prefix + "_PORT", Value: fmt.Sprintf("%d", port)},
+		EnvVar{Key: prefix + "_DATABASE", Value: dbName},
+		EnvVar{Key: prefix + "_USERNAME", Value: username},
+		EnvVar{Key: prefix + "_PASSWORD", Value: password},
+	)
+
+	var databaseURL string
+	switch dbType {
+	case "mysql", "mariadb":
+		databaseURL = fmt.Sprintf("mysql://%s:%s@%s:%d/%s", username, password, host, port, dbName)
+	case "postgres":
+		databaseURL = fmt.Sprintf("postgres://%s:%s@%s:%d/%s", username, password, host, port, dbName)
+	case "mongodb":
+		databaseURL = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", username, password, host, port, dbName)
+	case "redis":
+		if password != "" {
+			databaseURL = fmt.Sprintf("redis://:%s@%s:%d", password, host, port)
+		} else {
+			databaseURL = fmt.Sprintf("redis://%s:%d", host, port)
+		}
+	}
+	if databaseURL != "" {
+		envVars = append(envVars, EnvVar{Key: prefix + "_URL", Value: databaseURL})
+	}
+
+	if includeLegacy {
+		envVars = append(envVars,
+			EnvVar{Key: "DB_HOST", Value: host},
+			EnvVar{Key: "DB_PORT", Value: fmt.Sprintf("%d", port)},
+			EnvVar{Key: "DB_DATABASE", Value: dbName},
+			EnvVar{Key: "DB_USERNAME", Value: username},
+			EnvVar{Key: "DB_PASSWORD", Value: password},
+		)
+		if databaseURL != "" {
+			envVars = append(envVars, EnvVar{Key: "DATABASE_URL", Value: databaseURL})
+		}
+	}
+
+	return envVars
+}
+
 func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, deploymentName)
 	envFilePath := filepath.Join(deploymentPath, ".env.flatrun")
@@ -896,6 +1136,35 @@ func (s *Server) deleteDatabaseForDeployment(deploymentName string) error {
 
 	if err := s.databaseManager.DropDatabase(connConfig, dbName); err != nil {
 		return fmt.Errorf("failed to drop database: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Server) deleteDatabaseByAlias(deploymentName, alias string) error {
+	dbConfig := s.config.Infrastructure.Database
+	dbName := strings.ReplaceAll(deploymentName, "-", "_") + "_" + alias + "_db"
+	dbUser := strings.ReplaceAll(deploymentName, "-", "_") + "_" + alias + "_user"
+
+	connConfig := &database.ConnectionConfig{
+		Type:      dbConfig.Type,
+		Host:      dbConfig.Host,
+		Port:      dbConfig.Port,
+		Username:  dbConfig.RootUser,
+		Password:  dbConfig.RootPassword,
+		Container: dbConfig.Container,
+	}
+
+	if err := s.databaseManager.RevokePrivileges(connConfig, dbUser, dbName); err != nil {
+		log.Printf("Warning: failed to revoke privileges for %s: %v", dbUser, err)
+	}
+
+	if err := s.databaseManager.DropUser(connConfig, dbUser); err != nil {
+		log.Printf("Warning: failed to drop user %s: %v", dbUser, err)
+	}
+
+	if err := s.databaseManager.DropDatabase(connConfig, dbName); err != nil {
+		return fmt.Errorf("failed to drop database %s: %w", alias, err)
 	}
 
 	return nil
@@ -1119,23 +1388,38 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 		}
 	}
 
-	if deployment != nil && deployment.Metadata != nil {
-		domain := deployment.Metadata.Networking.Domain
+	if deployment != nil && deployment.Metadata != nil && deleteSSL {
+		domainsToDelete := deployment.Metadata.GetUniqueDomainNames()
+		if len(domainsToDelete) == 0 && deployment.Metadata.Networking.Domain != "" {
+			domainsToDelete = []string{deployment.Metadata.Networking.Domain}
+		}
 
-		if deleteSSL && domain != "" && deployment.Metadata.SSL.Enabled {
+		for _, domain := range domainsToDelete {
 			if err := s.proxyOrchestrator.SSLManager().DeleteCertificate(domain); err != nil {
 				log.Printf("Warning: failed to delete SSL certificate for %s: %v", domain, err)
 			} else {
-				deletedItems = append(deletedItems, "ssl_certificate")
+				deletedItems = append(deletedItems, fmt.Sprintf("ssl_certificate:%s", domain))
 			}
 		}
 	}
 
 	if deleteDatabase && s.config.Infrastructure.Database.Enabled {
-		if err := s.deleteDatabaseForDeployment(name); err != nil {
-			log.Printf("Warning: failed to delete database for %s: %v", name, err)
+		if deployment != nil && deployment.Metadata != nil && len(deployment.Metadata.Databases) > 0 {
+			for _, dbConfig := range deployment.Metadata.Databases {
+				if dbConfig.IsShared {
+					if err := s.deleteDatabaseByAlias(name, dbConfig.Alias); err != nil {
+						log.Printf("Warning: failed to delete database %s for %s: %v", dbConfig.Alias, name, err)
+					} else {
+						deletedItems = append(deletedItems, fmt.Sprintf("database:%s", dbConfig.Alias))
+					}
+				}
+			}
 		} else {
-			deletedItems = append(deletedItems, "database")
+			if err := s.deleteDatabaseForDeployment(name); err != nil {
+				log.Printf("Warning: failed to delete database for %s: %v", name, err)
+			} else {
+				deletedItems = append(deletedItems, "database")
+			}
 		}
 	}
 
@@ -3129,6 +3413,239 @@ func (s *Server) setupProxyWithRetry(deployment *models.Deployment, maxRetries i
 		}
 	}
 	return nil, lastErr
+}
+
+func (s *Server) listDomains(c *gin.Context) {
+	name := c.Param("name")
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	if deployment.Metadata == nil {
+		c.JSON(http.StatusOK, gin.H{"domains": []models.DomainConfig{}})
+		return
+	}
+
+	domains := deployment.Metadata.GetDomains()
+	c.JSON(http.StatusOK, gin.H{"domains": domains})
+}
+
+func (s *Server) addDomain(c *gin.Context) {
+	name := c.Param("name")
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	var domain models.DomainConfig
+	if err := c.ShouldBindJSON(&domain); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid domain data: " + err.Error()})
+		return
+	}
+
+	if domain.Domain == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Domain is required"})
+		return
+	}
+
+	if domain.ID == "" {
+		domain.ID = generateDomainID()
+	}
+
+	if deployment.Metadata == nil {
+		deployment.Metadata = &models.ServiceMetadata{}
+	}
+
+	if len(deployment.Metadata.Domains) == 0 && deployment.Metadata.Networking.Expose {
+		existingDomain := models.DomainConfig{
+			ID:            "default",
+			Service:       deployment.Metadata.Name,
+			ContainerPort: deployment.Metadata.Networking.ContainerPort,
+			Domain:        deployment.Metadata.Networking.Domain,
+			SSL:           deployment.Metadata.SSL,
+		}
+		deployment.Metadata.Domains = []models.DomainConfig{existingDomain}
+	}
+
+	deployment.Metadata.Domains = append(deployment.Metadata.Domains, domain)
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save domain: " + err.Error()})
+		return
+	}
+
+	var result *proxy.SetupResult
+	if s.proxyOrchestrator != nil {
+		var err error
+		result, err = s.proxyOrchestrator.SetupDeployment(deployment)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":      "Domain added successfully",
+		"domain":       domain,
+		"proxy_result": result,
+	})
+}
+
+func (s *Server) updateDomain(c *gin.Context) {
+	name := c.Param("name")
+	domainID := c.Param("domainId")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	if deployment.Metadata == nil || len(deployment.Metadata.Domains) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	var updatedDomain models.DomainConfig
+	if err := c.ShouldBindJSON(&updatedDomain); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid domain data: " + err.Error()})
+		return
+	}
+
+	found := false
+	for i, d := range deployment.Metadata.Domains {
+		if d.ID == domainID {
+			updatedDomain.ID = domainID
+			deployment.Metadata.Domains[i] = updatedDomain
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save domain: " + err.Error()})
+		return
+	}
+
+	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Domain updated successfully",
+		"domain":       updatedDomain,
+		"proxy_result": result,
+	})
+}
+
+func (s *Server) deleteDomain(c *gin.Context) {
+	name := c.Param("name")
+	domainID := c.Param("domainId")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	if deployment.Metadata == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	// Handle legacy "default" domain from networking config
+	if domainID == "default" && len(deployment.Metadata.Domains) == 0 {
+		if !deployment.Metadata.Networking.Expose || deployment.Metadata.Networking.Domain == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+			return
+		}
+		// Clear the legacy networking config
+		deployment.Metadata.Networking.Expose = false
+		deployment.Metadata.Networking.Domain = ""
+		deployment.Metadata.SSL.Enabled = false
+		deployment.Metadata.SSL.AutoCert = false
+
+		if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metadata: " + err.Error()})
+			return
+		}
+
+		if s.proxyOrchestrator != nil {
+			if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
+				log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Domain deleted successfully"})
+		return
+	}
+
+	if len(deployment.Metadata.Domains) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	found := false
+	newDomains := make([]models.DomainConfig, 0)
+	for _, d := range deployment.Metadata.Domains {
+		if d.ID == domainID {
+			found = true
+			continue
+		}
+		newDomains = append(newDomains, d)
+	}
+
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	if len(newDomains) == 0 {
+		deployment.Metadata.Domains = nil
+	} else {
+		deployment.Metadata.Domains = newDomains
+	}
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metadata: " + err.Error()})
+		return
+	}
+
+	if s.proxyOrchestrator != nil {
+		if len(newDomains) == 0 {
+			if deployment.Metadata.Networking.Expose {
+				if _, err := s.proxyOrchestrator.SetupDeployment(deployment); err != nil {
+					log.Printf("Warning: failed to setup legacy proxy for %s: %v", name, err)
+				}
+			} else {
+				if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
+					log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
+				}
+			}
+		} else {
+			if _, err := s.proxyOrchestrator.SetupDeployment(deployment); err != nil {
+				log.Printf("Warning: failed to update proxy for %s: %v", name, err)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Domain deleted successfully",
+	})
+}
+
+func generateDomainID() string {
+	return uuid.New().String()
 }
 
 func (s *Server) getSystemStats(c *gin.Context) {
