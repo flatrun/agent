@@ -30,6 +30,7 @@ import (
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
+	"github.com/flatrun/agent/internal/setup"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/internal/traffic"
 	"github.com/flatrun/agent/pkg/config"
@@ -68,6 +69,8 @@ type Server struct {
 	auditManager       *audit.Manager
 	auditMiddleware    *audit.Middleware
 	powerDNSManager    *dns.PowerDNSManager
+	setupManager       *setup.Manager
+	setupHandlers      *setup.Handlers
 }
 
 func New(cfg *config.Config, configPath string) *Server {
@@ -79,8 +82,15 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	router := gin.Default()
 
+	var setupManager *setup.Manager
+	var setupManagerErr error
+	setupManager, setupManagerErr = setup.NewManager(cfg.DeploymentsPath, cfg, configPath)
+	if setupManagerErr != nil {
+		log.Printf("Warning: Failed to initialize setup manager: %v", setupManagerErr)
+	}
+
 	if cfg.API.EnableCORS {
-		router.Use(corsMiddleware(cfg.API.AllowedOrigins))
+		router.Use(dynamicCorsMiddleware(cfg, setupManager))
 	}
 
 	manager := docker.NewManager(cfg.DeploymentsPath)
@@ -170,6 +180,11 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	powerDNSManager := dns.NewPowerDNSManager(cfg)
 
+	var setupHandlers *setup.Handlers
+	if setupManager != nil {
+		setupHandlers = setup.NewHandlers(setupManager, authManager)
+	}
+
 	s := &Server{
 		config:             cfg,
 		configPath:         configPath,
@@ -192,6 +207,8 @@ func New(cfg *config.Config, configPath string) *Server {
 		auditManager:       auditManager,
 		auditMiddleware:    auditMiddleware,
 		powerDNSManager:    powerDNSManager,
+		setupManager:       setupManager,
+		setupHandlers:      setupHandlers,
 	}
 
 	if backupManager != nil {
@@ -217,6 +234,26 @@ func (s *Server) setupRoutes() {
 		api.GET("/auth/status", s.authMiddleware.GetAuthStatus)
 		api.POST("/auth/login", s.authMiddleware.Login)
 		api.GET("/auth/validate", s.authMiddleware.ValidateToken)
+
+		if s.setupHandlers != nil {
+			setupGroup := api.Group("/setup")
+			{
+				setupGroup.GET("/status", s.setupHandlers.GetStatus)
+				setupGroup.GET("/verify-dns", s.setupHandlers.VerifyDNS)
+
+				setupProtected := setupGroup.Group("")
+				setupProtected.Use(s.setupHandlers.RequireSetupIncomplete())
+				{
+					setupProtected.POST("/initialize", s.setupHandlers.Initialize)
+					setupProtected.POST("/validate", s.setupHandlers.RunValidation)
+					setupProtected.POST("/domain", s.setupHandlers.ConfigureDomain)
+					setupProtected.POST("/cors", s.setupHandlers.ConfigureCORS)
+					setupProtected.POST("/user", s.setupHandlers.CreateUser)
+					setupProtected.POST("/install-ui", s.setupHandlers.InstallUI)
+					setupProtected.POST("/complete", s.setupHandlers.Complete)
+				}
+			}
+		}
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
@@ -4099,6 +4136,35 @@ func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {
 
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+func dynamicCorsMiddleware(cfg *config.Config, setupMgr *setup.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+
+		allowedOrigins := cfg.API.AllowedOrigins
+		if setupMgr != nil {
+			allowedOrigins = setupMgr.GetAllowedOrigins()
+		}
+
+		for _, allowed := range allowedOrigins {
+			if origin == allowed || allowed == "*" {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				break
+			}
+		}
+
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-API-Key")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
