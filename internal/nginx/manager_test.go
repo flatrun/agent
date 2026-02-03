@@ -1719,3 +1719,111 @@ func TestUpdateDeploymentRateLimits(t *testing.T) {
 		t.Error("rate_limits.conf should still contain app2")
 	}
 }
+
+func TestWriteVirtualHost(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	m := NewManager(&config.NginxConfig{
+		ConfigPath: tmpDir,
+	}, "/deployments", "")
+
+	content := "# test nginx config\nserver { listen 80; }"
+	if err := m.WriteVirtualHost("test-app", content); err != nil {
+		t.Fatalf("WriteVirtualHost failed: %v", err)
+	}
+
+	configFile := filepath.Join(tmpDir, "test-app.conf")
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config file: %v", err)
+	}
+
+	if string(data) != content {
+		t.Errorf("expected content %q, got %q", content, string(data))
+	}
+
+	readContent, err := m.GetVirtualHost("test-app")
+	if err != nil {
+		t.Fatalf("GetVirtualHost failed: %v", err)
+	}
+
+	if readContent != content {
+		t.Errorf("GetVirtualHost returned %q, expected %q", readContent, content)
+	}
+}
+
+func TestIsNginxConfigValid(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			name:   "valid config no warnings",
+			output: "nginx: the configuration file /etc/nginx/nginx.conf syntax is ok\nnginx: configuration file /etc/nginx/nginx.conf test is successful",
+			want:   true,
+		},
+		{
+			name:   "valid config with ssl_stapling warning",
+			output: "2026/02/03 17:33:27 [warn] 2572#2572: \"ssl_stapling\" ignored\nnginx: the configuration file /etc/nginx/nginx.conf syntax is ok\nnginx: configuration file /etc/nginx/nginx.conf test is successful",
+			want:   true,
+		},
+		{
+			name:   "invalid config with emerg error",
+			output: "nginx: [emerg] unknown directive \"invalid\" in /etc/nginx/conf.d/test.conf:1\nnginx: configuration file /etc/nginx/nginx.conf test failed",
+			want:   false,
+		},
+		{
+			name:   "invalid config with error",
+			output: "nginx: [error] cannot load certificate\nnginx: configuration file /etc/nginx/nginx.conf test failed",
+			want:   false,
+		},
+		{
+			name:   "no success indicator",
+			output: "[warn] some warning",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isNginxConfigValid(tt.output)
+			if got != tt.want {
+				t.Errorf("isNginxConfigValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGroupDomainsByHost_DeduplicatesLocations(t *testing.T) {
+	m := NewManager(&config.NginxConfig{}, "/deployments", "")
+
+	domains := []models.DomainConfig{
+		{ID: "1", Domain: "example.com", PathPrefix: "", ContainerPort: 80, Service: "web"},
+		{ID: "2", Domain: "example.com", PathPrefix: "", ContainerPort: 8080, Service: "api"},
+		{ID: "3", Domain: "example.com", PathPrefix: "/api", ContainerPort: 3000, Service: "backend"},
+	}
+
+	servers := m.groupDomainsByHost(domains, "test-app")
+
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(servers))
+	}
+
+	if len(servers[0].Locations) != 2 {
+		t.Errorf("expected 2 unique locations, got %d", len(servers[0].Locations))
+	}
+
+	pathCounts := make(map[string]int)
+	for _, loc := range servers[0].Locations {
+		pathCounts[loc.Path]++
+	}
+
+	if pathCounts["/"] != 1 {
+		t.Errorf("expected exactly 1 location for '/', got %d", pathCounts["/"])
+	}
+}
