@@ -12,9 +12,12 @@ type mockNginxManager struct {
 	createVirtualHostCalls   []string
 	updateVirtualHostCalls   []string
 	deleteVirtualHostCalls   []string
+	getVirtualHostCalls      []string
+	writeVirtualHostCalls    []string
 	testConfigCalls          int
 	reloadCalls              int
 	virtualHostExistsReturns map[string]bool
+	virtualHostContents      map[string]string
 	createVirtualHostErr     error
 	testConfigErr            error
 	testConfigErrCount       int
@@ -44,6 +47,23 @@ func (m *mockNginxManager) VirtualHostExists(deploymentName string) bool {
 		return false
 	}
 	return m.virtualHostExistsReturns[deploymentName]
+}
+
+func (m *mockNginxManager) GetVirtualHost(deploymentName string) (string, error) {
+	m.getVirtualHostCalls = append(m.getVirtualHostCalls, deploymentName)
+	if m.virtualHostContents == nil {
+		return "", nil
+	}
+	return m.virtualHostContents[deploymentName], nil
+}
+
+func (m *mockNginxManager) WriteVirtualHost(deploymentName string, content string) error {
+	m.writeVirtualHostCalls = append(m.writeVirtualHostCalls, deploymentName)
+	if m.virtualHostContents == nil {
+		m.virtualHostContents = make(map[string]string)
+	}
+	m.virtualHostContents[deploymentName] = content
+	return nil
 }
 
 func (m *mockNginxManager) TestConfig() error {

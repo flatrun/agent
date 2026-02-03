@@ -3470,6 +3470,15 @@ func (s *Server) addDomain(c *gin.Context) {
 		deployment.Metadata.Domains = []models.DomainConfig{existingDomain}
 	}
 
+	for _, existing := range deployment.Metadata.Domains {
+		if existing.Domain == domain.Domain && existing.PathPrefix == domain.PathPrefix {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": fmt.Sprintf("Domain %s%s already exists", domain.Domain, domain.PathPrefix),
+			})
+			return
+		}
+	}
+
 	deployment.Metadata.Domains = append(deployment.Metadata.Domains, domain)
 
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {

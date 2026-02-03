@@ -3,6 +3,7 @@ package nginx
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,6 +121,14 @@ func (m *Manager) GetVirtualHost(deploymentName string) (string, error) {
 	return string(data), nil
 }
 
+func (m *Manager) WriteVirtualHost(deploymentName string, content string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	configFile := filepath.Join(m.configPath, deploymentName+".conf")
+	return os.WriteFile(configFile, []byte(content), 0644)
+}
+
 func (m *Manager) UpdateVirtualHost(deployment *models.Deployment) error {
 	return m.CreateVirtualHost(deployment)
 }
@@ -229,10 +238,21 @@ func (m *Manager) TestConfig() error {
 	cmd := exec.Command("docker", "exec", m.config.ContainerName, "nginx", "-t")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("nginx config test failed: %s - %w", string(output), err)
+		outputStr := string(output)
+		if isNginxConfigValid(outputStr) {
+			log.Printf("nginx config test passed with warnings: %s", outputStr)
+			return nil
+		}
+		return fmt.Errorf("nginx config test failed: %s - %w", outputStr, err)
 	}
 
 	return nil
+}
+
+func isNginxConfigValid(output string) bool {
+	hasError := strings.Contains(output, "[emerg]") || strings.Contains(output, "[error]")
+	hasSuccess := strings.Contains(output, "syntax is ok") || strings.Contains(output, "test is successful")
+	return !hasError && hasSuccess
 }
 
 func (m *Manager) waitForContainerReady(maxRetries int) error {
@@ -433,6 +453,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 		})
 
 		var locations []locationData
+		seenPaths := make(map[string]bool)
 		hasSSL := false
 		sslDomain := host
 		var serverAliases []string
@@ -442,6 +463,12 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			if path == "" {
 				path = "/"
 			}
+
+			if seenPaths[path] {
+				log.Printf("warning: skipping duplicate location %q for host %q", path, host)
+				continue
+			}
+			seenPaths[path] = true
 
 			service := d.Service
 			if service == "" {

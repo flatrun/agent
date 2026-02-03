@@ -381,4 +381,74 @@ func TestAddDomain(t *testing.T) {
 			t.Error("expected domain ID to be generated")
 		}
 	})
+
+	t.Run("rejects duplicate domain", func(t *testing.T) {
+		createTestDeployment(t, tmpDir, "duplicate-domain", &models.ServiceMetadata{
+			Name: "duplicate-domain",
+			Type: "web",
+			Domains: []models.DomainConfig{
+				{
+					ID:            "existing-1",
+					Service:       "web",
+					ContainerPort: 80,
+					Domain:        "existing.example.com",
+				},
+			},
+		})
+
+		duplicateDomain := models.DomainConfig{
+			Service:       "web",
+			ContainerPort: 8080,
+			Domain:        "existing.example.com",
+		}
+		body, _ := json.Marshal(duplicateDomain)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "name", Value: "duplicate-domain"}}
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		server.addDomain(c)
+
+		if w.Code != http.StatusConflict {
+			t.Errorf("expected status 409 Conflict, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("allows same domain with different path prefix", func(t *testing.T) {
+		createTestDeployment(t, tmpDir, "different-path", &models.ServiceMetadata{
+			Name: "different-path",
+			Type: "web",
+			Domains: []models.DomainConfig{
+				{
+					ID:            "existing-1",
+					Service:       "api",
+					ContainerPort: 8080,
+					Domain:        "app.example.com",
+					PathPrefix:    "/api",
+				},
+			},
+		})
+
+		newDomain := models.DomainConfig{
+			Service:       "web",
+			ContainerPort: 80,
+			Domain:        "app.example.com",
+			PathPrefix:    "/web",
+		}
+		body, _ := json.Marshal(newDomain)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "name", Value: "different-path"}}
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		server.addDomain(c)
+
+		if w.Code != http.StatusCreated {
+			t.Errorf("expected status 201 Created, got %d: %s", w.Code, w.Body.String())
+		}
+	})
 }

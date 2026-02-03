@@ -88,13 +88,30 @@ func (o *Orchestrator) setupMultiDomainDeployment(deployment *models.Deployment,
 	}
 	deployment.Metadata.Domains = domains
 
+	var previousConfig string
+	hadPreviousConfig := o.nginx.VirtualHostExists(deployment.Name)
+	if hadPreviousConfig {
+		var err error
+		previousConfig, err = o.nginx.GetVirtualHost(deployment.Name)
+		if err != nil {
+			log.Printf("warning: failed to backup previous vhost config: %v", err)
+			hadPreviousConfig = false
+		}
+	}
+
 	if err := o.nginx.CreateVirtualHost(deployment); err != nil {
 		return nil, fmt.Errorf("failed to create virtual host: %w", err)
 	}
 	result.VirtualHostCreated = true
 
 	if err := o.nginx.TestConfig(); err != nil {
-		_ = o.nginx.DeleteVirtualHost(deployment.Name)
+		if hadPreviousConfig {
+			if restoreErr := o.nginx.WriteVirtualHost(deployment.Name, previousConfig); restoreErr != nil {
+				log.Printf("warning: failed to restore previous vhost config: %v", restoreErr)
+			}
+		} else {
+			_ = o.nginx.DeleteVirtualHost(deployment.Name)
+		}
 		return nil, fmt.Errorf("nginx config validation failed: %w", err)
 	}
 

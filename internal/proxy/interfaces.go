@@ -10,6 +10,8 @@ type NginxManager interface {
 	UpdateVirtualHost(deployment *models.Deployment) error
 	DeleteVirtualHost(deploymentName string) error
 	VirtualHostExists(deploymentName string) bool
+	GetVirtualHost(deploymentName string) (string, error)
+	WriteVirtualHost(deploymentName string, content string) error
 	TestConfig() error
 	Reload() error
 }
