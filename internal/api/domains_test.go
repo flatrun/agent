@@ -381,4 +381,151 @@ func TestAddDomain(t *testing.T) {
 			t.Error("expected domain ID to be generated")
 		}
 	})
+
+	t.Run("rejects duplicate domain", func(t *testing.T) {
+		createTestDeployment(t, tmpDir, "duplicate-domain", &models.ServiceMetadata{
+			Name: "duplicate-domain",
+			Type: "web",
+			Domains: []models.DomainConfig{
+				{
+					ID:            "existing-1",
+					Service:       "web",
+					ContainerPort: 80,
+					Domain:        "existing.example.com",
+				},
+			},
+		})
+
+		duplicateDomain := models.DomainConfig{
+			Service:       "web",
+			ContainerPort: 8080,
+			Domain:        "existing.example.com",
+		}
+		body, _ := json.Marshal(duplicateDomain)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "name", Value: "duplicate-domain"}}
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		server.addDomain(c)
+
+		if w.Code != http.StatusConflict {
+			t.Errorf("expected status 409 Conflict, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		if response["error"] == "" {
+			t.Error("expected error message in response")
+		}
+	})
+
+	t.Run("rejects duplicate domain with same path prefix", func(t *testing.T) {
+		createTestDeployment(t, tmpDir, "duplicate-path", &models.ServiceMetadata{
+			Name: "duplicate-path",
+			Type: "web",
+			Domains: []models.DomainConfig{
+				{
+					ID:            "existing-1",
+					Service:       "api",
+					ContainerPort: 8080,
+					Domain:        "app.example.com",
+					PathPrefix:    "/api",
+				},
+			},
+		})
+
+		duplicateDomain := models.DomainConfig{
+			Service:       "web",
+			ContainerPort: 80,
+			Domain:        "app.example.com",
+			PathPrefix:    "/api",
+		}
+		body, _ := json.Marshal(duplicateDomain)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "name", Value: "duplicate-path"}}
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		server.addDomain(c)
+
+		if w.Code != http.StatusConflict {
+			t.Errorf("expected status 409 Conflict, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("allows same domain with different path prefix", func(t *testing.T) {
+		createTestDeployment(t, tmpDir, "different-path", &models.ServiceMetadata{
+			Name: "different-path",
+			Type: "web",
+			Domains: []models.DomainConfig{
+				{
+					ID:            "existing-1",
+					Service:       "api",
+					ContainerPort: 8080,
+					Domain:        "app.example.com",
+					PathPrefix:    "/api",
+				},
+			},
+		})
+
+		newDomain := models.DomainConfig{
+			Service:       "web",
+			ContainerPort: 80,
+			Domain:        "app.example.com",
+			PathPrefix:    "/web",
+		}
+		body, _ := json.Marshal(newDomain)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "name", Value: "different-path"}}
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		server.addDomain(c)
+
+		// Should succeed (status 201) since path prefixes are different
+		if w.Code != http.StatusCreated {
+			t.Errorf("expected status 201 Created, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("rejects duplicate of legacy domain", func(t *testing.T) {
+		createTestDeployment(t, tmpDir, "duplicate-legacy", &models.ServiceMetadata{
+			Name: "duplicate-legacy",
+			Type: "web",
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "legacy.example.com",
+				ContainerPort: 80,
+			},
+		})
+
+		duplicateDomain := models.DomainConfig{
+			Service:       "web",
+			ContainerPort: 8080,
+			Domain:        "legacy.example.com",
+		}
+		body, _ := json.Marshal(duplicateDomain)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "name", Value: "duplicate-legacy"}}
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		server.addDomain(c)
+
+		if w.Code != http.StatusConflict {
+			t.Errorf("expected status 409 Conflict for duplicate legacy domain, got %d: %s", w.Code, w.Body.String())
+		}
+	})
 }

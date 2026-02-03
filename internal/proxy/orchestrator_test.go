@@ -12,9 +12,12 @@ type mockNginxManager struct {
 	createVirtualHostCalls   []string
 	updateVirtualHostCalls   []string
 	deleteVirtualHostCalls   []string
+	getVirtualHostCalls      []string
+	writeVirtualHostCalls    []string
 	testConfigCalls          int
 	reloadCalls              int
 	virtualHostExistsReturns map[string]bool
+	virtualHostContents      map[string]string
 	createVirtualHostErr     error
 	testConfigErr            error
 	testConfigErrCount       int
@@ -44,6 +47,23 @@ func (m *mockNginxManager) VirtualHostExists(deploymentName string) bool {
 		return false
 	}
 	return m.virtualHostExistsReturns[deploymentName]
+}
+
+func (m *mockNginxManager) GetVirtualHost(deploymentName string) (string, error) {
+	m.getVirtualHostCalls = append(m.getVirtualHostCalls, deploymentName)
+	if m.virtualHostContents == nil {
+		return "", nil
+	}
+	return m.virtualHostContents[deploymentName], nil
+}
+
+func (m *mockNginxManager) WriteVirtualHost(deploymentName string, content string) error {
+	m.writeVirtualHostCalls = append(m.writeVirtualHostCalls, deploymentName)
+	if m.virtualHostContents == nil {
+		m.virtualHostContents = make(map[string]string)
+	}
+	m.virtualHostContents[deploymentName] = content
+	return nil
 }
 
 func (m *mockNginxManager) TestConfig() error {
@@ -139,13 +159,23 @@ func (o *testableOrchestrator) SetupDeployment(deployment *models.Deployment) (*
 		deployment.Metadata.SSL.Enabled = false
 	}
 
+	var previousConfig string
+	hadPreviousConfig := o.nginx.VirtualHostExists(deployment.Name)
+	if hadPreviousConfig {
+		previousConfig, _ = o.nginx.GetVirtualHost(deployment.Name)
+	}
+
 	if err := o.nginx.CreateVirtualHost(deployment); err != nil {
 		return nil, errors.New("failed to create virtual host: " + err.Error())
 	}
 	result.VirtualHostCreated = true
 
 	if err := o.nginx.TestConfig(); err != nil {
-		_ = o.nginx.DeleteVirtualHost(deployment.Name)
+		if hadPreviousConfig {
+			_ = o.nginx.WriteVirtualHost(deployment.Name, previousConfig)
+		} else {
+			_ = o.nginx.DeleteVirtualHost(deployment.Name)
+		}
 		return nil, errors.New("nginx config validation failed: " + err.Error())
 	}
 
@@ -443,5 +473,83 @@ func TestSetupDeployment_NginxConfigTestFails(t *testing.T) {
 
 	if len(nginx.deleteVirtualHostCalls) != 1 {
 		t.Error("should delete virtual host on config test failure")
+	}
+}
+
+func TestSetupDeployment_RestoresPreviousConfigOnFailure(t *testing.T) {
+	previousConfig := "# previous nginx config\nserver { listen 80; }"
+
+	nginx := &mockNginxManager{
+		testConfigErr:            errors.New("nginx config invalid"),
+		testConfigErrCount:       1,
+		virtualHostExistsReturns: map[string]bool{"test-app": true},
+		virtualHostContents:      map[string]string{"test-app": previousConfig},
+	}
+	ssl := &mockSSLManager{}
+	orch := &testableOrchestrator{nginx: nginx, ssl: ssl}
+
+	deployment := &models.Deployment{
+		Name: "test-app",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{Expose: true, Domain: "example.com", ContainerPort: 80},
+		},
+	}
+
+	_, err := orch.SetupDeployment(deployment)
+
+	if err == nil {
+		t.Fatal("expected error when nginx config test fails")
+	}
+
+	if len(nginx.getVirtualHostCalls) != 1 {
+		t.Errorf("expected GetVirtualHost to be called once, got %d", len(nginx.getVirtualHostCalls))
+	}
+
+	if len(nginx.writeVirtualHostCalls) != 1 {
+		t.Errorf("expected WriteVirtualHost to be called once for restore, got %d", len(nginx.writeVirtualHostCalls))
+	}
+
+	if len(nginx.deleteVirtualHostCalls) != 0 {
+		t.Errorf("expected DeleteVirtualHost NOT to be called when restoring, got %d calls", len(nginx.deleteVirtualHostCalls))
+	}
+
+	restoredConfig := nginx.virtualHostContents["test-app"]
+	if restoredConfig != previousConfig {
+		t.Errorf("expected config to be restored to previous, got %q", restoredConfig)
+	}
+}
+
+func TestSetupDeployment_DeletesVhostOnFailureWhenNoPrevious(t *testing.T) {
+	nginx := &mockNginxManager{
+		testConfigErr:            errors.New("nginx config invalid"),
+		testConfigErrCount:       1,
+		virtualHostExistsReturns: map[string]bool{"new-app": false},
+	}
+	ssl := &mockSSLManager{}
+	orch := &testableOrchestrator{nginx: nginx, ssl: ssl}
+
+	deployment := &models.Deployment{
+		Name: "new-app",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{Expose: true, Domain: "newapp.com", ContainerPort: 80},
+		},
+	}
+
+	_, err := orch.SetupDeployment(deployment)
+
+	if err == nil {
+		t.Fatal("expected error when nginx config test fails")
+	}
+
+	if len(nginx.getVirtualHostCalls) != 0 {
+		t.Errorf("expected GetVirtualHost NOT to be called for new vhost, got %d", len(nginx.getVirtualHostCalls))
+	}
+
+	if len(nginx.writeVirtualHostCalls) != 0 {
+		t.Errorf("expected WriteVirtualHost NOT to be called for new vhost, got %d", len(nginx.writeVirtualHostCalls))
+	}
+
+	if len(nginx.deleteVirtualHostCalls) != 1 {
+		t.Errorf("expected DeleteVirtualHost to be called once for new vhost, got %d", len(nginx.deleteVirtualHostCalls))
 	}
 }

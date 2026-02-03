@@ -3507,6 +3507,15 @@ func (s *Server) addDomain(c *gin.Context) {
 		deployment.Metadata.Domains = []models.DomainConfig{existingDomain}
 	}
 
+	for _, existing := range deployment.Metadata.Domains {
+		if existing.Domain == domain.Domain && existing.PathPrefix == domain.PathPrefix {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": fmt.Sprintf("Domain %s%s already exists", domain.Domain, domain.PathPrefix),
+			})
+			return
+		}
+	}
+
 	deployment.Metadata.Domains = append(deployment.Metadata.Domains, domain)
 
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
@@ -4121,30 +4130,6 @@ func toTitleCase(s string) string {
 		}
 	}
 	return strings.Join(words, " ")
-}
-
-func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
-
-		for _, allowed := range allowedOrigins {
-			if origin == allowed || allowed == "*" {
-				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
-				break
-			}
-		}
-
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	}
 }
 
 func dynamicCorsMiddleware(cfg *config.Config, setupMgr *setup.Manager) gin.HandlerFunc {

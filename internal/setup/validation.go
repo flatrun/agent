@@ -221,10 +221,10 @@ func (m *Manager) checkMemory() SystemCheck {
 	lines := string(data)
 	for _, line := range splitLines(lines) {
 		if len(line) > 9 && line[:9] == "MemTotal:" {
-			fmt.Sscanf(line, "MemTotal: %d kB", &totalKB)
+			_, _ = fmt.Sscanf(line, "MemTotal: %d kB", &totalKB)
 		}
 		if len(line) > 13 && line[:13] == "MemAvailable:" {
-			fmt.Sscanf(line, "MemAvailable: %d kB", &availableKB)
+			_, _ = fmt.Sscanf(line, "MemAvailable: %d kB", &availableKB)
 		}
 	}
 
