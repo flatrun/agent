@@ -1799,6 +1799,227 @@ func TestIsNginxConfigValid(t *testing.T) {
 	}
 }
 
+func TestGenerateConfig_SSLToggle(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	deployment := &models.Deployment{
+		Name: "ssl-toggle-test",
+		Metadata: &models.ServiceMetadata{
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "toggle.example.com",
+				ContainerPort: 8080,
+			},
+			SSL: models.SSLConfig{Enabled: true},
+		},
+	}
+
+	sslConfig, err := m.generateConfig(deployment)
+	if err != nil {
+		t.Fatalf("generateConfig with SSL failed: %v", err)
+	}
+
+	if !strings.Contains(sslConfig, "listen 443 ssl;") {
+		t.Error("SSL-enabled config must contain 'listen 443 ssl;'")
+	}
+	if !strings.Contains(sslConfig, "ssl_certificate") {
+		t.Error("SSL-enabled config must contain ssl_certificate directive")
+	}
+
+	deployment.Metadata.SSL.Enabled = false
+	httpConfig, err := m.generateConfig(deployment)
+	if err != nil {
+		t.Fatalf("generateConfig without SSL failed: %v", err)
+	}
+
+	if strings.Contains(httpConfig, "listen 443") {
+		t.Error("HTTP-only config must not contain 'listen 443'")
+	}
+	if strings.Contains(httpConfig, "ssl_certificate") {
+		t.Error("HTTP-only config must not contain ssl_certificate directive")
+	}
+	if !strings.Contains(httpConfig, "listen 80;") {
+		t.Error("HTTP-only config must contain 'listen 80;'")
+	}
+}
+
+func TestGenerateMultiDomainConfig_SSLToggle(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	t.Run("all domains SSL enabled", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "multi-ssl",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{
+						ID:            "d1",
+						Service:       "web",
+						ContainerPort: 8080,
+						Domain:        "app.example.com",
+						SSL:           models.SSLConfig{Enabled: true},
+					},
+					{
+						ID:            "d2",
+						Service:       "api",
+						ContainerPort: 3000,
+						Domain:        "api.example.com",
+						SSL:           models.SSLConfig{Enabled: true},
+					},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if !strings.Contains(config, "listen 443 ssl;") {
+			t.Error("all-SSL multi-domain config must contain 'listen 443 ssl;'")
+		}
+		if !strings.Contains(config, "ssl_certificate") {
+			t.Error("all-SSL multi-domain config must contain ssl_certificate directive")
+		}
+	})
+
+	t.Run("all domains SSL disabled", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "multi-http",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{
+						ID:            "d1",
+						Service:       "web",
+						ContainerPort: 8080,
+						Domain:        "app.example.com",
+						SSL:           models.SSLConfig{Enabled: false},
+					},
+					{
+						ID:            "d2",
+						Service:       "api",
+						ContainerPort: 3000,
+						Domain:        "api.example.com",
+						SSL:           models.SSLConfig{Enabled: false},
+					},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if strings.Contains(config, "listen 443") {
+			t.Error("HTTP-only multi-domain config must not contain 'listen 443'")
+		}
+		if strings.Contains(config, "ssl_certificate") {
+			t.Error("HTTP-only multi-domain config must not contain ssl_certificate")
+		}
+	})
+
+	t.Run("mixed SSL domains", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "multi-mixed",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{
+						ID:            "d1",
+						Service:       "web",
+						ContainerPort: 8080,
+						Domain:        "secure.example.com",
+						SSL:           models.SSLConfig{Enabled: true},
+					},
+					{
+						ID:            "d2",
+						Service:       "api",
+						ContainerPort: 3000,
+						Domain:        "plain.example.com",
+						SSL:           models.SSLConfig{Enabled: false},
+					},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if !strings.Contains(config, "listen 443 ssl;") {
+			t.Error("mixed multi-domain config must contain 'listen 443 ssl;' for the SSL domain")
+		}
+		if !strings.Contains(config, "secure.example.com") {
+			t.Error("mixed config must include secure.example.com")
+		}
+		if !strings.Contains(config, "plain.example.com") {
+			t.Error("mixed config must include plain.example.com")
+		}
+	})
+}
+
+func TestGenerateMultiDomainConfig_ContainerPort(t *testing.T) {
+	cfg := &config.NginxConfig{
+		ContainerWebrootPath: "/var/www/html",
+	}
+	m := NewManager(cfg, "/deployments", "")
+
+	t.Run("uses specified container port", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "port-test",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{
+						ID:            "d1",
+						Service:       "web",
+						ContainerPort: 9090,
+						Domain:        "app.example.com",
+					},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if !strings.Contains(config, "web:9090") {
+			t.Errorf("config should proxy to port 9090, got:\n%s", config)
+		}
+	})
+
+	t.Run("defaults to port 80 when container port is zero", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "port-default-test",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{
+						ID:      "d1",
+						Service: "web",
+						Domain:  "app.example.com",
+					},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if !strings.Contains(config, "web:80") {
+			t.Errorf("config should default to port 80 when ContainerPort is 0, got:\n%s", config)
+		}
+	})
+}
+
 func TestGroupDomainsByHost_DeduplicatesLocations(t *testing.T) {
 	m := NewManager(&config.NginxConfig{}, "/deployments", "")
 

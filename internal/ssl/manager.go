@@ -327,9 +327,12 @@ type MultiCertificateResult struct {
 }
 
 func (m *Manager) RequestCertificatesForDomains(domains []models.DomainConfig) (*MultiCertificateResult, error) {
+	// AutoCert is intentionally checked independently of SSL.Enabled:
+	// the orchestrator temporarily disables Enabled before certs exist,
+	// then re-enables it once obtained.
 	domainSet := make(map[string]bool)
 	for _, d := range domains {
-		if d.SSL.Enabled && d.SSL.AutoCert && d.Domain != "" {
+		if d.SSL.AutoCert && d.Domain != "" {
 			domainSet[d.Domain] = true
 			for _, alias := range d.Aliases {
 				domainSet[alias] = true
@@ -371,7 +374,7 @@ func (m *Manager) RequestCertificatesForDomains(domains []models.DomainConfig) (
 func (m *Manager) GetDomainsNeedingCertificates(domains []models.DomainConfig) []string {
 	var result []string
 	for _, d := range domains {
-		if d.SSL.Enabled && d.SSL.AutoCert && d.Domain != "" {
+		if d.SSL.AutoCert && d.Domain != "" {
 			if !m.CertificateExists(d.Domain) {
 				result = append(result, d.Domain)
 			}
