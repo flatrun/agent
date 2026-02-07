@@ -3479,6 +3479,10 @@ func (s *Server) addDomain(c *gin.Context) {
 		}
 	}
 
+	if domain.ContainerPort == 0 && deployment.Metadata.Networking.ContainerPort != 0 {
+		domain.ContainerPort = deployment.Metadata.Networking.ContainerPort
+	}
+
 	deployment.Metadata.Domains = append(deployment.Metadata.Domains, domain)
 
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {

@@ -1,11 +1,13 @@
 package ssl
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flatrun/agent/pkg/config"
+	"github.com/flatrun/agent/pkg/models"
 )
 
 func TestNewManager_WebrootPath(t *testing.T) {
@@ -110,6 +112,67 @@ func TestContainerWebrootPath(t *testing.T) {
 				t.Errorf("containerWebRoot = %q, want %q", m.containerWebRoot, tt.expectedContainerWebroot)
 			}
 		})
+	}
+}
+
+func TestGetDomainsNeedingCertificates_AutoCertWithDisabledSSL(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ssl-cert-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.CertbotConfig{
+		CertsPath: tmpDir,
+	}
+	m := NewManager(cfg, tmpDir)
+
+	domains := []models.DomainConfig{
+		{
+			Domain: "new.example.com",
+			SSL: models.SSLConfig{
+				Enabled:  false,
+				AutoCert: true,
+			},
+		},
+	}
+
+	result := m.GetDomainsNeedingCertificates(domains)
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 domain needing certificate, got %d", len(result))
+	}
+	if result[0] != "new.example.com" {
+		t.Errorf("expected 'new.example.com', got '%s'", result[0])
+	}
+}
+
+func TestGetDomainsNeedingCertificates_SkipsWithoutAutoCert(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ssl-cert-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.CertbotConfig{
+		CertsPath: tmpDir,
+	}
+	m := NewManager(cfg, tmpDir)
+
+	domains := []models.DomainConfig{
+		{
+			Domain: "manual.example.com",
+			SSL: models.SSLConfig{
+				Enabled:  true,
+				AutoCert: false,
+			},
+		},
+	}
+
+	result := m.GetDomainsNeedingCertificates(domains)
+
+	if len(result) != 0 {
+		t.Errorf("expected no domains needing certificates for AutoCert=false, got %d", len(result))
 	}
 }
 

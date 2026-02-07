@@ -451,4 +451,94 @@ func TestAddDomain(t *testing.T) {
 			t.Errorf("expected status 201 Created, got %d: %s", w.Code, w.Body.String())
 		}
 	})
+
+	t.Run("defaults container port from legacy networking", func(t *testing.T) {
+		createTestDeployment(t, tmpDir, "port-default", &models.ServiceMetadata{
+			Name: "port-default",
+			Type: "web",
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "legacy.example.com",
+				ContainerPort: 9090,
+			},
+		})
+
+		newDomain := models.DomainConfig{
+			Domain: "new.example.com",
+		}
+		body, _ := json.Marshal(newDomain)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "name", Value: "port-default"}}
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		server.addDomain(c)
+
+		metadataPath := filepath.Join(tmpDir, "port-default", "service.yml")
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			t.Fatalf("Failed to read metadata: %v", err)
+		}
+		var metadata models.ServiceMetadata
+		if err := yaml.Unmarshal(data, &metadata); err != nil {
+			t.Fatalf("Failed to unmarshal metadata: %v", err)
+		}
+
+		// Legacy domain migrated + new domain = 2
+		if len(metadata.Domains) != 2 {
+			t.Fatalf("expected 2 domains, got %d", len(metadata.Domains))
+		}
+
+		newDomainEntry := metadata.Domains[1]
+		if newDomainEntry.ContainerPort != 9090 {
+			t.Errorf("expected new domain to inherit container port 9090, got %d", newDomainEntry.ContainerPort)
+		}
+	})
+
+	t.Run("preserves explicit container port", func(t *testing.T) {
+		createTestDeployment(t, tmpDir, "port-explicit", &models.ServiceMetadata{
+			Name: "port-explicit",
+			Type: "web",
+			Networking: models.NetworkingConfig{
+				Expose:        true,
+				Domain:        "legacy.example.com",
+				ContainerPort: 9090,
+			},
+		})
+
+		newDomain := models.DomainConfig{
+			Domain:        "explicit.example.com",
+			ContainerPort: 3000,
+		}
+		body, _ := json.Marshal(newDomain)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "name", Value: "port-explicit"}}
+		c.Request = httptest.NewRequest("POST", "/", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		server.addDomain(c)
+
+		metadataPath := filepath.Join(tmpDir, "port-explicit", "service.yml")
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			t.Fatalf("Failed to read metadata: %v", err)
+		}
+		var metadata models.ServiceMetadata
+		if err := yaml.Unmarshal(data, &metadata); err != nil {
+			t.Fatalf("Failed to unmarshal metadata: %v", err)
+		}
+
+		if len(metadata.Domains) != 2 {
+			t.Fatalf("expected 2 domains, got %d", len(metadata.Domains))
+		}
+
+		newDomainEntry := metadata.Domains[1]
+		if newDomainEntry.ContainerPort != 3000 {
+			t.Errorf("expected explicit port 3000 to be preserved, got %d", newDomainEntry.ContainerPort)
+		}
+	})
 }
