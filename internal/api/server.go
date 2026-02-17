@@ -1255,6 +1255,13 @@ func (s *Server) updateDeployment(c *gin.Context) {
 		return
 	}
 
+	if err := s.validateComposeContent(req.ComposeContent, name); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
 	if err := s.manager.UpdateDeployment(name, req.ComposeContent); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -2777,7 +2784,7 @@ type composeNetwork struct {
 	Name     string `yaml:"name"`
 }
 
-func (s *Server) validateComposeContent(content, deploymentName string) error {
+func (s *Server) validateComposeContent(content, _ string) error {
 	var compose composeFile
 	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
 		return fmt.Errorf("invalid YAML syntax: %w", err)
@@ -2815,6 +2822,34 @@ func (s *Server) validateComposeContent(content, deploymentName string) error {
 		}
 	}
 
+	if err := validateComposeWithCLI(content); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateComposeWithCLI(content string) error {
+	tmp, err := os.CreateTemp("", "compose-*.yml")
+	if err != nil {
+		log.Printf("Warning: skipping CLI validation, failed to create temp file: %v", err)
+		return nil
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+	if _, err := tmp.WriteString(content); err != nil {
+		log.Printf("Warning: skipping CLI validation, failed to write temp file: %v", err)
+		return nil
+	}
+	if err := tmp.Sync(); err != nil {
+		log.Printf("Warning: skipping CLI validation, failed to sync temp file: %v", err)
+		return nil
+	}
+	cmd := exec.Command("docker", "compose", "-f", tmp.Name(), "config")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("invalid compose: %s", strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

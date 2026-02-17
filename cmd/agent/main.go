@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -42,6 +43,15 @@ func main() {
 		log.Fatalf("Failed to load config from %s: %v", resolvedConfigPath, err)
 	}
 
+	os.Setenv("DOCKER_HOST", cfg.DockerSocket)
+	log.Printf("Using Docker socket from config: %s", cfg.DockerSocket)
+
+	ensureDockerReachable()
+
+	if err := os.MkdirAll(cfg.DeploymentsPath, 0755); err != nil {
+		log.Fatalf("Failed to create deployments directory '%s': %v", cfg.DeploymentsPath, err)
+	}
+
 	log.Printf("Starting Flatrun Agent v%s", version.Version)
 	log.Printf("Config loaded from: %s", resolvedConfigPath)
 	log.Printf("Deployments path: %s", cfg.DeploymentsPath)
@@ -68,6 +78,16 @@ func main() {
 
 	log.Println("Shutting down Flatrun Agent...")
 	_ = apiServer.Stop()
+}
+
+func ensureDockerReachable() {
+	cmd := exec.Command("docker", "info")
+
+	log.Println("Checking if Docker is reachable...")
+	if _, err := cmd.CombinedOutput(); err != nil {
+		log.Fatalf("Docker is not reachable: Ensure the Docker daemon is running and docker socket in config is correct (e.g. unix:///var/run/docker.sock).")
+	}
+	log.Println("Docker is reachable")
 }
 
 func printVersion() {

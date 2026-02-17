@@ -1,5 +1,6 @@
 # Binaries
 flatrun-agent
+__debug_bin*
 /agent
 flatrun-linux-*
 *.exe
@@ -41,3 +42,6 @@ config.yaml
 tmp/
 temp/
 .tmp/
+
+# Deployments
+deployments/

@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/moby/moby/client"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,15 +99,15 @@ type InfrastructureConfig struct {
 }
 
 type PowerDNSConfig struct {
-	Enabled       bool   `yaml:"enabled" json:"enabled"`
-	Container     string `yaml:"container" json:"container"`
-	Image         string `yaml:"image" json:"image"`
-	APIPort       int    `yaml:"api_port" json:"api_port"`
-	DNSPort       int    `yaml:"dns_port" json:"dns_port"`
-	APIKey        string `yaml:"api_key" json:"api_key"`
-	DataPath      string `yaml:"data_path" json:"data_path"`
-	DefaultSOA    string `yaml:"default_soa" json:"default_soa"`
-	Nameservers   string `yaml:"nameservers" json:"nameservers"`
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	Container   string `yaml:"container" json:"container"`
+	Image       string `yaml:"image" json:"image"`
+	APIPort     int    `yaml:"api_port" json:"api_port"`
+	DNSPort     int    `yaml:"dns_port" json:"dns_port"`
+	APIKey      string `yaml:"api_key" json:"api_key"`
+	DataPath    string `yaml:"data_path" json:"data_path"`
+	DefaultSOA  string `yaml:"default_soa" json:"default_soa"`
+	Nameservers string `yaml:"nameservers" json:"nameservers"`
 }
 
 type SharedDatabaseConfig struct {
@@ -208,7 +209,13 @@ func setDefaults(cfg *Config) {
 		cfg.DeploymentsPath = "/deployments"
 	}
 	if cfg.DockerSocket == "" {
-		cfg.DockerSocket = "unix:///var/run/docker.sock"
+		apiClient, err := client.New(client.FromEnv)
+		if err != nil {
+			cfg.DockerSocket = "unix:///var/run/docker.sock"
+		} else {
+			cfg.DockerSocket = apiClient.DaemonHost()
+			_ = apiClient.Close()
+		}
 	}
 	if cfg.API.Host == "" {
 		cfg.API.Host = "0.0.0.0"
