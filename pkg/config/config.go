@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 	"time"
 
-	"github.com/moby/moby/client"
 	"gopkg.in/yaml.v3"
 )
 
@@ -208,14 +210,9 @@ func setDefaults(cfg *Config) {
 	if cfg.DeploymentsPath == "" {
 		cfg.DeploymentsPath = "/deployments"
 	}
+
 	if cfg.DockerSocket == "" {
-		apiClient, err := client.New(client.FromEnv)
-		if err != nil {
-			cfg.DockerSocket = "unix:///var/run/docker.sock"
-		} else {
-			cfg.DockerSocket = apiClient.DaemonHost()
-			_ = apiClient.Close()
-		}
+		cfg.DockerSocket = detectDockerHost()
 	}
 	if cfg.API.Host == "" {
 		cfg.API.Host = "0.0.0.0"
@@ -342,6 +339,28 @@ func setDefaults(cfg *Config) {
 	if cfg.Audit.SensitiveFields == nil {
 		cfg.Audit.SensitiveFields = []string{"password", "token", "secret", "api_key", "authorization"}
 	}
+}
+
+func detectDockerHost() string {
+	if host := os.Getenv("DOCKER_HOST"); host != "" {
+		return host
+	}
+	if host := dockerContextHost(); host != "" {
+		return host
+	}
+	if runtime.GOOS == "windows" {
+		return "npipe:////./pipe/docker_engine"
+	}
+	return "unix:///var/run/docker.sock"
+}
+
+func dockerContextHost() string {
+	cmd := exec.Command("docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func Save(cfg *Config, path string) error {
