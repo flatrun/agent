@@ -2835,8 +2835,13 @@ func validateComposeWithCLI(content string) error {
 		log.Printf("Warning: skipping CLI validation, failed to create temp file: %v", err)
 		return nil
 	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
+
+	tmpName := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}()
+
 	if _, err := tmp.WriteString(content); err != nil {
 		log.Printf("Warning: skipping CLI validation, failed to write temp file: %v", err)
 		return nil
@@ -2845,11 +2850,13 @@ func validateComposeWithCLI(content string) error {
 		log.Printf("Warning: skipping CLI validation, failed to sync temp file: %v", err)
 		return nil
 	}
-	cmd := exec.Command("docker", "compose", "-f", tmp.Name(), "config")
+	_ = tmp.Close()
+	cmd := exec.Command("docker", "compose", "-f", tmpName, "config")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("invalid compose: %s", strings.TrimSpace(string(out)))
 	}
+
 	return nil
 }
 

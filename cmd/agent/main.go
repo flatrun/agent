@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -14,6 +14,7 @@ import (
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/updater"
 	"github.com/flatrun/agent/pkg/version"
+	"github.com/moby/moby/client"
 )
 
 func main() {
@@ -46,7 +47,7 @@ func main() {
 	os.Setenv("DOCKER_HOST", cfg.DockerSocket)
 	log.Printf("Using Docker socket from config: %s", cfg.DockerSocket)
 
-	ensureDockerReachable()
+	ensureDockerReachable(cfg.DockerSocket)
 
 	if err := os.MkdirAll(cfg.DeploymentsPath, 0755); err != nil {
 		log.Fatalf("Failed to create deployments directory '%s': %v", cfg.DeploymentsPath, err)
@@ -80,12 +81,16 @@ func main() {
 	_ = apiServer.Stop()
 }
 
-func ensureDockerReachable() {
-	cmd := exec.Command("docker", "info")
-
+func ensureDockerReachable(dockerSocket string) {
 	log.Println("Checking if Docker is reachable...")
-	if _, err := cmd.CombinedOutput(); err != nil {
-		log.Fatalf("Docker is not reachable: Ensure the Docker daemon is running and docker socket in config is correct (e.g. unix:///var/run/docker.sock).")
+	cli, err := client.New(client.WithHost(dockerSocket))
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	if _, err := cli.Ping(context.Background(), client.PingOptions{NegotiateAPIVersion: true}); err != nil {
+		log.Fatalf("Docker is not reachable: Ensure the Docker daemon is running and docker socket in config is correct (e.g. unix:///var/run/docker.sock). Error: %v", err)
 	}
 	log.Println("Docker is reachable")
 }
