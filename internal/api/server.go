@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compose-spec/compose-go/loader"
+	"github.com/compose-spec/compose-go/types"
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/backup"
@@ -2822,41 +2824,29 @@ func (s *Server) validateComposeContent(content, _ string) error {
 		}
 	}
 
-	if err := validateComposeWithCLI(content); err != nil {
+	if err := validateComposeWithComposeGo(content); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func validateComposeWithCLI(content string) error {
-	tmp, err := os.CreateTemp("", "compose-*.yml")
+func validateComposeWithComposeGo(content string) error {
+	configDetails := types.ConfigDetails{
+		ConfigFiles: []types.ConfigFile{{
+			Filename: "compose.yml",
+			Content:  []byte(content),
+		}},
+		WorkingDir:  ".",
+		Environment: map[string]string{},
+	}
+	_, err := loader.LoadWithContext(context.Background(), configDetails, func(o *loader.Options) {
+		o.ResolvePaths = false
+		o.SkipConsistencyCheck = true
+	})
 	if err != nil {
-		log.Printf("Warning: skipping CLI validation, failed to create temp file: %v", err)
-		return nil
+		return fmt.Errorf("invalid compose: %w", err)
 	}
-
-	tmpName := tmp.Name()
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}()
-
-	if _, err := tmp.WriteString(content); err != nil {
-		log.Printf("Warning: skipping CLI validation, failed to write temp file: %v", err)
-		return nil
-	}
-	if err := tmp.Sync(); err != nil {
-		log.Printf("Warning: skipping CLI validation, failed to sync temp file: %v", err)
-		return nil
-	}
-	_ = tmp.Close()
-	cmd := exec.Command("docker", "compose", "-f", tmpName, "config")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("invalid compose: %s", strings.TrimSpace(string(out)))
-	}
-
 	return nil
 }
 

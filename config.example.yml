@@ -1,4 +1,4 @@
-deployments_path: ./deployment
+deployments_path: ./deployments
 docker_socket: unix:///var/run/docker.sock
 api:
     host: 0.0.0.0
