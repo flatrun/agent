@@ -1,14 +1,17 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
+
+	tc "github.com/testcontainers/testcontainers-go/modules/compose"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
@@ -21,18 +24,30 @@ func TestSecurityConfigFilesCreated(t *testing.T) {
 		t.Skip("Skipping security test - set FLATRUN_SECURITY_TEST=true to run")
 	}
 
-	// Setup security test environment
-	if err := setupSecurityTestEnvironment(); err != nil {
-		t.Fatalf("Failed to setup security test environment: %v", err)
-	}
-	defer cleanupSecurityTestEnvironment()
+	ctx := context.Background()
 
-	// Wait for agent to be ready
-	if err := waitForSecurityAgent(); err != nil {
-		t.Fatalf("Security agent failed to start: %v", err)
+	_ = os.RemoveAll(securityDeploymentsPath)
+	confDir := filepath.Join(securityDeploymentsPath, "nginx", "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("Failed to create conf.d directory: %v", err)
 	}
 
-	// Test 1: Verify rate_limits.conf exists and has valid content
+	compose, err := tc.NewDockerCompose("docker-compose.security.yml")
+	if err != nil {
+		t.Fatalf("Failed to create compose environment: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = compose.Down(ctx, tc.RemoveOrphans(true), tc.RemoveVolumes(true))
+		_ = os.RemoveAll(securityDeploymentsPath)
+	})
+
+	err = compose.
+		WaitForService("agent", wait.ForHTTP("/api/health").WithPort("8090/tcp").WithStartupTimeout(120*time.Second)).
+		Up(ctx, tc.Wait(true))
+	if err != nil {
+		t.Fatalf("Failed to start security test environment: %v", err)
+	}
+
 	t.Run("rate_limits.conf exists", func(t *testing.T) {
 		rateLimitsPath := filepath.Join(securityDeploymentsPath, "nginx", "conf.d", "rate_limits.conf")
 		content, err := os.ReadFile(rateLimitsPath)
@@ -45,7 +60,6 @@ func TestSecurityConfigFilesCreated(t *testing.T) {
 		t.Logf("rate_limits.conf content:\n%s", string(content))
 	})
 
-	// Test 3: Verify nginx is healthy (means it could parse the config with includes)
 	t.Run("nginx is healthy with security configs", func(t *testing.T) {
 		resp, err := http.Get("http://localhost:18081/health")
 		if err != nil {
@@ -58,7 +72,6 @@ func TestSecurityConfigFilesCreated(t *testing.T) {
 		}
 	})
 
-	// Test 4: Verify security stats endpoint works
 	t.Run("security stats endpoint works", func(t *testing.T) {
 		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/api/security/stats", securityAPIPort))
 		if err != nil {
@@ -77,7 +90,6 @@ func TestSecurityConfigFilesCreated(t *testing.T) {
 		t.Logf("Security stats: %+v", stats)
 	})
 
-	// Test 5: Verify blocked IPs endpoint works
 	t.Run("blocked IPs endpoint works", func(t *testing.T) {
 		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/api/security/blocked-ips", securityAPIPort))
 		if err != nil {
@@ -90,7 +102,6 @@ func TestSecurityConfigFilesCreated(t *testing.T) {
 		}
 	})
 
-	// Test 6: Verify protected routes endpoint works
 	t.Run("protected routes endpoint works", func(t *testing.T) {
 		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/api/security/protected-routes", securityAPIPort))
 		if err != nil {
@@ -102,50 +113,4 @@ func TestSecurityConfigFilesCreated(t *testing.T) {
 			t.Errorf("protected routes returned %d, expected 200", resp.StatusCode)
 		}
 	})
-}
-
-func setupSecurityTestEnvironment() error {
-	// Clean and create directories
-	_ = os.RemoveAll(securityDeploymentsPath)
-
-	// Create nginx conf.d directory
-	confDir := filepath.Join(securityDeploymentsPath, "nginx", "conf.d")
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		return fmt.Errorf("failed to create conf.d directory: %w", err)
-	}
-
-	// Start security test environment
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.security.yml", "up", "-d", "--build")
-	cmd.Dir = getTestDir()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func cleanupSecurityTestEnvironment() {
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.security.yml", "down", "-v", "--remove-orphans")
-	cmd.Dir = getTestDir()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
-
-	_ = os.RemoveAll(securityDeploymentsPath)
-}
-
-func waitForSecurityAgent() error {
-	deadline := time.Now().Add(120 * time.Second)
-
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/api/health", securityAPIPort))
-		if err == nil && resp.StatusCode == 200 {
-			resp.Body.Close()
-			return nil
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-		time.Sleep(2 * time.Second)
-	}
-
-	return fmt.Errorf("timeout waiting for security agent")
 }
