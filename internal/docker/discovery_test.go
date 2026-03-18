@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 )
 
@@ -421,7 +422,11 @@ func TestExtractBindMounts(t *testing.T) {
 			if len(result) != len(tt.expected) {
 				t.Fatalf("ExtractBindMounts returned %d paths, want %d: got %v", len(result), len(tt.expected), result)
 			}
-			for i, path := range tt.expected {
+			sort.Strings(result)
+			sorted := make([]string, len(tt.expected))
+			copy(sorted, tt.expected)
+			sort.Strings(sorted)
+			for i, path := range sorted {
 				if result[i] != path {
 					t.Errorf("ExtractBindMounts[%d] = %q, want %q", i, result[i], path)
 				}
