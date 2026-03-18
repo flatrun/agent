@@ -1,0 +1,345 @@
+package cluster
+
+import (
+	"database/sql"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func setupTestDB(t *testing.T) (*DB, func()) {
+	tmpDir, err := os.MkdirTemp("", "cluster_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	db, err := NewDB(tmpDir)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to create DB: %v", err)
+	}
+
+	cleanup := func() {
+		db.Close()
+		os.RemoveAll(tmpDir)
+	}
+
+	return db, cleanup
+}
+
+func TestNewDB(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	if db == nil {
+		t.Fatal("NewDB returned nil")
+	}
+	if db.conn == nil {
+		t.Fatal("DB connection is nil")
+	}
+}
+
+func TestDBPath(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cluster_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	db, err := NewDB(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to create DB: %v", err)
+	}
+	defer db.Close()
+
+	expectedPath := filepath.Join(tmpDir, ".flatrun", "cluster.db")
+	if db.path != expectedPath {
+		t.Errorf("DB path = %s, want %s", db.path, expectedPath)
+	}
+
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Error("Database file was not created")
+	}
+}
+
+func TestCreateAndGetPeer(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	peer := &Peer{
+		Name:            "hetzner-1",
+		URL:             "https://hetzner-1.example.com:8090",
+		APIKeyHash:      HashToken("test-api-key"),
+		APIKeyEncrypted: "encrypted-key-data",
+		Status:          "active",
+	}
+
+	id, err := db.CreatePeer(peer)
+	if err != nil {
+		t.Fatalf("CreatePeer failed: %v", err)
+	}
+	if id <= 0 {
+		t.Error("CreatePeer should return positive ID")
+	}
+
+	retrieved, err := db.GetPeer("hetzner-1")
+	if err != nil {
+		t.Fatalf("GetPeer failed: %v", err)
+	}
+
+	if retrieved.Name != "hetzner-1" {
+		t.Errorf("Name = %s, want hetzner-1", retrieved.Name)
+	}
+	if retrieved.URL != "https://hetzner-1.example.com:8090" {
+		t.Errorf("URL = %s, want https://hetzner-1.example.com:8090", retrieved.URL)
+	}
+	if retrieved.Status != "active" {
+		t.Errorf("Status = %s, want active", retrieved.Status)
+	}
+}
+
+func TestGetPeerNotFound(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, err := db.GetPeer("nonexistent")
+	if err == nil {
+		t.Error("GetPeer should fail for nonexistent peer")
+	}
+}
+
+func TestCreatePeerDuplicateName(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	peer := &Peer{
+		Name:            "dupe",
+		URL:             "https://a.example.com",
+		APIKeyHash:      "hash1",
+		APIKeyEncrypted: "enc1",
+		Status:          "active",
+	}
+	_, err := db.CreatePeer(peer)
+	if err != nil {
+		t.Fatalf("First CreatePeer failed: %v", err)
+	}
+
+	peer2 := &Peer{
+		Name:            "dupe",
+		URL:             "https://b.example.com",
+		APIKeyHash:      "hash2",
+		APIKeyEncrypted: "enc2",
+		Status:          "active",
+	}
+	_, err = db.CreatePeer(peer2)
+	if err == nil {
+		t.Error("CreatePeer should fail for duplicate name")
+	}
+}
+
+func TestListPeers(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	peers, err := db.ListPeers()
+	if err != nil {
+		t.Fatalf("ListPeers failed: %v", err)
+	}
+	if len(peers) != 0 {
+		t.Errorf("Expected 0 peers, got %d", len(peers))
+	}
+
+	_, _ = db.CreatePeer(&Peer{
+		Name: "peer-a", URL: "https://a.example.com",
+		APIKeyHash: "h1", APIKeyEncrypted: "e1", Status: "active",
+	})
+	_, _ = db.CreatePeer(&Peer{
+		Name: "peer-b", URL: "https://b.example.com",
+		APIKeyHash: "h2", APIKeyEncrypted: "e2", Status: "active",
+	})
+
+	peers, err = db.ListPeers()
+	if err != nil {
+		t.Fatalf("ListPeers failed: %v", err)
+	}
+	if len(peers) != 2 {
+		t.Errorf("Expected 2 peers, got %d", len(peers))
+	}
+}
+
+func TestDeletePeer(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, _ = db.CreatePeer(&Peer{
+		Name: "to-delete", URL: "https://delete.example.com",
+		APIKeyHash: "h", APIKeyEncrypted: "e", Status: "active",
+	})
+
+	err := db.DeletePeer("to-delete")
+	if err != nil {
+		t.Fatalf("DeletePeer failed: %v", err)
+	}
+
+	_, err = db.GetPeer("to-delete")
+	if err == nil {
+		t.Error("GetPeer should fail after deletion")
+	}
+}
+
+func TestUpdateLastSeen(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, _ = db.CreatePeer(&Peer{
+		Name: "seen-peer", URL: "https://seen.example.com",
+		APIKeyHash: "h", APIKeyEncrypted: "e", Status: "active",
+	})
+
+	before, _ := db.GetPeer("seen-peer")
+	if !before.LastSeenAt.IsZero() {
+		t.Error("LastSeenAt should be zero initially")
+	}
+
+	err := db.UpdateLastSeen("seen-peer")
+	if err != nil {
+		t.Fatalf("UpdateLastSeen failed: %v", err)
+	}
+
+	after, _ := db.GetPeer("seen-peer")
+	if after.LastSeenAt.IsZero() {
+		t.Error("LastSeenAt should be set after update")
+	}
+}
+
+func TestCreateAndGetInvite(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	token := "test-invite-token"
+	tokenHash := HashToken(token)
+
+	invite := &Invite{
+		TokenHash: tokenHash,
+		Status:    "pending",
+		CreatedBy: 1,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+
+	id, err := db.CreateInvite(invite)
+	if err != nil {
+		t.Fatalf("CreateInvite failed: %v", err)
+	}
+	if id <= 0 {
+		t.Error("CreateInvite should return positive ID")
+	}
+
+	retrieved, err := db.GetInviteByHash(tokenHash)
+	if err != nil {
+		t.Fatalf("GetInviteByHash failed: %v", err)
+	}
+
+	if retrieved.Status != "pending" {
+		t.Errorf("Status = %s, want pending", retrieved.Status)
+	}
+	if retrieved.CreatedBy != 1 {
+		t.Errorf("CreatedBy = %d, want 1", retrieved.CreatedBy)
+	}
+}
+
+func TestGetInviteNotFound(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, err := db.GetInviteByHash("nonexistent-hash")
+	if err == nil {
+		t.Error("GetInviteByHash should fail for nonexistent invite")
+	}
+}
+
+func TestConsumeInvite(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	token := "consume-token"
+	tokenHash := HashToken(token)
+
+	_, _ = db.CreateInvite(&Invite{
+		TokenHash: tokenHash,
+		Status:    "pending",
+		CreatedBy: 1,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	})
+
+	err := db.ConsumeInvite(tokenHash, "new-peer")
+	if err != nil {
+		t.Fatalf("ConsumeInvite failed: %v", err)
+	}
+
+	invite, _ := db.GetInviteByHash(tokenHash)
+	if invite.Status != "accepted" {
+		t.Errorf("Status = %s, want accepted", invite.Status)
+	}
+	if invite.AcceptedPeer != "new-peer" {
+		t.Errorf("AcceptedPeer = %s, want new-peer", invite.AcceptedPeer)
+	}
+}
+
+func TestConsumeInviteAlreadyAccepted(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	token := "already-used"
+	tokenHash := HashToken(token)
+
+	_, _ = db.CreateInvite(&Invite{
+		TokenHash: tokenHash,
+		Status:    "pending",
+		CreatedBy: 1,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	})
+
+	_ = db.ConsumeInvite(tokenHash, "first-peer")
+
+	err := db.ConsumeInvite(tokenHash, "second-peer")
+	if err != sql.ErrNoRows {
+		t.Errorf("Expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+func TestConsumeInviteExpired(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	token := "expired-token"
+	tokenHash := HashToken(token)
+
+	_, _ = db.CreateInvite(&Invite{
+		TokenHash: tokenHash,
+		Status:    "pending",
+		CreatedBy: 1,
+		ExpiresAt: time.Now().Add(-1 * time.Hour),
+	})
+
+	err := db.ConsumeInvite(tokenHash, "late-peer")
+	if err != sql.ErrNoRows {
+		t.Errorf("Expected sql.ErrNoRows for expired invite, got %v", err)
+	}
+}
+
+func TestHashToken(t *testing.T) {
+	hash1 := HashToken("token-a")
+	hash2 := HashToken("token-b")
+	hash1again := HashToken("token-a")
+
+	if hash1 == hash2 {
+		t.Error("Different tokens should produce different hashes")
+	}
+	if hash1 != hash1again {
+		t.Error("Same token should produce same hash")
+	}
+	if len(hash1) != 64 {
+		t.Errorf("Hash length = %d, want 64", len(hash1))
+	}
+}

@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -214,6 +216,46 @@ func (m *Manager) CreateAPIKey(userID int64, name, description string, role Role
 
 	key.ID = id
 	return key, plainKey, nil
+}
+
+func (m *Manager) CreateAPIKeyFromRaw(rawKey string, userID int64, name, description string, role Role, permissions, deployments []string, expiresAt time.Time) (*APIKey, error) {
+	keyHash := HashAPIKey(rawKey)
+
+	idBytes := make([]byte, keyIDLength/2)
+	if _, err := rand.Read(idBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate key ID: %w", err)
+	}
+	keyID := hex.EncodeToString(idBytes)
+
+	var prefix string
+	if len(rawKey) >= 12 {
+		prefix = rawKey[:12] + "..."
+	} else {
+		prefix = rawKey + "..."
+	}
+
+	key := &APIKey{
+		KeyID:       keyID,
+		UserID:      userID,
+		Name:        name,
+		Description: description,
+		KeyHash:     keyHash,
+		KeyPrefix:   prefix,
+		Role:        role,
+		Permissions: permissions,
+		Deployments: deployments,
+		ExpiresAt:   expiresAt,
+		IsActive:    true,
+		CreatedAt:   time.Now(),
+	}
+
+	id, err := m.db.CreateAPIKey(key)
+	if err != nil {
+		return nil, err
+	}
+
+	key.ID = id
+	return key, nil
 }
 
 func (m *Manager) GetAPIKey(id int64) (*APIKey, error) {
