@@ -1,14 +1,18 @@
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
-)
 
-var useDocker = os.Getenv("E2E_USE_DOCKER") != "false"
+	testcontainers "github.com/testcontainers/testcontainers-go"
+	tc "github.com/testcontainers/testcontainers-go/modules/compose"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
 
 const (
 	deploymentsPath = "/tmp/flatrun-e2e-deployments"
@@ -17,49 +21,81 @@ const (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("FLATRUN_API_URL") != "" {
-		// External agent provided, just run tests
 		os.Exit(m.Run())
 	}
 
-	if !useDocker {
+	if os.Getenv("E2E_USE_DOCKER") == "false" {
 		fmt.Println("No FLATRUN_API_URL set and E2E_USE_DOCKER=false")
-		fmt.Println("Please set FLATRUN_API_URL or allow Docker test environment")
 		os.Exit(1)
 	}
 
-	// Start Docker test environment
+	ctx := context.Background()
+
+	if err := prepareDirectories(); err != nil {
+		fmt.Printf("Failed to prepare directories: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := generateDefaultCert(); err != nil {
+		fmt.Printf("Failed to generate default certificate: %v\n", err)
+		os.Exit(1)
+	}
+
+	nw, nwErr := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{ //nolint:staticcheck
+		NetworkRequest: testcontainers.NetworkRequest{ //nolint:staticcheck
+			Name:   "proxy",
+			Driver: "bridge",
+		},
+	})
+	if nwErr != nil && !strings.Contains(nwErr.Error(), "already exists") {
+		fmt.Printf("Failed to create proxy network: %v\n", nwErr)
+		os.Exit(1)
+	}
+
+	compose, err := tc.NewDockerCompose("docker-compose.test.yml")
+	if err != nil {
+		fmt.Printf("Failed to create compose environment: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Println("Starting test environment...")
-	if err := startTestEnvironment(); err != nil {
+	err = compose.
+		WaitForService("agent", wait.ForHTTP("/api/health").WithPort("8090/tcp").WithStartupTimeout(90*time.Second)).
+		Up(ctx, tc.Wait(true))
+	if err != nil {
 		fmt.Printf("Failed to start test environment: %v\n", err)
+		_ = compose.Down(ctx, tc.RemoveOrphans(true), tc.RemoveVolumes(true))
 		os.Exit(1)
 	}
 
-	// Set the API URL and deployments path for tests
 	os.Setenv("FLATRUN_API_URL", "http://localhost:18090/api")
 	os.Setenv("FLATRUN_DEPLOYMENTS_PATH", deploymentsPath)
 	os.Setenv("FLATRUN_CERTS_PATH", certsPath)
 	baseURL = "http://localhost:18090/api"
 
-	// Wait for agent to be ready
-	fmt.Println("Waiting for agent to be ready...")
-	if err := waitForAgent(); err != nil {
-		fmt.Printf("Agent failed to start: %v\n", err)
-		stopTestEnvironment()
-		os.Exit(1)
-	}
-
 	fmt.Println("Running tests...")
 	code := m.Run()
 
-	// Cleanup
 	fmt.Println("Stopping test environment...")
-	stopTestEnvironment()
+	if err := compose.Down(ctx, tc.RemoveOrphans(true), tc.RemoveVolumes(true)); err != nil {
+		fmt.Printf("Failed to stop compose environment: %v\n", err)
+	}
+	if nw != nil {
+		if err := nw.Remove(ctx); err != nil {
+			fmt.Printf("Failed to remove proxy network: %v\n", err)
+		}
+	}
+	if err := os.RemoveAll(deploymentsPath); err != nil {
+		fmt.Printf("Failed to remove deployments directory: %v\n", err)
+	}
+	if err := os.RemoveAll(certsPath); err != nil {
+		fmt.Printf("Failed to remove certs directory: %v\n", err)
+	}
 
 	os.Exit(code)
 }
 
-func startTestEnvironment() error {
-	// Clean and create directories
+func prepareDirectories() error {
 	_ = os.RemoveAll(deploymentsPath)
 	_ = os.RemoveAll(certsPath)
 
@@ -69,17 +105,7 @@ func startTestEnvironment() error {
 	if err := os.MkdirAll(certsPath+"/live/default", 0755); err != nil {
 		return fmt.Errorf("failed to create certs directory: %w", err)
 	}
-
-	// Generate default SSL certificate for nginx
-	if err := generateDefaultCert(); err != nil {
-		return fmt.Errorf("failed to generate default certificate: %w", err)
-	}
-
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.test.yml", "up", "-d", "--build")
-	cmd.Dir = getTestDir()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return nil
 }
 
 func generateDefaultCert() error {
@@ -93,43 +119,4 @@ func generateDefaultCert() error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
-}
-
-func stopTestEnvironment() {
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.test.yml", "down", "-v", "--remove-orphans")
-	cmd.Dir = getTestDir()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
-
-	// Clean up directories
-	_ = os.RemoveAll(deploymentsPath)
-	_ = os.RemoveAll(certsPath)
-}
-
-func waitForAgent() error {
-	client := NewAPIClient()
-	deadline := time.Now().Add(90 * time.Second)
-
-	for time.Now().Before(deadline) {
-		resp, err := client.Get("/health")
-		if err == nil && resp.StatusCode == 200 {
-			resp.Body.Close()
-			return nil
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-		time.Sleep(2 * time.Second)
-	}
-
-	return fmt.Errorf("timeout waiting for agent")
-}
-
-func getTestDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-	return dir
 }

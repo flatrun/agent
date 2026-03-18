@@ -112,10 +112,9 @@ test-e2e-security-cleanup:
 	@rm -rf $(E2E_SECURITY_PATH)/* 2>/dev/null || true
 	@echo "Security cleanup complete"
 
-test-e2e-security: test-e2e-security-setup
+test-e2e-security:
 	@echo "Running Security E2E tests..."
 	FLATRUN_SECURITY_TEST=true go test -v -timeout 5m ./test/e2e/... -run TestSecurityConfigFilesCreated
-	@$(MAKE) test-e2e-security-cleanup
 
 test-e2e-lua-setup:
 	@echo "Setting up Lua/OpenResty E2E test environment..."
@@ -134,10 +133,9 @@ test-e2e-lua-cleanup:
 	@rm -rf $(E2E_LUA_PATH)/* 2>/dev/null || true
 	@echo "Lua cleanup complete"
 
-test-e2e-lua: test-e2e-lua-setup
+test-e2e-lua:
 	@echo "Running Lua/OpenResty E2E tests..."
 	FLATRUN_LUA_TEST=true go test -v -timeout 5m ./test/e2e/... -run TestLuaRealtimeCapture
-	@$(MAKE) test-e2e-lua-cleanup
 
 test-coverage:
 	@echo "Running tests with coverage..."
@@ -154,7 +152,7 @@ lint:
 
 lint-install:
 	@echo "Installing golangci-lint..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
 fmt:
 	go fmt ./...

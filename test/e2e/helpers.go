@@ -10,8 +10,63 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"testing"
 	"time"
+
+	testcontainers "github.com/testcontainers/testcontainers-go"
+	tc "github.com/testcontainers/testcontainers-go/modules/compose"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// startComposeEnv creates directories, starts a compose environment with a
+// health-checked agent, and registers cleanup via t.Cleanup.
+func startComposeEnv(t *testing.T, composeFile string, deploymentsDir string, timeout time.Duration) {
+	t.Helper()
+	ctx := t.Context()
+
+	_ = os.RemoveAll(deploymentsDir)
+	confDir := filepath.Join(deploymentsDir, "nginx", "conf.d")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("Failed to create conf.d directory: %v", err)
+	}
+
+	nw, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{ //nolint:staticcheck
+		NetworkRequest: testcontainers.NetworkRequest{ //nolint:staticcheck
+			Name:   "proxy",
+			Driver: "bridge",
+		},
+	})
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("Failed to create proxy network: %v", err)
+	}
+
+	compose, err := tc.NewDockerCompose(composeFile)
+	if err != nil {
+		t.Fatalf("Failed to create compose environment: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := compose.Down(ctx, tc.RemoveOrphans(true), tc.RemoveVolumes(true)); err != nil {
+			t.Logf("Failed to stop compose environment: %v", err)
+		}
+		if err := os.RemoveAll(deploymentsDir); err != nil {
+			t.Logf("Failed to remove deployments directory: %v", err)
+		}
+		if nw != nil {
+			if err := nw.Remove(ctx); err != nil {
+				t.Logf("Failed to remove proxy network: %v", err)
+			}
+		}
+	})
+
+	err = compose.
+		WaitForService("agent", wait.ForHTTP("/api/health").WithPort("8090/tcp").WithStartupTimeout(timeout)).
+		Up(ctx, tc.Wait(true))
+	if err != nil {
+		t.Fatalf("Failed to start compose environment: %v", err)
+	}
+}
 
 var (
 	baseURL   = getEnv("FLATRUN_API_URL", "http://localhost:8090/api")

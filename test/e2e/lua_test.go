@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,16 +21,11 @@ func TestLuaRealtimeCapture(t *testing.T) {
 		t.Skip("Skipping Lua test - set FLATRUN_LUA_TEST=true to run")
 	}
 
-	if err := setupLuaTestEnvironment(); err != nil {
-		t.Fatalf("Failed to setup Lua test environment: %v", err)
-	}
-	defer cleanupLuaTestEnvironment()
+	startComposeEnv(t, "docker-compose.lua.yml", luaDeploymentsPath, 120*time.Second)
 
-	if err := waitForLuaAgent(); err != nil {
-		t.Fatalf("Lua agent failed to start: %v", err)
-	}
+	// Extra settle time for OpenResty
+	time.Sleep(2 * time.Second)
 
-	// Clean up any existing events and blocked IPs from previous runs
 	cleanupSecurityState(t)
 
 	t.Run("security config files created", func(t *testing.T) {
@@ -276,7 +270,6 @@ func getEvents(t *testing.T) []SecurityEvent {
 }
 
 func cleanupSecurityState(t *testing.T) {
-	// Get all blocked IPs
 	resp, err := http.Get(fmt.Sprintf("http://localhost:%s/api/security/blocked-ips", luaAPIPort))
 	if err != nil {
 		t.Logf("Warning: Could not get blocked IPs: %v", err)
@@ -295,7 +288,6 @@ func cleanupSecurityState(t *testing.T) {
 		return
 	}
 
-	// Unblock each IP
 	client := &http.Client{}
 	for _, blocked := range result.BlockedIPs {
 		req, _ := http.NewRequest("DELETE", fmt.Sprintf("http://localhost:%s/api/security/blocked-ips/%s", luaAPIPort, blocked.IP), nil)
@@ -308,48 +300,4 @@ func cleanupSecurityState(t *testing.T) {
 	}
 
 	t.Logf("Cleaned up %d blocked IPs", len(result.BlockedIPs))
-}
-
-func setupLuaTestEnvironment() error {
-	_ = os.RemoveAll(luaDeploymentsPath)
-
-	confDir := filepath.Join(luaDeploymentsPath, "nginx", "conf.d")
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		return fmt.Errorf("failed to create conf.d directory: %w", err)
-	}
-
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.lua.yml", "up", "-d", "--build")
-	cmd.Dir = getTestDir()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func cleanupLuaTestEnvironment() {
-	cmd := exec.Command("docker", "compose", "-f", "docker-compose.lua.yml", "down", "-v", "--remove-orphans")
-	cmd.Dir = getTestDir()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
-
-	_ = os.RemoveAll(luaDeploymentsPath)
-}
-
-func waitForLuaAgent() error {
-	deadline := time.Now().Add(120 * time.Second)
-
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/api/health", luaAPIPort))
-		if err == nil && resp.StatusCode == 200 {
-			resp.Body.Close()
-			time.Sleep(2 * time.Second)
-			return nil
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-		time.Sleep(2 * time.Second)
-	}
-
-	return fmt.Errorf("timeout waiting for Lua agent")
 }
