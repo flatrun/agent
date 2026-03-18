@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,9 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	tc "github.com/testcontainers/testcontainers-go/modules/compose"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
@@ -25,29 +21,7 @@ func TestLuaRealtimeCapture(t *testing.T) {
 		t.Skip("Skipping Lua test - set FLATRUN_LUA_TEST=true to run")
 	}
 
-	ctx := context.Background()
-
-	_ = os.RemoveAll(luaDeploymentsPath)
-	confDir := filepath.Join(luaDeploymentsPath, "nginx", "conf.d")
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		t.Fatalf("Failed to create conf.d directory: %v", err)
-	}
-
-	compose, err := tc.NewDockerCompose("docker-compose.lua.yml")
-	if err != nil {
-		t.Fatalf("Failed to create compose environment: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = compose.Down(ctx, tc.RemoveOrphans(true), tc.RemoveVolumes(true))
-		_ = os.RemoveAll(luaDeploymentsPath)
-	})
-
-	err = compose.
-		WaitForService("agent", wait.ForHTTP("/api/health").WithPort("8090/tcp").WithStartupTimeout(120*time.Second)).
-		Up(ctx, tc.Wait(true))
-	if err != nil {
-		t.Fatalf("Failed to start Lua test environment: %v", err)
-	}
+	startComposeEnv(t, "docker-compose.lua.yml", luaDeploymentsPath, 120*time.Second)
 
 	// Extra settle time for OpenResty
 	time.Sleep(2 * time.Second)

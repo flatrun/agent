@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,9 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	tc "github.com/testcontainers/testcontainers-go/modules/compose"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
@@ -24,29 +20,7 @@ func TestSecurityConfigFilesCreated(t *testing.T) {
 		t.Skip("Skipping security test - set FLATRUN_SECURITY_TEST=true to run")
 	}
 
-	ctx := context.Background()
-
-	_ = os.RemoveAll(securityDeploymentsPath)
-	confDir := filepath.Join(securityDeploymentsPath, "nginx", "conf.d")
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		t.Fatalf("Failed to create conf.d directory: %v", err)
-	}
-
-	compose, err := tc.NewDockerCompose("docker-compose.security.yml")
-	if err != nil {
-		t.Fatalf("Failed to create compose environment: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = compose.Down(ctx, tc.RemoveOrphans(true), tc.RemoveVolumes(true))
-		_ = os.RemoveAll(securityDeploymentsPath)
-	})
-
-	err = compose.
-		WaitForService("agent", wait.ForHTTP("/api/health").WithPort("8090/tcp").WithStartupTimeout(120*time.Second)).
-		Up(ctx, tc.Wait(true))
-	if err != nil {
-		t.Fatalf("Failed to start security test environment: %v", err)
-	}
+	startComposeEnv(t, "docker-compose.security.yml", securityDeploymentsPath, 120*time.Second)
 
 	t.Run("rate_limits.conf exists", func(t *testing.T) {
 		rateLimitsPath := filepath.Join(securityDeploymentsPath, "nginx", "conf.d", "rate_limits.conf")
