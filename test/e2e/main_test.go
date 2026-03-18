@@ -39,6 +39,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	_ = exec.Command("docker", "network", "create", "proxy").Run()
+
 	compose, err := tc.NewDockerCompose("docker-compose.test.yml")
 	if err != nil {
 		fmt.Printf("Failed to create compose environment: %v\n", err)

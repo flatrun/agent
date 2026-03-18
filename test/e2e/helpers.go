@@ -29,6 +29,8 @@ func startComposeEnv(t *testing.T, composeFile string, deploymentsDir string, ti
 		t.Fatalf("Failed to create conf.d directory: %v", err)
 	}
 
+	_ = exec.Command("docker", "network", "create", "proxy").Run()
+
 	compose, err := tc.NewDockerCompose(composeFile)
 	if err != nil {
 		t.Fatalf("Failed to create compose environment: %v", err)

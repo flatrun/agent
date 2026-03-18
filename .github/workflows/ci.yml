@@ -53,9 +53,9 @@ jobs:
           go-version: '1.25'
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.11.3
           args: --timeout=5m
 
   e2e-tests:
@@ -99,10 +99,6 @@ jobs:
       - name: Run Security E2E tests
         run: make test-e2e-security
 
-      - name: Cleanup on failure
-        if: failure()
-        run: make test-e2e-security-cleanup
-
   lua-tests:
     runs-on: ubuntu-latest
     needs: build
@@ -119,7 +115,3 @@ jobs:
 
       - name: Run Lua/OpenResty E2E tests
         run: make test-e2e-lua
-
-      - name: Cleanup on failure
-        if: failure()
-        run: make test-e2e-lua-cleanup
