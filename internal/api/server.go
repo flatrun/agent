@@ -306,6 +306,10 @@ func (s *Server) setupRoutes() {
 			protected.POST("/compose/update", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.updateCompose)
 			protected.GET("/stats", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.getSystemStats)
 
+			// Server info and network health endpoints
+			protected.GET("/server/info", s.authMiddleware.RequirePermission(auth.PermSystemRead), s.getServerInfo)
+			protected.GET("/server/network-health", s.authMiddleware.RequirePermission(auth.PermSystemRead), s.getNetworkHealth)
+
 			// Template and plugin endpoints
 			protected.GET("/plugins", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.listPlugins)
 			protected.GET("/plugins/:name", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getPlugin)
@@ -326,7 +330,10 @@ func (s *Server) setupRoutes() {
 			protected.GET("/containers/:id/stats", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getContainerStats)
 			protected.GET("/containers/stats", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getAllContainerStats)
 			protected.POST("/containers/:id/exec", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.containerExecHTTP)
+			protected.GET("/containers/:id/resources", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getContainerResources)
+			protected.PUT("/containers/:id/resources", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.updateContainerResources)
 			protected.GET("/deployments/:name/stats", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentContainerStats)
+			protected.GET("/deployments/:name/resources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentResources)
 
 			// Image endpoints
 			protected.GET("/images", s.authMiddleware.RequirePermission(auth.PermImagesRead), s.listImages)
