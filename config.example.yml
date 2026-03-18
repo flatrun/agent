@@ -58,6 +58,13 @@ infrastructure:
         host: ""
         port: 6379
         password: ""
+# cluster:
+#     enabled: false
+#     server_name: ""          # defaults to OS hostname
+#     advertise_url: ""        # reachable URL for this agent (e.g. https://my-server:8090)
+#     health_interval: "30s"
+#     request_timeout: "10s"
+
 security:
     enabled: true
     realtime_capture: false

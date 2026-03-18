@@ -18,6 +18,7 @@ import (
 
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/credentials"
@@ -68,6 +69,7 @@ type Server struct {
 	auditManager       *audit.Manager
 	auditMiddleware    *audit.Middleware
 	powerDNSManager    *dns.PowerDNSManager
+	clusterManager     *cluster.Manager
 }
 
 func New(cfg *config.Config, configPath string) *Server {
@@ -170,6 +172,28 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	powerDNSManager := dns.NewPowerDNSManager(cfg)
 
+	var clusterManager *cluster.Manager
+	if cfg.Cluster.Enabled {
+		clusterDB, clusterErr := cluster.NewDB(cfg.DeploymentsPath)
+		if clusterErr != nil {
+			log.Printf("Warning: Failed to initialize cluster database: %v", clusterErr)
+		} else {
+			healthInterval, _ := time.ParseDuration(cfg.Cluster.HealthInterval)
+			if healthInterval == 0 {
+				healthInterval = 30 * time.Second
+			}
+			requestTimeout, _ := time.ParseDuration(cfg.Cluster.RequestTimeout)
+			if requestTimeout == 0 {
+				requestTimeout = 10 * time.Second
+			}
+			clusterManager = cluster.NewManager(clusterDB, cfg.Cluster.ServerName, healthInterval, requestTimeout, cfg.Auth.JWTSecret)
+			if startErr := clusterManager.Start(context.Background()); startErr != nil {
+				log.Printf("Warning: Failed to start cluster manager: %v", startErr)
+				clusterManager = nil
+			}
+		}
+	}
+
 	s := &Server{
 		config:             cfg,
 		configPath:         configPath,
@@ -192,6 +216,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		auditManager:       auditManager,
 		auditMiddleware:    auditMiddleware,
 		powerDNSManager:    powerDNSManager,
+		clusterManager:     clusterManager,
 	}
 
 	if backupManager != nil {
@@ -492,7 +517,24 @@ func (s *Server) setupRoutes() {
 				// PowerDNS routes
 				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(protected)
 			}
+
+			// Cluster endpoints
+			clusterGroup := protected.Group("/cluster")
+			clusterGroup.Use(s.authMiddleware.RequirePermission(auth.PermClusterRead))
+			{
+				clusterGroup.GET("/status", s.clusterStatus)
+				clusterGroup.GET("/peers", s.clusterListPeers)
+				clusterGroup.POST("/invite", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterInvite)
+				clusterGroup.POST("/accept", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterAccept)
+				clusterGroup.DELETE("/peers/:name", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterRemovePeer)
+				clusterGroup.Any("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
+				clusterGroup.GET("/deployments", s.clusterAggregateDeployments)
+				clusterGroup.GET("/stats", s.clusterAggregateStats)
+			}
 		}
+
+		// Cluster exchange endpoint (no auth - uses invite token)
+		api.POST("/cluster/exchange", s.clusterExchange)
 
 		// Ingest endpoints (no auth - called by nginx Lua)
 		api.POST("/security/events/ingest", s.ingestSecurityEvent)
@@ -516,6 +558,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	if s.clusterManager != nil {
+		s.clusterManager.Stop()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)

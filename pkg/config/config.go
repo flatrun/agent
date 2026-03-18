@@ -9,6 +9,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type ClusterConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	ServerName     string `yaml:"server_name"`
+	AdvertiseURL   string `yaml:"advertise_url"`
+	HealthInterval string `yaml:"health_interval"`
+	RequestTimeout string `yaml:"request_timeout"`
+}
+
 type Config struct {
 	DeploymentsPath string               `yaml:"deployments_path"`
 	DockerSocket    string               `yaml:"docker_socket"`
@@ -22,6 +30,7 @@ type Config struct {
 	Infrastructure  InfrastructureConfig `yaml:"infrastructure"`
 	Security        SecurityConfig       `yaml:"security"`
 	Audit           AuditConfig          `yaml:"audit"`
+	Cluster         ClusterConfig        `yaml:"cluster"`
 }
 
 type DomainConfig struct {
@@ -334,6 +343,20 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Audit.SensitiveFields == nil {
 		cfg.Audit.SensitiveFields = []string{"password", "token", "secret", "api_key", "authorization"}
+	}
+	// Cluster defaults
+	if cfg.Cluster.ServerName == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			hostname = "flatrun-agent"
+		}
+		cfg.Cluster.ServerName = hostname
+	}
+	if cfg.Cluster.HealthInterval == "" {
+		cfg.Cluster.HealthInterval = "30s"
+	}
+	if cfg.Cluster.RequestTimeout == "" {
+		cfg.Cluster.RequestTimeout = "10s"
 	}
 }
 
