@@ -506,13 +506,13 @@ func TestMarshalComposeYAML_UnknownServiceKeys(t *testing.T) {
 	}
 }
 
-func TestEnsureContainerName_AddsToAppService(t *testing.T) {
+func TestEnsureContainerNames_AddsToAppService(t *testing.T) {
 	input := `name: myapp
 services:
   app:
     image: nginx
 `
-	result, err := EnsureContainerName(input, "my-deployment")
+	result, err := EnsureContainerNames(input, "my-deployment")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -522,15 +522,17 @@ services:
 	}
 }
 
-func TestEnsureContainerName_PrefersAppService(t *testing.T) {
+func TestEnsureContainerNames_NamesAllServices(t *testing.T) {
 	input := `name: myapp
 services:
   web:
     image: nginx
   app:
     image: node
+  db:
+    image: postgres
 `
-	result, err := EnsureContainerName(input, "my-deployment")
+	result, err := EnsureContainerNames(input, "my-deployment")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -543,22 +545,26 @@ services:
 	services := compose["services"].(map[string]interface{})
 	appService := services["app"].(map[string]interface{})
 	webService := services["web"].(map[string]interface{})
+	dbService := services["db"].(map[string]interface{})
 
 	if appService["container_name"] != "my-deployment" {
-		t.Errorf("app service should have container_name, got: %v", appService["container_name"])
+		t.Errorf("app service should have container_name 'my-deployment', got: %v", appService["container_name"])
 	}
-	if _, hasName := webService["container_name"]; hasName {
-		t.Errorf("web service should not have container_name")
+	if webService["container_name"] != "my-deployment-web" {
+		t.Errorf("web service should have container_name 'my-deployment-web', got: %v", webService["container_name"])
+	}
+	if dbService["container_name"] != "my-deployment-db" {
+		t.Errorf("db service should have container_name 'my-deployment-db', got: %v", dbService["container_name"])
 	}
 }
 
-func TestEnsureContainerName_FallsBackToFirstService(t *testing.T) {
+func TestEnsureContainerNames_FallsBackToFirstService(t *testing.T) {
 	input := `name: myapp
 services:
   web:
     image: nginx
 `
-	result, err := EnsureContainerName(input, "my-deployment")
+	result, err := EnsureContainerNames(input, "my-deployment")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -568,33 +574,36 @@ services:
 	}
 }
 
-func TestEnsureContainerName_PreservesExisting(t *testing.T) {
+func TestEnsureContainerNames_PreservesExisting(t *testing.T) {
 	input := `name: myapp
 services:
   app:
     image: nginx
     container_name: custom-name
+  db:
+    image: postgres
+    container_name: custom-db
 `
-	result, err := EnsureContainerName(input, "my-deployment")
+	result, err := EnsureContainerNames(input, "my-deployment")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if !strings.Contains(result, "container_name: custom-name") {
-		t.Errorf("should preserve existing container_name, got:\n%s", result)
+		t.Errorf("should preserve existing container_name on app, got:\n%s", result)
 	}
-	if strings.Contains(result, "container_name: my-deployment") {
-		t.Errorf("should not override existing container_name")
+	if !strings.Contains(result, "container_name: custom-db") {
+		t.Errorf("should preserve existing container_name on db, got:\n%s", result)
 	}
 }
 
-func TestEnsureContainerName_EmptyName(t *testing.T) {
+func TestEnsureContainerNames_EmptyName(t *testing.T) {
 	input := `name: myapp
 services:
   app:
     image: nginx
 `
-	result, err := EnsureContainerName(input, "")
+	result, err := EnsureContainerNames(input, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -604,10 +613,10 @@ services:
 	}
 }
 
-func TestEnsureContainerName_NoServices(t *testing.T) {
+func TestEnsureContainerNames_NoServices(t *testing.T) {
 	input := `name: myapp
 `
-	result, err := EnsureContainerName(input, "my-deployment")
+	result, err := EnsureContainerNames(input, "my-deployment")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

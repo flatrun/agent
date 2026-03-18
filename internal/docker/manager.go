@@ -3,6 +3,7 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -142,6 +143,22 @@ func (m *Manager) DeleteDeployment(name string) error {
 	return m.discovery.DeleteDeployment(name)
 }
 
+// ensureContainerNames patches the compose file to set explicit container_name on all services.
+func (m *Manager) ensureContainerNames(name string) {
+	content, filename, err := m.discovery.GetComposeFile(name)
+	if err != nil || content == "" {
+		return
+	}
+
+	updated, err := EnsureContainerNames(content, name)
+	if err != nil || updated == content {
+		return
+	}
+
+	composePath := filepath.Join(m.basePath, name, filename)
+	_ = os.WriteFile(composePath, []byte(updated), 0644)
+}
+
 func (m *Manager) StartDeployment(name string) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
@@ -150,6 +167,8 @@ func (m *Manager) StartDeployment(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	m.ensureContainerNames(name)
 
 	output, err := m.executor.Up(deployment.Path)
 	if err != nil {
@@ -258,6 +277,8 @@ func (m *Manager) RestartDeployment(name string) (string, error) {
 		return "", err
 	}
 
+	m.ensureContainerNames(name)
+
 	return m.executor.Restart(deployment.Path)
 }
 
@@ -269,6 +290,8 @@ func (m *Manager) RebuildDeployment(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	m.ensureContainerNames(name)
 
 	output, err := m.executor.Rebuild(deployment.Path)
 	if err != nil {

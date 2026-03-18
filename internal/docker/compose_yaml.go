@@ -2,6 +2,7 @@ package docker
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -156,9 +157,11 @@ func ParseComposeYAML(content string) (map[string]interface{}, error) {
 	return compose, nil
 }
 
-// EnsureContainerName ensures the first service has container_name set to deploymentName.
-// This is required for nginx reverse proxy DNS resolution on shared networks.
-func EnsureContainerName(content string, deploymentName string) (string, error) {
+// EnsureContainerNames ensures all services have explicit container_name set.
+// The primary service (preferring "app") gets deploymentName as its container name.
+// All other services get "{deploymentName}-{serviceName}".
+// Existing container_name values are preserved.
+func EnsureContainerNames(content string, deploymentName string) (string, error) {
 	if deploymentName == "" {
 		return content, nil
 	}
@@ -173,27 +176,34 @@ func EnsureContainerName(content string, deploymentName string) (string, error) 
 		return content, nil
 	}
 
-	// Find the first service (prefer "app" if exists, otherwise take any)
-	var targetService string
+	// Find the primary service (prefer "app" if exists, otherwise take first)
+	var primaryService string
 	for name := range services {
 		if name == "app" {
-			targetService = "app"
+			primaryService = "app"
 			break
 		}
-		if targetService == "" {
-			targetService = name
+		if primaryService == "" {
+			primaryService = name
 		}
 	}
 
-	service, ok := services[targetService].(map[string]interface{})
-	if !ok {
-		return content, nil
-	}
+	for name := range services {
+		service, ok := services[name].(map[string]interface{})
+		if !ok {
+			continue
+		}
 
-	// Only set if not already specified
-	if _, hasContainerName := service["container_name"]; !hasContainerName {
-		service["container_name"] = deploymentName
-		services[targetService] = service
+		if _, hasContainerName := service["container_name"]; hasContainerName {
+			continue
+		}
+
+		if name == primaryService {
+			service["container_name"] = deploymentName
+		} else {
+			service["container_name"] = fmt.Sprintf("%s-%s", deploymentName, name)
+		}
+		services[name] = service
 	}
 
 	result, err := MarshalComposeYAML(compose)
