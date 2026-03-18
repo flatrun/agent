@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
+	testcontainers "github.com/testcontainers/testcontainers-go"
 	tc "github.com/testcontainers/testcontainers-go/modules/compose"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -39,7 +41,16 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	_ = exec.Command("docker", "network", "create", "proxy").Run()
+	nw, nwErr := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{ //nolint:staticcheck
+		NetworkRequest: testcontainers.NetworkRequest{ //nolint:staticcheck
+			Name:   "proxy",
+			Driver: "bridge",
+		},
+	})
+	if nwErr != nil && !strings.Contains(nwErr.Error(), "already exists") {
+		fmt.Printf("Failed to create proxy network: %v\n", nwErr)
+		os.Exit(1)
+	}
 
 	compose, err := tc.NewDockerCompose("docker-compose.test.yml")
 	if err != nil {
@@ -66,9 +77,20 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	fmt.Println("Stopping test environment...")
-	_ = compose.Down(ctx, tc.RemoveOrphans(true), tc.RemoveVolumes(true))
-	_ = os.RemoveAll(deploymentsPath)
-	_ = os.RemoveAll(certsPath)
+	if err := compose.Down(ctx, tc.RemoveOrphans(true), tc.RemoveVolumes(true)); err != nil {
+		fmt.Printf("Failed to stop compose environment: %v\n", err)
+	}
+	if nw != nil {
+		if err := nw.Remove(ctx); err != nil {
+			fmt.Printf("Failed to remove proxy network: %v\n", err)
+		}
+	}
+	if err := os.RemoveAll(deploymentsPath); err != nil {
+		fmt.Printf("Failed to remove deployments directory: %v\n", err)
+	}
+	if err := os.RemoveAll(certsPath); err != nil {
+		fmt.Printf("Failed to remove certs directory: %v\n", err)
+	}
 
 	os.Exit(code)
 }
