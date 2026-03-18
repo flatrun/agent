@@ -670,7 +670,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	// Ensure container name is set for proxy DNS resolution
-	if content, err := docker.EnsureContainerName(req.ComposeContent, req.Name); err == nil {
+	if content, err := docker.EnsureContainerNames(req.ComposeContent, req.Name); err == nil {
 		req.ComposeContent = content
 	}
 
