@@ -22,7 +22,7 @@ func setupTestManager(t *testing.T) (*Manager, func()) {
 	os.Setenv("FLATRUN_ADMIN_PASSWORD", "testadminpass")
 	defer os.Unsetenv("FLATRUN_ADMIN_PASSWORD")
 
-	manager, err := NewManager(tmpDir, cfg)
+	manager, err := NewManager(tmpDir, cfg, true)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create manager: %v", err)
@@ -56,7 +56,7 @@ func TestManagerCreatesAdminUser(t *testing.T) {
 	defer os.Unsetenv("FLATRUN_ADMIN_PASSWORD")
 
 	cfg := &config.AuthConfig{JWTSecret: "test"}
-	manager, err := NewManager(tmpDir, cfg)
+	manager, err := NewManager(tmpDir, cfg, true)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}

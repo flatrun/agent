@@ -19,6 +19,7 @@ const (
 	AccessLevelAdmin = "admin"
 )
 
+
 func ValidAccessLevel(level string) bool {
 	return level == AccessLevelRead || level == AccessLevelWrite || level == AccessLevelAdmin
 }

@@ -63,10 +63,10 @@ func GetServerInfo() (*ServerInfo, error) {
 
 	info.Interfaces = getNetworkInterfaces()
 
-	if ip, err := getPublicIP("4"); err == nil {
+	if ip, err := GetPublicIP("4"); err == nil {
 		info.PublicIPv4 = ip
 	}
-	if ip, err := getPublicIP("6"); err == nil {
+	if ip, err := GetPublicIP("6"); err == nil {
 		info.PublicIPv6 = ip
 	}
 
@@ -176,7 +176,7 @@ func getHostname() (string, error) {
 	return os.Hostname()
 }
 
-func getPublicIP(version string) (string, error) {
+func GetPublicIP(version string) (string, error) {
 	var endpoints []string
 	if version == "6" {
 		endpoints = []string{

@@ -11,6 +11,7 @@ import (
 //go:embed */metadata.yml */docker-compose.yml
 //go:embed infra/*/metadata.yml infra/*/docker-compose.yml
 //go:embed infra/nginx/nginx.conf infra/nginx/nginx.lua.conf infra/nginx/lua/*
+//go:embed welcome/index.html
 var FS embed.FS
 
 var Categories = []Category{
@@ -73,6 +74,10 @@ func GetMetadata(name string) ([]byte, error) {
 
 func GetCompose(name string) ([]byte, error) {
 	return FS.ReadFile(filepath.Join(name, "docker-compose.yml"))
+}
+
+func GetWelcomePage() ([]byte, error) {
+	return FS.ReadFile("welcome/index.html")
 }
 
 func GetCategories() []Category {

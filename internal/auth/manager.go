@@ -33,7 +33,7 @@ type Manager struct {
 	config *config.AuthConfig
 }
 
-func NewManager(deploymentsPath string, cfg *config.AuthConfig) (*Manager, error) {
+func NewManager(deploymentsPath string, cfg *config.AuthConfig, setupComplete bool) (*Manager, error) {
 	db, err := NewAuthDB(deploymentsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize auth database: %w", err)
@@ -44,8 +44,10 @@ func NewManager(deploymentsPath string, cfg *config.AuthConfig) (*Manager, error
 		config: cfg,
 	}
 
-	if err := m.ensureAdminUser(); err != nil {
-		log.Printf("Warning: failed to ensure admin user: %v", err)
+	if setupComplete {
+		if err := m.ensureAdminUser(); err != nil {
+			log.Printf("Warning: failed to ensure admin user: %v", err)
+		}
 	}
 
 	return m, nil

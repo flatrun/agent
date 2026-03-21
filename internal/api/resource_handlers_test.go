@@ -33,7 +33,7 @@ func setupResourceTestServer(t *testing.T) (*gin.Engine, string, func()) {
 
 	os.Setenv("FLATRUN_ADMIN_PASSWORD", "testadminpass")
 
-	authManager, err := auth.NewManager(tmpDir, &cfg.Auth)
+	authManager, err := auth.NewManager(tmpDir, &cfg.Auth, true)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth manager: %v", err)
