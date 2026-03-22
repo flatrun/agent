@@ -4,6 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -214,10 +217,18 @@ func Load(path string) (*Config, error) {
 
 func setDefaults(cfg *Config) {
 	if cfg.DeploymentsPath == "" {
-		cfg.DeploymentsPath = "/deployments"
+		if home, err := os.UserHomeDir(); err == nil {
+			cfg.DeploymentsPath = home + "/flatrun/deployments"
+		} else {
+			cfg.DeploymentsPath = "/var/lib/flatrun/deployments"
+		}
+	} else if strings.HasPrefix(cfg.DeploymentsPath, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			cfg.DeploymentsPath = home + cfg.DeploymentsPath[1:]
+		}
 	}
 	if cfg.DockerSocket == "" {
-		cfg.DockerSocket = "unix:///var/run/docker.sock"
+		cfg.DockerSocket = detectDockerHost()
 	}
 	if cfg.API.Host == "" {
 		cfg.API.Host = "0.0.0.0"
@@ -358,6 +369,29 @@ func setDefaults(cfg *Config) {
 	if cfg.Cluster.RequestTimeout == "" {
 		cfg.Cluster.RequestTimeout = "10s"
 	}
+}
+
+func detectDockerHost() string {
+	if host := os.Getenv("DOCKER_HOST"); host != "" {
+		return host
+	}
+	if host := dockerContextHost(); host != "" {
+		return host
+	}
+	if runtime.GOOS == "windows" {
+		return "npipe:////./pipe/docker_engine"
+	}
+	return "unix:///var/run/docker.sock"
+}
+
+func dockerContextHost() string {
+	cmd := exec.Command("docker", "context", "inspect",
+		"--format", "{{.Endpoints.docker.Host}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func Save(cfg *Config, path string) error {

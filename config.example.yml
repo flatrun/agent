@@ -1,4 +1,4 @@
-deployments_path: /home/nfebe/work/deployments
+deployments_path: ~/flatrun/deployments
 docker_socket: unix:///var/run/docker.sock
 api:
     host: 0.0.0.0

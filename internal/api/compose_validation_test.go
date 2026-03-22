@@ -1,8 +1,10 @@
 package api
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/flatrun/agent/pkg/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -145,5 +147,39 @@ services:
 				t.Error("expected at least one service")
 			}
 		})
+	}
+}
+
+func TestValidateComposeContent_RejectsInvalidYAML(t *testing.T) {
+	cfg := &config.Config{
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	err := s.validateComposeContent("not valid: [ yaml", "test")
+	if err == nil {
+		t.Error("validateComposeContent(invalid YAML) = nil, want error")
+	}
+	if err != nil && !strings.Contains(err.Error(), "invalid YAML") {
+		t.Errorf("error should mention YAML, got: %v", err)
+	}
+}
+
+func TestValidateComposeContent_RejectsEmptyServices(t *testing.T) {
+	cfg := &config.Config{
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	err := s.validateComposeContent("name: test\nservices: {}", "test")
+	if err == nil {
+		t.Error("validateComposeContent(no services) = nil, want error")
+	}
+	if err != nil && !strings.Contains(err.Error(), "at least one service") {
+		t.Errorf("error should mention services, got: %v", err)
 	}
 }

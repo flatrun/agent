@@ -1,18 +1,21 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/flatrun/agent/internal/api"
 	"github.com/flatrun/agent/internal/watcher"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/updater"
 	"github.com/flatrun/agent/pkg/version"
+	"github.com/moby/moby/client"
 )
 
 func main() {
@@ -42,6 +45,12 @@ func main() {
 		log.Fatalf("Failed to load config from %s: %v", resolvedConfigPath, err)
 	}
 
+	ensureDockerReachable(cfg.DockerSocket)
+
+	if err := os.MkdirAll(cfg.DeploymentsPath, 0755); err != nil {
+		log.Fatalf("Failed to create deployments directory '%s': %v", cfg.DeploymentsPath, err)
+	}
+
 	log.Printf("Starting Flatrun Agent v%s", version.Version)
 	log.Printf("Config loaded from: %s", resolvedConfigPath)
 	log.Printf("Deployments path: %s", cfg.DeploymentsPath)
@@ -68,6 +77,31 @@ func main() {
 
 	log.Println("Shutting down Flatrun Agent...")
 	_ = apiServer.Stop()
+}
+
+func ensureDockerReachable(dockerHost string) {
+	log.Println("Checking if Docker is reachable...")
+
+	opts := []client.Opt{client.FromEnv}
+	if dockerHost != "" {
+		opts = append(opts, client.WithHost(dockerHost))
+	}
+
+	cli, err := client.New(opts...)
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
+		log.Fatalf("Docker is not reachable: %v. "+
+			"Ensure the Docker daemon is running and the socket "+
+			"in config is correct.", err)
+	}
+	log.Println("Docker is reachable")
 }
 
 func printVersion() {
