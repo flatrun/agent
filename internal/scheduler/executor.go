@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os/exec"
-	"time"
 
 	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/internal/docker"
@@ -60,24 +58,15 @@ func (e *Executor) ExecuteCommand(ctx context.Context, deploymentName string, co
 		return "", fmt.Errorf("docker manager not available")
 	}
 
-	containerName := deploymentName
-	if config.Service != "" && config.Service != deploymentName {
-		containerName = fmt.Sprintf("%s-%s", deploymentName, config.Service)
-	}
-
-	timeout := config.Timeout
-	if timeout <= 0 {
-		timeout = 300
-	}
-
-	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, "docker", "exec", containerName, "sh", "-c", config.Command)
-	output, err := cmd.CombinedOutput()
+	service, err := e.dockerManager.ResolveService(deploymentName, config.Service)
 	if err != nil {
-		return string(output), fmt.Errorf("command failed: %w", err)
+		return "", fmt.Errorf("failed to resolve service: %w", err)
 	}
 
-	return string(output), nil
+	output, err := e.dockerManager.ComposeExec(ctx, deploymentName, service, config.Command)
+	if err != nil {
+		return output, fmt.Errorf("command failed: %w", err)
+	}
+
+	return output, nil
 }

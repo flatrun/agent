@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,16 +24,21 @@ type composeContainer struct {
 type Manager struct {
 	discovery *Discovery
 	executor  *ComposeExecutor
+	apiClient *APIClient
 	basePath  string
 	mu        sync.RWMutex
 }
 
 func NewManager(deploymentsPath string) *Manager {
-	return &Manager{
+	m := &Manager{
 		discovery: NewDiscovery(deploymentsPath),
 		executor:  NewComposeExecutor(deploymentsPath),
 		basePath:  deploymentsPath,
 	}
+	if api, err := NewAPIClient(); err == nil {
+		m.apiClient = api
+	}
+	return m
 }
 
 func (m *Manager) BasePath() string {
@@ -384,6 +390,75 @@ func (m *Manager) ExecuteQuickAction(name string, actionID string) (string, erro
 	}
 
 	return m.executor.ExecCommand(containerID, action.Command)
+}
+
+func (m *Manager) GetComposeServices(name string) ([]models.Service, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	deployment, err := m.discovery.GetDeployment(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return deployment.Services, nil
+}
+
+func (m *Manager) GetComposeServiceNames(name string) ([]string, error) {
+	services, err := m.GetComposeServices(name)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(services))
+	for i, s := range services {
+		names[i] = s.Name
+	}
+	return names, nil
+}
+
+func (m *Manager) ResolveService(name string, serviceName string) (string, error) {
+	serviceNames, err := m.GetComposeServiceNames(name)
+	if err != nil || len(serviceNames) == 0 {
+		return "", fmt.Errorf("no services found in compose file")
+	}
+
+	if serviceName != "" {
+		for _, sn := range serviceNames {
+			if sn == serviceName {
+				return serviceName, nil
+			}
+		}
+		return "", fmt.Errorf("service '%s' not found in compose file, available: %s", serviceName, strings.Join(serviceNames, ", "))
+	}
+
+	if len(serviceNames) == 1 {
+		return serviceNames[0], nil
+	}
+
+	for _, sn := range serviceNames {
+		if sn == "app" {
+			return "app", nil
+		}
+	}
+
+	return "", fmt.Errorf("multiple services found (%s), please specify which service to use", strings.Join(serviceNames, ", "))
+}
+
+func (m *Manager) ComposeExec(ctx context.Context, name string, service string, command string) (string, error) {
+	if m.apiClient == nil {
+		return "", fmt.Errorf("docker API client not available")
+	}
+
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	project := m.executor.getProjectName(deployment.Path)
+	return m.apiClient.ExecInService(ctx, project, service, command)
 }
 
 func (m *Manager) GetDeploymentLogs(name string, tail int) (string, error) {

@@ -341,6 +341,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/proxy/sync", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.syncAllProxies)
 			protected.POST("/deployments/:name/ssl/disable", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.disableSSL)
 
+			// Compose services endpoint
+			protected.GET("/deployments/:name/services", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentServices)
+
 			// Domain endpoints
 			protected.GET("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDomains)
 			protected.POST("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDomain)
@@ -3519,6 +3522,17 @@ func (s *Server) setupProxyWithRetry(deployment *models.Deployment, maxRetries i
 	return nil, lastErr
 }
 
+func (s *Server) listDeploymentServices(c *gin.Context) {
+	name := c.Param("name")
+	services, err := s.manager.GetComposeServices(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"services": services})
+}
+
 func (s *Server) listDomains(c *gin.Context) {
 	name := c.Param("name")
 	deployment, err := s.manager.GetDeployment(name)
@@ -3534,6 +3548,10 @@ func (s *Server) listDomains(c *gin.Context) {
 
 	domains := deployment.Metadata.GetDomains()
 	c.JSON(http.StatusOK, gin.H{"domains": domains})
+}
+
+func (s *Server) resolveService(name string, serviceName string) (string, error) {
+	return s.manager.ResolveService(name, serviceName)
 }
 
 func (s *Server) addDomain(c *gin.Context) {
@@ -3555,6 +3573,13 @@ func (s *Server) addDomain(c *gin.Context) {
 		return
 	}
 
+	resolved, err := s.resolveService(name, domain.Service)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	domain.Service = resolved
+
 	if domain.ID == "" {
 		domain.ID = generateDomainID()
 	}
@@ -3564,9 +3589,13 @@ func (s *Server) addDomain(c *gin.Context) {
 	}
 
 	if len(deployment.Metadata.Domains) == 0 && deployment.Metadata.Networking.Expose {
+		existingService := deployment.Metadata.Networking.Service
+		if existingService == "" {
+			existingService = resolved
+		}
 		existingDomain := models.DomainConfig{
 			ID:            "default",
-			Service:       deployment.Metadata.Name,
+			Service:       existingService,
 			ContainerPort: deployment.Metadata.Networking.ContainerPort,
 			Domain:        deployment.Metadata.Networking.Domain,
 			SSL:           deployment.Metadata.SSL,
@@ -3632,10 +3661,22 @@ func (s *Server) updateDomain(c *gin.Context) {
 		return
 	}
 
+	if updatedDomain.Service != "" {
+		resolved, err := s.resolveService(name, updatedDomain.Service)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		updatedDomain.Service = resolved
+	}
+
 	found := false
 	for i, d := range deployment.Metadata.Domains {
 		if d.ID == domainID {
 			updatedDomain.ID = domainID
+			if updatedDomain.Service == "" {
+				updatedDomain.Service = d.Service
+			}
 			deployment.Metadata.Domains[i] = updatedDomain
 			found = true
 			break

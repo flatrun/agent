@@ -546,20 +546,36 @@ func (d *Discovery) generateMetadataFromCompose(composePath, name string) *model
 		},
 	}
 
-	for _, svc := range compose.Services {
+	svcName, svc := d.pickPrimaryService(compose.Services)
+	if svcName != "" {
+		metadata.Networking.Service = svcName
 		if len(svc.Ports) > 0 {
-			portStr := d.parsePort(svc.Ports[0])
-			if portStr != "" {
-				port := d.extractContainerPort(portStr)
-				if port > 0 {
+			if portStr := d.parsePort(svc.Ports[0]); portStr != "" {
+				if port := d.extractContainerPort(portStr); port > 0 {
 					metadata.Networking.ContainerPort = port
 				}
 			}
-			break
 		}
 	}
 
 	return metadata
+}
+
+// pickPrimaryService selects the service to use for networking metadata.
+// For single-service composes, returns that service. For multi-service,
+// returns the first service with exposed ports.
+func (d *Discovery) pickPrimaryService(services map[string]composeService) (string, composeService) {
+	if len(services) == 1 {
+		for name, svc := range services {
+			return name, svc
+		}
+	}
+	for name, svc := range services {
+		if len(svc.Ports) > 0 {
+			return name, svc
+		}
+	}
+	return "", composeService{}
 }
 
 func (d *Discovery) extractContainerPort(portStr string) int {

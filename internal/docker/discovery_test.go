@@ -344,6 +344,70 @@ func TestParseUIDGID(t *testing.T) {
 	}
 }
 
+func TestGenerateMetadataFromCompose_ServiceName(t *testing.T) {
+	tests := []struct {
+		name        string
+		compose     string
+		wantService string
+	}{
+		{
+			name: "single service stores service name",
+			compose: `services:
+  backend:
+    image: myapp:latest
+    ports:
+      - "3000:3000"
+`,
+			wantService: "backend",
+		},
+		{
+			name: "single service without ports stores name",
+			compose: `services:
+  worker:
+    image: myapp:latest
+`,
+			wantService: "worker",
+		},
+		{
+			name: "multiple services picks first with ports",
+			compose: `services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+  db:
+    image: postgres:15
+`,
+			wantService: "web",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "meta-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			composePath := filepath.Join(tmpDir, "docker-compose.yml")
+			if err := os.WriteFile(composePath, []byte(tt.compose), 0644); err != nil {
+				t.Fatalf("Failed to write compose file: %v", err)
+			}
+
+			d := NewDiscovery(tmpDir)
+			metadata := d.generateMetadataFromCompose(composePath, "test")
+			if metadata == nil {
+				t.Fatal("generateMetadataFromCompose returned nil")
+			}
+
+			if metadata.Networking.Service != tt.wantService {
+				t.Errorf("Networking.Service = %q, want %q", metadata.Networking.Service, tt.wantService)
+			}
+		})
+	}
+}
+
 func TestExtractBindMounts(t *testing.T) {
 	tests := []struct {
 		name     string

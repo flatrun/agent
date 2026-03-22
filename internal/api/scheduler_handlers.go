@@ -77,6 +77,15 @@ func (s *Server) createScheduledTask(c *gin.Context) {
 		return
 	}
 
+	if req.Config.CommandConfig != nil {
+		resolved, err := s.resolveService(req.DeploymentName, req.Config.CommandConfig.Service)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		req.Config.CommandConfig.Service = resolved
+	}
+
 	task, err := s.schedulerManager.CreateTask(&req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -109,6 +118,20 @@ func (s *Server) updateScheduledTask(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid cron expression: " + err.Error()})
 			return
 		}
+	}
+
+	if req.Config != nil && req.Config.CommandConfig != nil {
+		existingTask, err := s.schedulerManager.GetTask(id)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+			return
+		}
+		resolved, err := s.resolveService(existingTask.DeploymentName, req.Config.CommandConfig.Service)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		req.Config.CommandConfig.Service = resolved
 	}
 
 	task, err := s.schedulerManager.UpdateTask(id, &req)
