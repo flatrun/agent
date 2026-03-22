@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compose-spec/compose-go/v2/loader"
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/cluster"
@@ -1356,6 +1358,13 @@ func (s *Server) updateDeployment(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.validateComposeContent(req.ComposeContent, name); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -2884,7 +2893,7 @@ type composeNetwork struct {
 	Name     string `yaml:"name"`
 }
 
-func (s *Server) validateComposeContent(content, deploymentName string) error {
+func (s *Server) validateComposeContent(content, _ string) error {
 	var compose composeFile
 	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
 		return fmt.Errorf("invalid YAML syntax: %w", err)
@@ -2922,6 +2931,29 @@ func (s *Server) validateComposeContent(content, deploymentName string) error {
 		}
 	}
 
+	if err := validateComposeWithComposeGo(content); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateComposeWithComposeGo(content string) error {
+	configDetails := composetypes.ConfigDetails{
+		ConfigFiles: []composetypes.ConfigFile{{
+			Filename: "compose.yml",
+			Content:  []byte(content),
+		}},
+		WorkingDir:  ".",
+		Environment: map[string]string{},
+	}
+	_, err := loader.LoadWithContext(context.Background(), configDetails, func(o *loader.Options) {
+		o.ResolvePaths = false
+		o.SkipConsistencyCheck = true
+	})
+	if err != nil {
+		return fmt.Errorf("invalid compose: %w", err)
+	}
 	return nil
 }
 
