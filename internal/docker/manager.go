@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -262,6 +263,75 @@ func (m *Manager) getMainContainerName(deploymentPath string) string {
 	return ""
 }
 
+func (m *Manager) snapshotBindMounts(name, deploymentPath string) string {
+	composeContent, _, err := m.discovery.GetComposeFile(name)
+	if err != nil {
+		return ""
+	}
+
+	bindMounts := ExtractBindMounts(composeContent)
+	if len(bindMounts) == 0 {
+		return ""
+	}
+
+	snapshotDir, err := os.MkdirTemp("", "flatrun-snapshot-*")
+	if err != nil {
+		return ""
+	}
+
+	hasData := false
+	for _, mount := range bindMounts {
+		srcPath := filepath.Join(deploymentPath, mount)
+		if info, err := os.Stat(srcPath); err != nil || !info.IsDir() {
+			continue
+		}
+		destPath := filepath.Join(snapshotDir, mount)
+		if err := copyDir(srcPath, destPath); err == nil {
+			hasData = true
+		}
+	}
+
+	if !hasData {
+		os.RemoveAll(snapshotDir)
+		return ""
+	}
+	return snapshotDir
+}
+
+func (m *Manager) restoreBindMounts(deploymentPath, snapshotDir string) {
+	if snapshotDir == "" {
+		return
+	}
+	defer os.RemoveAll(snapshotDir)
+
+	_ = filepath.Walk(snapshotDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || path == snapshotDir {
+			return nil
+		}
+		relPath, err := filepath.Rel(snapshotDir, path)
+		if err != nil {
+			log.Printf("Restore: failed to compute relative path for %s: %v", path, err)
+			return nil
+		}
+		destPath := filepath.Join(deploymentPath, relPath)
+
+		if info.IsDir() {
+			if err := os.MkdirAll(destPath, info.Mode()); err != nil {
+				log.Printf("Restore: failed to create directory %s: %v", relPath, err)
+			}
+			return nil
+		}
+
+		if _, err := os.Stat(destPath); err == nil {
+			return nil
+		}
+		if err := copyFile(path, destPath); err != nil {
+			log.Printf("Restore: failed to restore file %s: %v", relPath, err)
+		}
+		return nil
+	})
+}
+
 func (m *Manager) StopDeployment(name string) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
@@ -285,7 +355,20 @@ func (m *Manager) RestartDeployment(name string) (string, error) {
 
 	m.ensureContainerNames(name)
 
-	return m.executor.Restart(deployment.Path)
+	snapshotDir := m.snapshotBindMounts(name, deployment.Path)
+
+	output, err := m.executor.Restart(deployment.Path)
+	if err != nil {
+		m.restoreBindMounts(deployment.Path, snapshotDir)
+		return output, err
+	}
+
+	go func() {
+		m.applyMountOwnershipFromContainer(name, deployment.Path)
+		m.restoreBindMounts(deployment.Path, snapshotDir)
+	}()
+
+	return output, nil
 }
 
 func (m *Manager) RebuildDeployment(name string) (string, error) {
@@ -299,12 +382,18 @@ func (m *Manager) RebuildDeployment(name string) (string, error) {
 
 	m.ensureContainerNames(name)
 
+	snapshotDir := m.snapshotBindMounts(name, deployment.Path)
+
 	output, err := m.executor.Rebuild(deployment.Path)
 	if err != nil {
+		m.restoreBindMounts(deployment.Path, snapshotDir)
 		return output, err
 	}
 
-	go m.applyMountOwnershipFromContainer(name, deployment.Path)
+	go func() {
+		m.applyMountOwnershipFromContainer(name, deployment.Path)
+		m.restoreBindMounts(deployment.Path, snapshotDir)
+	}()
 
 	return output, nil
 }

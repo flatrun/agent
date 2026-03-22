@@ -603,3 +603,304 @@ func TestPopulateContainerInfoJSONArray(t *testing.T) {
 		t.Errorf("Expected db container ID to be def456, got %s", deployment.Services[1].ContainerID)
 	}
 }
+
+func TestSnapshotBindMounts(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "snapshot-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	deploymentDir := filepath.Join(tmpDir, "test-deployment")
+	if err := os.MkdirAll(deploymentDir, 0755); err != nil {
+		t.Fatalf("Failed to create deployment dir: %v", err)
+	}
+
+	composeContent := `name: test-deployment
+services:
+  app:
+    image: bitnami/laravel:latest
+    volumes:
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+`
+	if err := os.WriteFile(filepath.Join(deploymentDir, "docker-compose.yml"), []byte(composeContent), 0644); err != nil {
+		t.Fatalf("Failed to write compose file: %v", err)
+	}
+
+	storageDir := filepath.Join(deploymentDir, "storage")
+	if err := os.MkdirAll(filepath.Join(storageDir, "framework", "sessions"), 0755); err != nil {
+		t.Fatalf("Failed to create storage subdirs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(storageDir, "framework", "sessions", "abc.session"), []byte("session-data"), 0644); err != nil {
+		t.Fatalf("Failed to write session file: %v", err)
+	}
+
+	logsDir := filepath.Join(deploymentDir, "logs")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		t.Fatalf("Failed to create logs dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(logsDir, "app.log"), []byte("log-data"), 0644); err != nil {
+		t.Fatalf("Failed to write log file: %v", err)
+	}
+
+	manager := NewManager(tmpDir)
+	snapshotDir := manager.snapshotBindMounts("test-deployment", deploymentDir)
+	if snapshotDir == "" {
+		t.Fatal("Expected non-empty snapshot dir")
+	}
+	defer os.RemoveAll(snapshotDir)
+
+	sessionFile := filepath.Join(snapshotDir, "storage", "framework", "sessions", "abc.session")
+	data, err := os.ReadFile(sessionFile)
+	if err != nil {
+		t.Fatalf("Session file not found in snapshot: %v", err)
+	}
+	if string(data) != "session-data" {
+		t.Errorf("Expected 'session-data', got %q", string(data))
+	}
+
+	logFile := filepath.Join(snapshotDir, "logs", "app.log")
+	data, err = os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("Log file not found in snapshot: %v", err)
+	}
+	if string(data) != "log-data" {
+		t.Errorf("Expected 'log-data', got %q", string(data))
+	}
+}
+
+func TestSnapshotBindMounts_NoMounts(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "snapshot-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	deploymentDir := filepath.Join(tmpDir, "test-deployment")
+	if err := os.MkdirAll(deploymentDir, 0755); err != nil {
+		t.Fatalf("Failed to create deployment dir: %v", err)
+	}
+
+	composeContent := `name: test-deployment
+services:
+  app:
+    image: nginx:latest
+`
+	if err := os.WriteFile(filepath.Join(deploymentDir, "docker-compose.yml"), []byte(composeContent), 0644); err != nil {
+		t.Fatalf("Failed to write compose file: %v", err)
+	}
+
+	manager := NewManager(tmpDir)
+	snapshotDir := manager.snapshotBindMounts("test-deployment", deploymentDir)
+	if snapshotDir != "" {
+		os.RemoveAll(snapshotDir)
+		t.Error("Expected empty snapshot dir for compose without bind mounts")
+	}
+}
+
+func TestRestoreBindMounts(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "restore-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	snapshotDir, err := os.MkdirTemp("", "flatrun-snapshot-*")
+	if err != nil {
+		t.Fatalf("Failed to create snapshot dir: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(snapshotDir, "storage", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotDir, "storage", "logs", "app.log"), []byte("old-log"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotDir, "storage", "config.json"), []byte("config"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deploymentDir := filepath.Join(tmpDir, "deployment")
+	if err := os.MkdirAll(filepath.Join(deploymentDir, "storage"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewManager(tmpDir)
+	manager.restoreBindMounts(deploymentDir, snapshotDir)
+
+	data, err := os.ReadFile(filepath.Join(deploymentDir, "storage", "logs", "app.log"))
+	if err != nil {
+		t.Fatalf("Restored file not found: %v", err)
+	}
+	if string(data) != "old-log" {
+		t.Errorf("Expected 'old-log', got %q", string(data))
+	}
+
+	data, err = os.ReadFile(filepath.Join(deploymentDir, "storage", "config.json"))
+	if err != nil {
+		t.Fatalf("Restored config not found: %v", err)
+	}
+	if string(data) != "config" {
+		t.Errorf("Expected 'config', got %q", string(data))
+	}
+
+	if _, err := os.Stat(snapshotDir); !os.IsNotExist(err) {
+		t.Error("Expected snapshot dir to be cleaned up")
+	}
+}
+
+func TestRestoreBindMounts_MergePreservesExisting(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "restore-merge-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	snapshotDir, err := os.MkdirTemp("", "flatrun-snapshot-*")
+	if err != nil {
+		t.Fatalf("Failed to create snapshot dir: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(snapshotDir, "storage"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotDir, "storage", "existing.txt"), []byte("old-content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotDir, "storage", "missing.txt"), []byte("restored-content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deploymentDir := filepath.Join(tmpDir, "deployment")
+	if err := os.MkdirAll(filepath.Join(deploymentDir, "storage"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deploymentDir, "storage", "existing.txt"), []byte("new-content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewManager(tmpDir)
+	manager.restoreBindMounts(deploymentDir, snapshotDir)
+
+	data, err := os.ReadFile(filepath.Join(deploymentDir, "storage", "existing.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new-content" {
+		t.Errorf("Existing file was overwritten: expected 'new-content', got %q", string(data))
+	}
+
+	data, err = os.ReadFile(filepath.Join(deploymentDir, "storage", "missing.txt"))
+	if err != nil {
+		t.Fatalf("Missing file was not restored: %v", err)
+	}
+	if string(data) != "restored-content" {
+		t.Errorf("Expected 'restored-content', got %q", string(data))
+	}
+}
+
+func TestRestoreBindMounts_EmptySnapshotDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "restore-empty-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	manager := NewManager(tmpDir)
+	manager.restoreBindMounts(tmpDir, "")
+}
+
+func TestRebuildDeployment_SnapshotRestore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "rebuild-snapshot-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	deploymentDir := filepath.Join(tmpDir, "test-deployment")
+	if err := os.MkdirAll(deploymentDir, 0755); err != nil {
+		t.Fatalf("Failed to create deployment dir: %v", err)
+	}
+
+	composeContent := `name: test-deployment
+services:
+  app:
+    image: bitnami/laravel:latest
+    volumes:
+      - ./storage:/app/storage
+`
+	if err := os.WriteFile(filepath.Join(deploymentDir, "docker-compose.yml"), []byte(composeContent), 0644); err != nil {
+		t.Fatalf("Failed to write compose file: %v", err)
+	}
+
+	storageDir := filepath.Join(deploymentDir, "storage")
+	if err := os.MkdirAll(storageDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storageDir, "user-data.txt"), []byte("important"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewManager(tmpDir)
+
+	_, err = manager.RebuildDeployment("test-deployment")
+	if err != nil {
+		t.Logf("Rebuild returned error (expected if Docker unavailable): %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(storageDir, "user-data.txt"))
+	if err != nil {
+		t.Fatalf("User data file lost after rebuild: %v", err)
+	}
+	if string(data) != "important" {
+		t.Errorf("Expected 'important', got %q", string(data))
+	}
+}
+
+func TestRestartDeployment_SnapshotRestore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "restart-snapshot-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	deploymentDir := filepath.Join(tmpDir, "test-deployment")
+	if err := os.MkdirAll(deploymentDir, 0755); err != nil {
+		t.Fatalf("Failed to create deployment dir: %v", err)
+	}
+
+	composeContent := `name: test-deployment
+services:
+  app:
+    image: bitnami/laravel:latest
+    volumes:
+      - ./storage:/app/storage
+`
+	if err := os.WriteFile(filepath.Join(deploymentDir, "docker-compose.yml"), []byte(composeContent), 0644); err != nil {
+		t.Fatalf("Failed to write compose file: %v", err)
+	}
+
+	storageDir := filepath.Join(deploymentDir, "storage")
+	if err := os.MkdirAll(storageDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storageDir, "user-data.txt"), []byte("important"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewManager(tmpDir)
+
+	_, err = manager.RestartDeployment("test-deployment")
+	if err != nil {
+		t.Logf("Restart returned error (expected if Docker unavailable): %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(storageDir, "user-data.txt"))
+	if err != nil {
+		t.Fatalf("User data file lost after restart: %v", err)
+	}
+	if string(data) != "important" {
+		t.Errorf("Expected 'important', got %q", string(data))
+	}
+}
