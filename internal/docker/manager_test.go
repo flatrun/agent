@@ -1,8 +1,10 @@
 package docker
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flatrun/agent/pkg/models"
@@ -277,6 +279,132 @@ healthcheck:
 	}
 }
 
+func TestResolveService(t *testing.T) {
+	tests := []struct {
+		name        string
+		compose     string
+		serviceName string
+		want        string
+		wantErr     string
+	}{
+		{
+			name: "single service auto-resolves",
+			compose: `name: test
+services:
+  backend:
+    image: myapp:latest
+`,
+			want: "backend",
+		},
+		{
+			name: "single service with explicit valid name",
+			compose: `name: test
+services:
+  api:
+    image: myapp:latest
+`,
+			serviceName: "api",
+			want:        "api",
+		},
+		{
+			name: "single service rejects invalid name",
+			compose: `name: test
+services:
+  web:
+    image: nginx:latest
+`,
+			serviceName: "nonexistent",
+			wantErr:     "not found",
+		},
+		{
+			name: "multiple services with app defaults to app",
+			compose: `name: test
+services:
+  app:
+    image: myapp:latest
+  db:
+    image: postgres:15
+  cache:
+    image: redis:alpine
+`,
+			want: "app",
+		},
+		{
+			name: "multiple services without app rejects",
+			compose: `name: test
+services:
+  web:
+    image: nginx:latest
+  api:
+    image: myapi:latest
+`,
+			wantErr: "multiple services found",
+		},
+		{
+			name: "multiple services with explicit valid name",
+			compose: `name: test
+services:
+  frontend:
+    image: nginx:latest
+  api:
+    image: myapi:latest
+`,
+			serviceName: "api",
+			want:        "api",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "resolve-svc-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			deployDir := filepath.Join(tmpDir, "test-deployment")
+			if err := os.MkdirAll(deployDir, 0755); err != nil {
+				t.Fatalf("Failed to create deployment dir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(deployDir, "docker-compose.yml"), []byte(tt.compose), 0644); err != nil {
+				t.Fatalf("Failed to write compose file: %v", err)
+			}
+
+			manager := NewManager(tmpDir)
+			got, err := manager.ResolveService("test-deployment", tt.serviceName)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("Expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Error = %q, want containing %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ResolveService() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveServiceNotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "resolve-svc-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	manager := NewManager(tmpDir)
+	_, err = manager.ResolveService("nonexistent", "")
+	if err == nil {
+		t.Fatal("Expected error for nonexistent deployment")
+	}
+}
+
 func TestGetComposeServiceNames(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -425,7 +553,7 @@ func TestComposeExecWithoutAPIClient(t *testing.T) {
 	manager := NewManager(tmpDir)
 	manager.apiClient = nil
 
-	_, err = manager.ComposeExec(nil, "test", "app", "echo hello")
+	_, err = manager.ComposeExec(context.TODO(), "test", "app", "echo hello")
 	if err == nil {
 		t.Error("Expected error when API client is nil")
 	}

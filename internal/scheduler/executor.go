@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/internal/docker"
@@ -59,27 +58,9 @@ func (e *Executor) ExecuteCommand(ctx context.Context, deploymentName string, co
 		return "", fmt.Errorf("docker manager not available")
 	}
 
-	service := config.Service
-	if service == "" {
-		serviceNames, err := e.dockerManager.GetComposeServiceNames(deploymentName)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve services: %w", err)
-		}
-		if len(serviceNames) == 1 {
-			service = serviceNames[0]
-		} else {
-			found := false
-			for _, sn := range serviceNames {
-				if sn == "app" {
-					service = "app"
-					found = true
-					break
-				}
-			}
-			if !found {
-				return "", fmt.Errorf("multiple services found (%s), specify which service to use", strings.Join(serviceNames, ", "))
-			}
-		}
+	service, err := e.dockerManager.ResolveService(deploymentName, config.Service)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve service: %w", err)
 	}
 
 	output, err := e.dockerManager.ComposeExec(ctx, deploymentName, service, config.Command)

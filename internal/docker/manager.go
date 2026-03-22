@@ -416,6 +416,34 @@ func (m *Manager) GetComposeServiceNames(name string) ([]string, error) {
 	return names, nil
 }
 
+func (m *Manager) ResolveService(name string, serviceName string) (string, error) {
+	serviceNames, err := m.GetComposeServiceNames(name)
+	if err != nil || len(serviceNames) == 0 {
+		return "", fmt.Errorf("no services found in compose file")
+	}
+
+	if serviceName != "" {
+		for _, sn := range serviceNames {
+			if sn == serviceName {
+				return serviceName, nil
+			}
+		}
+		return "", fmt.Errorf("service '%s' not found in compose file, available: %s", serviceName, strings.Join(serviceNames, ", "))
+	}
+
+	if len(serviceNames) == 1 {
+		return serviceNames[0], nil
+	}
+
+	for _, sn := range serviceNames {
+		if sn == "app" {
+			return "app", nil
+		}
+	}
+
+	return "", fmt.Errorf("multiple services found (%s), please specify which service to use", strings.Join(serviceNames, ", "))
+}
+
 func (m *Manager) ComposeExec(ctx context.Context, name string, service string, command string) (string, error) {
 	if m.apiClient == nil {
 		return "", fmt.Errorf("docker API client not available")

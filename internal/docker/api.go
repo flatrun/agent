@@ -3,12 +3,12 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
@@ -68,7 +68,9 @@ func (a *APIClient) ExecInContainer(ctx context.Context, containerID string, com
 	defer resp.Close()
 
 	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, resp.Reader)
+	if _, err := io.Copy(&buf, resp.Reader); err != nil {
+		return "", fmt.Errorf("failed to read exec output: %w", err)
+	}
 
 	deadline := time.After(5 * time.Second)
 	for {
@@ -95,15 +97,17 @@ func (a *APIClient) ExecInContainer(ctx context.Context, containerID string, com
 	return stripDockerStreamHeaders(buf.Bytes()), nil
 }
 
+const dockerStreamHeaderSize = 8
+
 func stripDockerStreamHeaders(data []byte) string {
 	var result strings.Builder
-	for len(data) >= 8 {
-		size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
-		if 8+size > len(data) {
+	for len(data) >= dockerStreamHeaderSize {
+		size := int(binary.BigEndian.Uint32(data[4:8]))
+		if dockerStreamHeaderSize+size > len(data) {
 			break
 		}
-		result.Write(data[8 : 8+size])
-		data = data[8+size:]
+		result.Write(data[dockerStreamHeaderSize : dockerStreamHeaderSize+size])
+		data = data[dockerStreamHeaderSize+size:]
 	}
 	if result.Len() == 0 {
 		return string(data)
@@ -119,7 +123,7 @@ func (a *APIClient) ExecInService(ctx context.Context, project, service, command
 	return a.ExecInContainer(ctx, containerID, command)
 }
 
-func (a *APIClient) ListServiceContainers(ctx context.Context, project string) ([]types.Container, error) {
+func (a *APIClient) ListServiceContainers(ctx context.Context, project string) ([]container.Summary, error) {
 	f := filters.NewArgs(
 		filters.Arg("label", fmt.Sprintf("com.docker.compose.project=%s", project)),
 	)

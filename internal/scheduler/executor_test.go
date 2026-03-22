@@ -63,7 +63,7 @@ services:
 	if err != nil && strings.Contains(err.Error(), "multiple services found") {
 		t.Errorf("Should not get multi-service error for single service: %v", err)
 	}
-	if err != nil && strings.Contains(err.Error(), "failed to resolve services") {
+	if err != nil && strings.Contains(err.Error(), "failed to resolve service") {
 		t.Errorf("Should not get resolve error for existing deployment: %v", err)
 	}
 }
@@ -151,7 +151,7 @@ func TestExecuteCommand_DeploymentNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for nonexistent deployment")
 	}
-	if !strings.Contains(err.Error(), "failed to resolve services") {
+	if !strings.Contains(err.Error(), "failed to resolve service") {
 		t.Errorf("Expected resolve error, got: %v", err)
 	}
 }
