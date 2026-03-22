@@ -145,9 +145,10 @@ func TestServiceMetadata_HasMultipleDatabases(t *testing.T) {
 
 func TestServiceMetadata_GetDomains(t *testing.T) {
 	tests := []struct {
-		name     string
-		metadata ServiceMetadata
-		want     int
+		name        string
+		metadata    ServiceMetadata
+		want        int
+		wantService string
 	}{
 		{
 			name: "returns Domains array when present",
@@ -160,7 +161,22 @@ func TestServiceMetadata_GetDomains(t *testing.T) {
 			want: 2,
 		},
 		{
-			name: "falls back to networking domain",
+			name: "falls back to networking domain with service name",
+			metadata: ServiceMetadata{
+				Name: "myapp",
+				Networking: NetworkingConfig{
+					Expose:        true,
+					Domain:        "myapp.example.com",
+					Service:       "web",
+					ContainerPort: 8080,
+				},
+				SSL: SSLConfig{Enabled: true},
+			},
+			want:        1,
+			wantService: "web",
+		},
+		{
+			name: "falls back to metadata name when service is empty",
 			metadata: ServiceMetadata{
 				Name: "myapp",
 				Networking: NetworkingConfig{
@@ -170,13 +186,24 @@ func TestServiceMetadata_GetDomains(t *testing.T) {
 				},
 				SSL: SSLConfig{Enabled: true},
 			},
-			want: 1,
+			want:        1,
+			wantService: "myapp",
 		},
 		{
 			name: "returns nil when not exposed",
 			metadata: ServiceMetadata{
 				Networking: NetworkingConfig{
 					Expose: false,
+				},
+			},
+			want: 0,
+		},
+		{
+			name: "returns nil when domain is empty",
+			metadata: ServiceMetadata{
+				Networking: NetworkingConfig{
+					Expose: true,
+					Domain: "",
 				},
 			},
 			want: 0,
@@ -188,6 +215,11 @@ func TestServiceMetadata_GetDomains(t *testing.T) {
 			got := tt.metadata.GetDomains()
 			if len(got) != tt.want {
 				t.Errorf("GetDomains() returned %d domains, want %d", len(got), tt.want)
+			}
+			if tt.wantService != "" && len(got) > 0 {
+				if got[0].Service != tt.wantService {
+					t.Errorf("GetDomains()[0].Service = %q, want %q", got[0].Service, tt.wantService)
+				}
 			}
 		})
 	}

@@ -472,6 +472,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 
 			service := d.Service
 			if service == "" {
+				log.Printf("[proxy] warning: domain %q has no service set for deployment %q, falling back to deployment name", d.Domain, deploymentName)
 				service = deploymentName
 			}
 

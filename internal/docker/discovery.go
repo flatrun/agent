@@ -546,16 +546,30 @@ func (d *Discovery) generateMetadataFromCompose(composePath, name string) *model
 		},
 	}
 
-	for _, svc := range compose.Services {
-		if len(svc.Ports) > 0 {
-			portStr := d.parsePort(svc.Ports[0])
-			if portStr != "" {
-				port := d.extractContainerPort(portStr)
-				if port > 0 {
-					metadata.Networking.ContainerPort = port
+	if len(compose.Services) == 1 {
+		for svcName, svc := range compose.Services {
+			metadata.Networking.Service = svcName
+			if len(svc.Ports) > 0 {
+				portStr := d.parsePort(svc.Ports[0])
+				if portStr != "" {
+					if port := d.extractContainerPort(portStr); port > 0 {
+						metadata.Networking.ContainerPort = port
+					}
 				}
 			}
-			break
+		}
+	} else {
+		for svcName, svc := range compose.Services {
+			if len(svc.Ports) > 0 {
+				metadata.Networking.Service = svcName
+				portStr := d.parsePort(svc.Ports[0])
+				if portStr != "" {
+					if port := d.extractContainerPort(portStr); port > 0 {
+						metadata.Networking.ContainerPort = port
+					}
+				}
+				break
+			}
 		}
 	}
 

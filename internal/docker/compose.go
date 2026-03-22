@@ -361,3 +361,4 @@ func (c *ComposeExecutor) ExecCommand(containerID string, command string) (strin
 
 	return "", fmt.Errorf("no compatible shell found in container")
 }
+

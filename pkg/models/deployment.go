@@ -70,9 +70,13 @@ func (m *ServiceMetadata) GetDomains() []DomainConfig {
 	if !m.Networking.Expose || m.Networking.Domain == "" {
 		return nil
 	}
+	service := m.Networking.Service
+	if service == "" {
+		service = m.Name
+	}
 	return []DomainConfig{{
 		ID:            "default",
-		Service:       m.Name,
+		Service:       service,
 		ContainerPort: m.Networking.ContainerPort,
 		Domain:        m.Networking.Domain,
 		SSL:           m.SSL,
@@ -167,6 +171,7 @@ type QuickAction struct {
 type NetworkingConfig struct {
 	Expose        bool   `yaml:"expose" json:"expose"`
 	Domain        string `yaml:"domain" json:"domain"`
+	Service       string `yaml:"service,omitempty" json:"service,omitempty"`
 	ContainerPort int    `yaml:"container_port" json:"container_port"`
 	Protocol      string `yaml:"protocol" json:"protocol"`
 	ProxyType     string `yaml:"proxy_type" json:"proxy_type"`

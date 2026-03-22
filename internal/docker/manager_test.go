@@ -277,6 +277,163 @@ healthcheck:
 	}
 }
 
+func TestGetComposeServiceNames(t *testing.T) {
+	tests := []struct {
+		name           string
+		compose        string
+		wantNames      []string
+		wantErr        bool
+	}{
+		{
+			name: "single service",
+			compose: `name: test
+services:
+  app:
+    image: nginx:latest
+`,
+			wantNames: []string{"app"},
+		},
+		{
+			name: "multiple services",
+			compose: `name: test
+services:
+  web:
+    image: nginx:latest
+  db:
+    image: postgres:15
+  cache:
+    image: redis:alpine
+`,
+			wantNames: []string{"web", "db", "cache"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "svc-names-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			deployDir := filepath.Join(tmpDir, "test-deployment")
+			if err := os.MkdirAll(deployDir, 0755); err != nil {
+				t.Fatalf("Failed to create deployment dir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(deployDir, "docker-compose.yml"), []byte(tt.compose), 0644); err != nil {
+				t.Fatalf("Failed to write compose file: %v", err)
+			}
+
+			manager := NewManager(tmpDir)
+			names, err := manager.GetComposeServiceNames("test-deployment")
+			if tt.wantErr {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetComposeServiceNames() error: %v", err)
+			}
+
+			if len(names) != len(tt.wantNames) {
+				t.Errorf("GetComposeServiceNames() returned %d names, want %d", len(names), len(tt.wantNames))
+				return
+			}
+
+			nameSet := make(map[string]bool)
+			for _, n := range names {
+				nameSet[n] = true
+			}
+			for _, want := range tt.wantNames {
+				if !nameSet[want] {
+					t.Errorf("Expected service name %q not found in %v", want, names)
+				}
+			}
+		})
+	}
+}
+
+func TestGetComposeServiceNamesNotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "svc-names-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	manager := NewManager(tmpDir)
+	_, err = manager.GetComposeServiceNames("nonexistent")
+	if err == nil {
+		t.Error("Expected error for nonexistent deployment")
+	}
+}
+
+func TestGetComposeServices(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "svc-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	deployDir := filepath.Join(tmpDir, "test-deployment")
+	if err := os.MkdirAll(deployDir, 0755); err != nil {
+		t.Fatalf("Failed to create deployment dir: %v", err)
+	}
+
+	composeContent := `name: test-deployment
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+  worker:
+    image: myapp:latest
+`
+	if err := os.WriteFile(filepath.Join(deployDir, "docker-compose.yml"), []byte(composeContent), 0644); err != nil {
+		t.Fatalf("Failed to write compose file: %v", err)
+	}
+
+	manager := NewManager(tmpDir)
+	services, err := manager.GetComposeServices("test-deployment")
+	if err != nil {
+		t.Fatalf("GetComposeServices() error: %v", err)
+	}
+
+	if len(services) != 2 {
+		t.Errorf("Expected 2 services, got %d", len(services))
+	}
+
+	nameSet := make(map[string]bool)
+	for _, s := range services {
+		nameSet[s.Name] = true
+	}
+	if !nameSet["web"] {
+		t.Error("Expected 'web' service not found")
+	}
+	if !nameSet["worker"] {
+		t.Error("Expected 'worker' service not found")
+	}
+}
+
+func TestComposeExecWithoutAPIClient(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "exec-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	manager := NewManager(tmpDir)
+	manager.apiClient = nil
+
+	_, err = manager.ComposeExec(nil, "test", "app", "echo hello")
+	if err == nil {
+		t.Error("Expected error when API client is nil")
+	}
+	if err.Error() != "docker API client not available" {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
 func TestPopulateContainerInfoJSONArray(t *testing.T) {
 	deployment := &models.Deployment{
 		Name: "test",
