@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/flatrun/agent/internal/audit"
@@ -40,6 +41,7 @@ import (
 	"github.com/flatrun/agent/pkg/subdomain"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/flatrun/agent/templates"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
@@ -70,6 +72,11 @@ type Server struct {
 	auditMiddleware    *audit.Middleware
 	powerDNSManager    *dns.PowerDNSManager
 	clusterManager     *cluster.Manager
+	cachedIP string
+
+	statsMu    sync.RWMutex
+	statsCache gin.H
+	statsAt    time.Time
 }
 
 func New(cfg *config.Config, configPath string) *Server {
@@ -82,7 +89,33 @@ func New(cfg *config.Config, configPath string) *Server {
 	router := gin.Default()
 
 	if cfg.API.EnableCORS {
-		router.Use(corsMiddleware(cfg.API.AllowedOrigins))
+		corsConfig := cors.Config{
+			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			AllowHeaders:     []string{"Content-Type", "Authorization", "Accept", "Origin", "Cache-Control", "X-Requested-With"},
+			AllowCredentials: true,
+			MaxAge:           12 * time.Hour,
+		}
+		origins := cfg.API.AllowedOrigins
+		allowAll := false
+		for _, o := range origins {
+			if o == "*" {
+				allowAll = true
+				break
+			}
+		}
+		if allowAll {
+			corsConfig.AllowAllOrigins = true
+			corsConfig.AllowCredentials = false
+		} else if len(origins) > 0 {
+			corsConfig.AllowOrigins = origins
+		} else {
+			instanceIP := resolvePublicIP()
+			corsConfig.AllowOriginFunc = func(origin string) bool {
+				return strings.HasPrefix(origin, "http://"+instanceIP) ||
+					strings.HasPrefix(origin, "https://"+instanceIP)
+			}
+		}
+		router.Use(cors.New(corsConfig))
 	}
 
 	manager := docker.NewManager(cfg.DeploymentsPath)
@@ -93,8 +126,9 @@ func New(cfg *config.Config, configPath string) *Server {
 	_ = pluginRegistry.LoadFromDisk()
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
 
+	setupComplete := isSetupCompleteCheck(cfg.DeploymentsPath)
 	var authManager *auth.Manager
-	if authMgr, authErr := auth.NewManager(cfg.DeploymentsPath, &cfg.Auth); authErr != nil {
+	if authMgr, authErr := auth.NewManager(cfg.DeploymentsPath, &cfg.Auth, setupComplete); authErr != nil {
 		log.Printf("Warning: Failed to initialize auth manager: %v", authErr)
 	} else {
 		authManager = authMgr
@@ -245,6 +279,23 @@ func (s *Server) setupRoutes() {
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
+
+		// Setup endpoints (public, gated by setup state)
+		setup := api.Group("/setup")
+		{
+			setup.GET("/status", s.getSetupStatus)
+
+			guarded := setup.Group("")
+			guarded.GET("/info", s.getSetupInfo)
+			guarded.Use(s.setupGuard())
+			{
+				guarded.POST("/validate", s.validateSystem)
+				guarded.GET("/verify-dns", s.verifyDNS)
+				guarded.POST("/settings", s.configureSettings)
+				guarded.POST("/authentication", s.configureAuthentication)
+				guarded.POST("/complete", s.completeSetup)
+			}
+		}
 
 		protected := api.Group("")
 		protected.Use(s.authMiddleware.RequireAuth())
@@ -563,6 +614,7 @@ func (s *Server) Start() error {
 
 	return s.server.ListenAndServe()
 }
+
 
 func (s *Server) Stop() error {
 	if s.clusterManager != nil {
@@ -3714,6 +3766,17 @@ func generateDomainID() string {
 }
 
 func (s *Server) getSystemStats(c *gin.Context) {
+	const statsTTL = 10 * time.Second
+
+	s.statsMu.RLock()
+	if s.statsCache != nil && time.Since(s.statsAt) < statsTTL {
+		cached := s.statsCache
+		s.statsMu.RUnlock()
+		c.JSON(http.StatusOK, cached)
+		return
+	}
+	s.statsMu.RUnlock()
+
 	deployments, err := s.manager.ListDeployments()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -3769,15 +3832,49 @@ func (s *Server) getSystemStats(c *gin.Context) {
 
 	systemStats, _ := system.GetSystemStats()
 
-	c.JSON(http.StatusOK, gin.H{
-		"deployments": depStats,
-		"containers":  containerStats,
-		"images":      imageStats,
-		"volumes":     volumeStats,
-		"networks":    gin.H{"total": networkCount},
-		"ports":       gin.H{"total": portCount},
-		"system":      systemStats,
-	})
+	var systemPortCount int
+	if ports, err := s.networksManager.ListPorts(); err == nil {
+		systemPortCount = len(ports)
+	}
+
+	var systemServiceCount int
+	if services, err := s.servicesManager.ListServices(); err == nil {
+		systemServiceCount = len(services)
+	}
+
+	var infraCount int
+	if services, err := s.infraManager.ListServices(); err == nil {
+		infraCount = len(services)
+	}
+
+	var certCount int
+	if certs, err := s.proxyOrchestrator.ListCertificates(); err == nil {
+		certCount = len(certs)
+	}
+
+	appCount := len(s.pluginRegistry.List())
+
+	result := gin.H{
+		"deployments":    depStats,
+		"containers":     containerStats,
+		"images":         imageStats,
+		"volumes":        volumeStats,
+		"networks":       gin.H{"total": networkCount},
+		"ports":          gin.H{"total": portCount},
+		"system":         systemStats,
+		"system_ports":   gin.H{"total": systemPortCount},
+		"services":       gin.H{"total": systemServiceCount},
+		"infrastructure": gin.H{"total": infraCount},
+		"certificates":   gin.H{"total": certCount},
+		"apps":           gin.H{"total": appCount},
+	}
+
+	s.statsMu.Lock()
+	s.statsCache = result
+	s.statsAt = time.Now()
+	s.statsMu.Unlock()
+
+	c.JSON(http.StatusOK, result)
 }
 
 func (s *Server) listContainers(c *gin.Context) {
@@ -4151,29 +4248,6 @@ func toTitleCase(s string) string {
 	return strings.Join(words, " ")
 }
 
-func corsMiddleware(allowedOrigins []string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
-
-		for _, allowed := range allowedOrigins {
-			if origin == allowed || allowed == "*" {
-				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
-				break
-			}
-		}
-
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	}
-}
 
 func (s *Server) listDeploymentFiles(c *gin.Context) {
 	name := c.Param("name")
