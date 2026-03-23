@@ -124,11 +124,11 @@ func (m *Manager) populateContainerInfo(deployment *models.Deployment) {
 	}
 }
 
-func (m *Manager) CreateDeployment(name string, composeContent string) error {
+func (m *Manager) CreateDeployment(name string, composeContent string, fileMounts []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.discovery.CreateDeployment(name, composeContent)
+	return m.discovery.CreateDeployment(name, composeContent, fileMounts)
 }
 
 func (m *Manager) ApplyMountOwnership(name string, mounts []MountOwnership) error {

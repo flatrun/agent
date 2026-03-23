@@ -6,6 +6,15 @@ category: infrastructure
 type: infrastructure
 priority: 100
 
+mounts:
+  dirs:
+    - conf.d
+    - certs
+    - html
+    - lua
+  files:
+    - nginx.conf
+
 setup:
   dirs:
     - conf.d

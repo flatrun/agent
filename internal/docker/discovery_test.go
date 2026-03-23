@@ -148,7 +148,7 @@ services:
 				t.Fatalf("Failed to create deployment path: %v", err)
 			}
 
-			err := d.createBindMountDirs(deploymentPath, tt.composeContent)
+			err := d.createBindMountDirs(deploymentPath, tt.composeContent, nil)
 			if err != nil {
 				t.Fatalf("createBindMountDirs failed: %v", err)
 			}
@@ -193,7 +193,7 @@ services:
       - "8000"
 `
 
-	err = d.CreateDeployment("test-app", composeContent)
+	err = d.CreateDeployment("test-app", composeContent, nil)
 	if err != nil {
 		t.Fatalf("CreateDeployment failed: %v", err)
 	}

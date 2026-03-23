@@ -826,7 +826,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 		req.ComposeContent = s.addContainerNetwork(req.ComposeContent, req.ExistingDatabaseContainer)
 	}
 
-	if err := s.manager.CreateDeployment(req.Name, req.ComposeContent); err != nil {
+	if err := s.manager.CreateDeployment(req.Name, req.ComposeContent, nil); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
