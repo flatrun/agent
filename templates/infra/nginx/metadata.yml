@@ -5,3 +5,21 @@ logo: https://cdn.simpleicons.org/nginx
 category: infrastructure
 type: infrastructure
 priority: 100
+
+setup:
+  dirs:
+    - conf.d
+    - certs
+    - html
+    - lua
+  files:
+    - src: nginx.conf
+      dest: nginx.conf
+      overwrite: true
+    - src: welcome/index.html
+      dest: html/index.html
+      overwrite: false
+      external: true
+    - dest: conf.d/rate_limits.conf
+      overwrite: false
+      empty: true

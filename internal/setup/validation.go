@@ -104,13 +104,27 @@ func CheckPort(port int, inUseBy string) CheckResult {
 
 func IsPortAvailable(port int) bool {
 	portStr := fmt.Sprintf("%d", port)
-	for _, host := range []string{"0.0.0.0", "127.0.0.1", "::1"} {
+	for _, host := range []string{"0.0.0.0", "127.0.0.1"} {
 		ln, err := net.Listen("tcp", net.JoinHostPort(host, portStr))
 		if err != nil {
 			return false
 		}
 		ln.Close()
 	}
+	if ln, err := net.Listen("tcp6", net.JoinHostPort("::1", portStr)); err == nil {
+		ln.Close()
+	} else if isIPv6Supported() {
+		return false
+	}
+	return true
+}
+
+func isIPv6Supported() bool {
+	ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		return false
+	}
+	ln.Close()
 	return true
 }
 

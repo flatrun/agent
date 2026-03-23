@@ -16,9 +16,23 @@ import (
 )
 
 type templateMetadata struct {
-	Name     string `yaml:"name"`
-	Type     string `yaml:"type"`
-	Category string `yaml:"category"`
+	Name     string        `yaml:"name"`
+	Type     string        `yaml:"type"`
+	Category string        `yaml:"category"`
+	Setup    setupManifest `yaml:"setup"`
+}
+
+type setupManifest struct {
+	Dirs  []string      `yaml:"dirs"`
+	Files []setupFileEntry `yaml:"files"`
+}
+
+type setupFileEntry struct {
+	Src       string `yaml:"src"`
+	Dest      string `yaml:"dest"`
+	Overwrite bool   `yaml:"overwrite"`
+	External  bool   `yaml:"external"`
+	Empty     bool   `yaml:"empty"`
 }
 
 func handleSetup(args []string) {
@@ -163,7 +177,12 @@ func deployInfraService(cfg *config.Config, serviceName, templateID string) erro
 		return fmt.Errorf("create deployment: %w", err)
 	}
 
-	if err := writeInfraTemplateFiles(cfg, serviceName, templateID, deployDir); err != nil {
+	meta, err := loadInfraMetadata(templateID)
+	if err != nil {
+		return fmt.Errorf("load metadata: %w", err)
+	}
+
+	if err := writeSetupFiles(meta, templateID, deployDir); err != nil {
 		return fmt.Errorf("write template files: %w", err)
 	}
 
@@ -181,41 +200,46 @@ func deployInfraService(cfg *config.Config, serviceName, templateID string) erro
 	return nil
 }
 
-func writeInfraTemplateFiles(cfg *config.Config, serviceName, templateID, deployDir string) error {
-	switch templateID {
-	case "infra/nginx":
-		return writeNginxFiles(cfg, deployDir)
-	}
-	return nil
-}
-
-func writeNginxFiles(cfg *config.Config, deployDir string) error {
-	for _, dir := range []string{"conf.d", "certs", "html", "lua"} {
+func writeSetupFiles(meta *templateMetadata, templateID, deployDir string) error {
+	for _, dir := range meta.Setup.Dirs {
 		if err := os.MkdirAll(filepath.Join(deployDir, dir), 0755); err != nil {
-			return fmt.Errorf("create %s: %w", dir, err)
+			return fmt.Errorf("create directory %s: %w", dir, err)
 		}
 	}
 
-	nginxConf, err := templates.GetNginxConfig(false)
-	if err != nil {
-		return fmt.Errorf("read nginx.conf: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(deployDir, "nginx.conf"), nginxConf, 0644); err != nil {
-		return fmt.Errorf("write nginx.conf: %w", err)
-	}
+	for _, f := range meta.Setup.Files {
+		destPath := filepath.Join(deployDir, f.Dest)
 
-	rateLimits := filepath.Join(deployDir, "conf.d", "rate_limits.conf")
-	if _, err := os.Stat(rateLimits); os.IsNotExist(err) {
-		if err := os.WriteFile(rateLimits, []byte(""), 0644); err != nil {
-			return fmt.Errorf("write rate_limits.conf: %w", err)
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return fmt.Errorf("create parent dir for %s: %w", f.Dest, err)
 		}
-	}
 
-	welcomePage, err := templates.GetWelcomePage()
-	if err == nil {
-		indexPath := filepath.Join(deployDir, "html", "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			_ = os.WriteFile(indexPath, welcomePage, 0644)
+		if !f.Overwrite {
+			if _, err := os.Stat(destPath); err == nil {
+				continue
+			}
+		}
+
+		if f.Empty {
+			if err := os.WriteFile(destPath, []byte(""), 0644); err != nil {
+				return fmt.Errorf("write %s: %w", f.Dest, err)
+			}
+			continue
+		}
+
+		var data []byte
+		var err error
+		if f.External {
+			data, err = templates.FS.ReadFile(f.Src)
+		} else {
+			data, err = templates.GetFile(templateID, f.Src)
+		}
+		if err != nil {
+			return fmt.Errorf("read template file %s: %w", f.Src, err)
+		}
+
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", f.Dest, err)
 		}
 	}
 

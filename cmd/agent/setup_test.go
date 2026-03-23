@@ -38,22 +38,29 @@ func TestLoadInfraMetadata_NotInfra(t *testing.T) {
 	}
 }
 
-func TestWriteNginxFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &config.Config{
-		DeploymentsPath: tmpDir,
-		Infrastructure: config.InfrastructureConfig{
-			DefaultProxyNetwork: "proxy",
-		},
+func TestLoadInfraMetadata_HasSetupManifest(t *testing.T) {
+	meta, err := loadInfraMetadata("infra/nginx")
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if len(meta.Setup.Dirs) == 0 {
+		t.Error("Expected setup dirs to be defined")
+	}
+	if len(meta.Setup.Files) == 0 {
+		t.Error("Expected setup files to be defined")
+	}
+}
+
+func TestWriteSetupFiles(t *testing.T) {
+	meta, err := loadInfraMetadata("infra/nginx")
+	if err != nil {
+		t.Fatalf("Failed to load metadata: %v", err)
 	}
 
-	deployDir := filepath.Join(tmpDir, "nginx")
-	if err := os.MkdirAll(deployDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	deployDir := t.TempDir()
 
-	if err := writeNginxFiles(cfg, deployDir); err != nil {
-		t.Fatalf("writeNginxFiles failed: %v", err)
+	if err := writeSetupFiles(meta, "infra/nginx", deployDir); err != nil {
+		t.Fatalf("writeSetupFiles failed: %v", err)
 	}
 
 	expectedFiles := []string{
@@ -80,16 +87,13 @@ func TestWriteNginxFiles(t *testing.T) {
 	}
 }
 
-func TestWriteNginxFiles_PreservesExistingIndex(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &config.Config{
-		DeploymentsPath: tmpDir,
-		Infrastructure: config.InfrastructureConfig{
-			DefaultProxyNetwork: "proxy",
-		},
+func TestWriteSetupFiles_PreservesExistingIndex(t *testing.T) {
+	meta, err := loadInfraMetadata("infra/nginx")
+	if err != nil {
+		t.Fatalf("Failed to load metadata: %v", err)
 	}
 
-	deployDir := filepath.Join(tmpDir, "nginx")
+	deployDir := t.TempDir()
 	htmlDir := filepath.Join(deployDir, "html")
 	if err := os.MkdirAll(htmlDir, 0755); err != nil {
 		t.Fatal(err)
@@ -100,8 +104,8 @@ func TestWriteNginxFiles_PreservesExistingIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := writeNginxFiles(cfg, deployDir); err != nil {
-		t.Fatalf("writeNginxFiles failed: %v", err)
+	if err := writeSetupFiles(meta, "infra/nginx", deployDir); err != nil {
+		t.Fatalf("writeSetupFiles failed: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(htmlDir, "index.html"))
@@ -109,20 +113,17 @@ func TestWriteNginxFiles_PreservesExistingIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(data) != string(customContent) {
-		t.Error("writeNginxFiles should not overwrite existing index.html")
+		t.Error("writeSetupFiles should not overwrite existing index.html")
 	}
 }
 
-func TestWriteNginxFiles_PreservesExistingRateLimits(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &config.Config{
-		DeploymentsPath: tmpDir,
-		Infrastructure: config.InfrastructureConfig{
-			DefaultProxyNetwork: "proxy",
-		},
+func TestWriteSetupFiles_PreservesExistingRateLimits(t *testing.T) {
+	meta, err := loadInfraMetadata("infra/nginx")
+	if err != nil {
+		t.Fatalf("Failed to load metadata: %v", err)
 	}
 
-	deployDir := filepath.Join(tmpDir, "nginx")
+	deployDir := t.TempDir()
 	confDir := filepath.Join(deployDir, "conf.d")
 	if err := os.MkdirAll(confDir, 0755); err != nil {
 		t.Fatal(err)
@@ -133,8 +134,8 @@ func TestWriteNginxFiles_PreservesExistingRateLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := writeNginxFiles(cfg, deployDir); err != nil {
-		t.Fatalf("writeNginxFiles failed: %v", err)
+	if err := writeSetupFiles(meta, "infra/nginx", deployDir); err != nil {
+		t.Fatalf("writeSetupFiles failed: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(confDir, "rate_limits.conf"))
@@ -142,7 +143,32 @@ func TestWriteNginxFiles_PreservesExistingRateLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(data) != string(customContent) {
-		t.Error("writeNginxFiles should not overwrite existing rate_limits.conf")
+		t.Error("writeSetupFiles should not overwrite existing rate_limits.conf")
+	}
+}
+
+func TestWriteSetupFiles_OverwritesNginxConf(t *testing.T) {
+	meta, err := loadInfraMetadata("infra/nginx")
+	if err != nil {
+		t.Fatalf("Failed to load metadata: %v", err)
+	}
+
+	deployDir := t.TempDir()
+	oldContent := []byte("old nginx config")
+	if err := os.WriteFile(filepath.Join(deployDir, "nginx.conf"), oldContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeSetupFiles(meta, "infra/nginx", deployDir); err != nil {
+		t.Fatalf("writeSetupFiles failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(deployDir, "nginx.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) == string(oldContent) {
+		t.Error("nginx.conf should be overwritten (overwrite: true)")
 	}
 }
 
