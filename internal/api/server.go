@@ -35,6 +35,7 @@ import (
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
+	"github.com/flatrun/agent/internal/setup"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/internal/traffic"
 	"github.com/flatrun/agent/pkg/config"
@@ -75,7 +76,8 @@ type Server struct {
 	auditMiddleware    *audit.Middleware
 	powerDNSManager    *dns.PowerDNSManager
 	clusterManager     *cluster.Manager
-	cachedIP string
+	setupManager       *setup.Manager
+	setupHandlers      *setup.Handlers
 
 	statsMu    sync.RWMutex
 	statsCache gin.H
@@ -112,7 +114,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		} else if len(origins) > 0 {
 			corsConfig.AllowOrigins = origins
 		} else {
-			instanceIP := resolvePublicIP()
+			instanceIP := setup.ResolvePublicIP()
 			corsConfig.AllowOriginFunc = func(origin string) bool {
 				return strings.HasPrefix(origin, "http://"+instanceIP) ||
 					strings.HasPrefix(origin, "https://"+instanceIP)
@@ -129,7 +131,8 @@ func New(cfg *config.Config, configPath string) *Server {
 	_ = pluginRegistry.LoadFromDisk()
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
 
-	setupComplete := isSetupCompleteCheck(cfg.DeploymentsPath)
+	setupManager := setup.NewManager(cfg, configPath)
+	setupComplete := setupManager.IsComplete()
 	var authManager *auth.Manager
 	if authMgr, authErr := auth.NewManager(cfg.DeploymentsPath, &cfg.Auth, setupComplete); authErr != nil {
 		log.Printf("Warning: Failed to initialize auth manager: %v", authErr)
@@ -254,6 +257,8 @@ func New(cfg *config.Config, configPath string) *Server {
 		auditMiddleware:    auditMiddleware,
 		powerDNSManager:    powerDNSManager,
 		clusterManager:     clusterManager,
+		setupManager:       setupManager,
+		setupHandlers:      setup.NewHandlers(setupManager, authManager),
 	}
 
 	if backupManager != nil {
@@ -284,19 +289,19 @@ func (s *Server) setupRoutes() {
 		api.GET("/containers/:id/exec", s.containerExec)
 
 		// Setup endpoints (public, gated by setup state)
-		setup := api.Group("/setup")
+		setupGroup := api.Group("/setup")
 		{
-			setup.GET("/status", s.getSetupStatus)
+			setupGroup.GET("/status", s.setupHandlers.GetStatus)
 
-			guarded := setup.Group("")
-			guarded.GET("/info", s.getSetupInfo)
-			guarded.Use(s.setupGuard())
+			guarded := setupGroup.Group("")
+			guarded.GET("/info", s.setupHandlers.GetInfo)
+			guarded.Use(s.setupHandlers.Guard())
 			{
-				guarded.POST("/validate", s.validateSystem)
-				guarded.GET("/verify-dns", s.verifyDNS)
-				guarded.POST("/settings", s.configureSettings)
-				guarded.POST("/authentication", s.configureAuthentication)
-				guarded.POST("/complete", s.completeSetup)
+				guarded.POST("/validate", s.setupHandlers.ValidateSystem)
+				guarded.GET("/verify-dns", s.setupHandlers.VerifyDNS)
+				guarded.POST("/settings", s.setupHandlers.ConfigureSettings)
+				guarded.POST("/authentication", s.setupHandlers.ConfigureAuthentication)
+				guarded.POST("/complete", s.setupHandlers.Complete)
 			}
 		}
 
