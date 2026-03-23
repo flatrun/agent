@@ -1,4 +1,4 @@
-package api
+package setup
 
 import (
 	"encoding/json"
@@ -10,14 +10,12 @@ import (
 	"testing"
 
 	"github.com/flatrun/agent/internal/auth"
-	"github.com/flatrun/agent/internal/docker"
-	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
-func setupTestSetupServer(t *testing.T) (*Server, string) {
+func setupTestServer(t *testing.T) (*Handlers, *Manager, *gin.Engine, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -50,45 +48,53 @@ func setupTestSetupServer(t *testing.T) (*Server, string) {
 		},
 	}
 
+	configPath := filepath.Join(tmpDir, "config.yml")
+	if err := config.Save(cfg, configPath); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
+	}
+
 	router := gin.New()
 	router.Use(cors.New(cors.Config{
 		AllowAllOrigins: true,
 		AllowMethods:    []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:    []string{"Content-Type", "Authorization", "Accept"},
 	}))
-	authMiddleware := auth.NewMiddleware(&cfg.Auth)
+
+	mgr := NewManager(cfg, configPath)
+
 	authManager, err := auth.NewManager(tmpDir, &cfg.Auth, false)
 	if err != nil {
 		t.Fatalf("Failed to create auth manager: %v", err)
 	}
-	authMiddleware.SetManager(authManager)
 
-	configPath := filepath.Join(tmpDir, "config.yml")
-	if err := config.Save(cfg, configPath); err != nil {
-		t.Fatalf("Failed to save config: %v", err)
+	handlers := NewHandlers(mgr, authManager)
+
+	setupGroup := router.Group("/api/setup")
+	{
+		setupGroup.GET("/status", handlers.GetStatus)
+
+		guarded := setupGroup.Group("")
+		guarded.GET("/info", handlers.GetInfo)
+		guarded.Use(handlers.Guard())
+		{
+			guarded.POST("/validate", handlers.ValidateSystem)
+			guarded.GET("/verify-dns", handlers.VerifyDNS)
+			guarded.POST("/settings", handlers.ConfigureSettings)
+			guarded.POST("/authentication", handlers.ConfigureAuthentication)
+			guarded.POST("/complete", handlers.Complete)
+		}
 	}
 
-	s := &Server{
-		config:          cfg,
-		configPath:      configPath,
-		router:          router,
-		manager:         docker.NewManager(tmpDir),
-		networksManager: networks.NewManager(),
-		authMiddleware:  authMiddleware,
-		authManager:     authManager,
-	}
-
-	s.setupRoutes()
-	return s, tmpDir
+	return handlers, mgr, router, tmpDir
 }
 
 func TestGetSetupStatus(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/setup/status", nil)
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
@@ -105,12 +111,12 @@ func TestGetSetupStatus(t *testing.T) {
 }
 
 func TestGetSetupInfo(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/setup/info", nil)
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
@@ -130,16 +136,16 @@ func TestGetSetupInfo(t *testing.T) {
 }
 
 func TestSetupGuardBlocksAfterComplete(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, mgr, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
-	if err := s.markSetupComplete(); err != nil {
+	if err := mgr.MarkComplete(); err != nil {
 		t.Fatalf("Failed to mark setup complete: %v", err)
 	}
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/setup/validate", nil)
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("Expected 403, got %d: %s", w.Code, w.Body.String())
@@ -147,16 +153,16 @@ func TestSetupGuardBlocksAfterComplete(t *testing.T) {
 }
 
 func TestSetupStatusAfterComplete(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, mgr, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
-	if err := s.markSetupComplete(); err != nil {
+	if err := mgr.MarkComplete(); err != nil {
 		t.Fatalf("Failed to mark setup complete: %v", err)
 	}
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/setup/status", nil)
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d", w.Code)
@@ -171,12 +177,12 @@ func TestSetupStatusAfterComplete(t *testing.T) {
 }
 
 func TestValidateSystem(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/setup/validate", nil)
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
@@ -196,12 +202,12 @@ func TestValidateSystem(t *testing.T) {
 }
 
 func TestVerifyDNSMissingParam(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/setup/verify-dns", nil)
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("Expected 400, got %d", w.Code)
@@ -209,28 +215,29 @@ func TestVerifyDNSMissingParam(t *testing.T) {
 }
 
 func TestConfigureSettings(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, mgr, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	body := `{"domain": "test.example.com", "auto_ssl": false, "cors_origins": ["https://panel.example.com"]}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/setup/settings", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	if s.config.Domain.DefaultDomain != "test.example.com" {
-		t.Errorf("Expected domain to be test.example.com, got %s", s.config.Domain.DefaultDomain)
+	cfg := mgr.Config()
+	if cfg.Domain.DefaultDomain != "test.example.com" {
+		t.Errorf("Expected domain to be test.example.com, got %s", cfg.Domain.DefaultDomain)
 	}
-	if s.config.Domain.AutoSSL != false {
+	if cfg.Domain.AutoSSL != false {
 		t.Error("Expected auto_ssl to be false")
 	}
 
 	found := false
-	for _, o := range s.config.API.AllowedOrigins {
+	for _, o := range cfg.API.AllowedOrigins {
 		if o == "https://panel.example.com" {
 			found = true
 			break
@@ -242,14 +249,14 @@ func TestConfigureSettings(t *testing.T) {
 }
 
 func TestConfigureAuthenticationPassword(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	body := `{"auth_method": "password", "username": "testadmin", "password": "securepass123", "email": "test@example.com"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/setup/authentication", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
@@ -267,14 +274,14 @@ func TestConfigureAuthenticationPassword(t *testing.T) {
 }
 
 func TestConfigureAuthenticationAPIKey(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	body := `{"auth_method": "apikey"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/setup/authentication", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
@@ -289,14 +296,14 @@ func TestConfigureAuthenticationAPIKey(t *testing.T) {
 }
 
 func TestConfigureAuthenticationBoth(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	body := `{"auth_method": "both", "username": "admin", "password": "securepass123"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/setup/authentication", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
@@ -314,14 +321,14 @@ func TestConfigureAuthenticationBoth(t *testing.T) {
 }
 
 func TestConfigureAuthenticationShortPassword(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	body := `{"auth_method": "password", "username": "admin", "password": "short"}`
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/setup/authentication", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("Expected 400, got %d: %s", w.Code, w.Body.String())
@@ -329,30 +336,30 @@ func TestConfigureAuthenticationShortPassword(t *testing.T) {
 }
 
 func TestCompleteSetup(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, mgr, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/api/setup/complete", nil)
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	if !s.isSetupComplete() {
+	if !mgr.IsComplete() {
 		t.Error("Expected setup to be marked complete")
 	}
 }
 
 func TestSetupCORSHeaders(t *testing.T) {
-	s, tmpDir := setupTestSetupServer(t)
+	_, _, router, tmpDir := setupTestServer(t)
 	defer os.RemoveAll(tmpDir)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/setup/status", nil)
 	req.Header.Set("Origin", "http://192.168.1.100")
-	s.router.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected 200, got %d", w.Code)
@@ -361,5 +368,39 @@ func TestSetupCORSHeaders(t *testing.T) {
 	corsHeader := w.Header().Get("Access-Control-Allow-Origin")
 	if corsHeader != "*" {
 		t.Errorf("Expected CORS origin header '*' (AllowedOrigins=[*]), got %s", corsHeader)
+	}
+}
+
+func TestManagerIsComplete(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &config.Config{DeploymentsPath: tmpDir}
+	mgr := NewManager(cfg, "")
+
+	if mgr.IsComplete() {
+		t.Error("Expected IsComplete to be false initially")
+	}
+
+	if err := mgr.MarkComplete(); err != nil {
+		t.Fatalf("Failed to mark complete: %v", err)
+	}
+
+	if !mgr.IsComplete() {
+		t.Error("Expected IsComplete to be true after marking complete")
+	}
+}
+
+func TestIsCompleteStandalone(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if IsComplete(tmpDir) {
+		t.Error("Expected false for fresh directory")
+	}
+
+	flatrunDir := filepath.Join(tmpDir, ".flatrun")
+	os.MkdirAll(flatrunDir, 0755)
+	os.WriteFile(filepath.Join(flatrunDir, "setup.json"), []byte(`{"initialized": true}`), 0644)
+
+	if !IsComplete(tmpDir) {
+		t.Error("Expected true after writing state file")
 	}
 }

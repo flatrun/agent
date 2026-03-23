@@ -76,6 +76,10 @@ func GetCompose(name string) ([]byte, error) {
 	return FS.ReadFile(filepath.Join(name, "docker-compose.yml"))
 }
 
+func GetFile(templateID, filename string) ([]byte, error) {
+	return FS.ReadFile(filepath.Join(templateID, filename))
+}
+
 func GetWelcomePage() ([]byte, error) {
 	return FS.ReadFile("welcome/index.html")
 }

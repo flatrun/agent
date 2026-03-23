@@ -24,6 +24,9 @@ func main() {
 		case "update":
 			handleUpdate(os.Args[2:])
 			return
+		case "setup":
+			handleSetup(os.Args[2:])
+			return
 		case "version":
 			printVersion()
 			return
