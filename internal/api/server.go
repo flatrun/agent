@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -375,6 +376,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/templates/refresh", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.refreshTemplates)
 			protected.GET("/templates/:id/compose", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getTemplateCompose)
 			protected.POST("/templates/:id/generate", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.generateTemplateCompose)
+			protected.GET("/templates/infra/:name/compose", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getInfraTemplateCompose)
+			protected.POST("/templates/infra/:name/generate", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.generateInfraTemplateCompose)
 
 			// Container endpoints
 			protected.GET("/containers", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.listContainers)
@@ -2278,6 +2281,7 @@ type TemplateMetadata struct {
 	Icon          string          `yaml:"icon"`
 	Logo          string          `yaml:"logo"`
 	Category      string          `yaml:"category"`
+	Type          string          `yaml:"type"`
 	Priority      int             `yaml:"priority"`
 	ContainerPort int             `yaml:"container_port"`
 	Mounts        []TemplateMount `yaml:"mounts"`
@@ -2321,62 +2325,83 @@ func (s *Server) listTemplates(c *gin.Context) {
 
 	s.ensureBuiltinTemplates(templatesDir)
 
+	typeFilter := c.DefaultQuery("type", "")
+
 	var templateList []Template
 
-	entries, err := os.ReadDir(templatesDir)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"templates": templateList,
-		})
-		return
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		templateID := entry.Name()
-		templatePath := filepath.Join(templatesDir, templateID)
-
-		metadataPath := filepath.Join(templatePath, "metadata.yml")
-		composePath := filepath.Join(templatePath, "docker-compose.yml")
-
-		composeContent, err := os.ReadFile(composePath)
+	var scanDir func(dir, prefix string)
+	scanDir = func(dir, prefix string) {
+		dirEntries, err := os.ReadDir(dir)
 		if err != nil {
-			continue
+			return
 		}
+		for _, entry := range dirEntries {
+			if !entry.IsDir() {
+				continue
+			}
 
-		var metadata TemplateMetadata
-		metadataContent, err := os.ReadFile(metadataPath)
-		if err == nil {
-			_ = yaml.Unmarshal(metadataContent, &metadata)
-		}
+			templateID := entry.Name()
+			if prefix != "" {
+				templateID = path.Join(prefix, entry.Name())
+			}
+			templatePath := filepath.Join(dir, entry.Name())
+			composePath := filepath.Join(templatePath, "docker-compose.yml")
 
-		if metadata.Name == "" {
-			metadata.Name = toTitleCase(strings.ReplaceAll(templateID, "-", " "))
-		}
-		if metadata.Icon == "" {
-			metadata.Icon = "pi pi-box"
-		}
-		if metadata.Category == "" {
-			metadata.Category = "general"
-		}
+			composeContent, err := os.ReadFile(composePath)
+			if err != nil {
+				scanDir(templatePath, templateID)
+				continue
+			}
 
-		templateList = append(templateList, Template{
-			ID:            templateID,
-			Name:          metadata.Name,
-			Description:   metadata.Description,
-			Icon:          metadata.Icon,
-			Logo:          metadata.Logo,
-			Category:      metadata.Category,
-			Priority:      metadata.Priority,
-			ContainerPort: metadata.ContainerPort,
-			Mounts:        metadata.Mounts,
-			Files:         metadata.Files,
-			Content:       string(composeContent),
-		})
+			var metadata TemplateMetadata
+			metadataPath := filepath.Join(templatePath, "metadata.yml")
+			metadataContent, err := os.ReadFile(metadataPath)
+			if err == nil {
+				if uerr := yaml.Unmarshal(metadataContent, &metadata); uerr != nil {
+					log.Printf("Warning: failed to parse template metadata %s: %v", metadataPath, uerr)
+				}
+			}
+
+			if metadata.Name == "" {
+				metadata.Name = toTitleCase(strings.ReplaceAll(entry.Name(), "-", " "))
+			}
+			if metadata.Icon == "" {
+				metadata.Icon = "pi pi-box"
+			}
+			if metadata.Category == "" {
+				metadata.Category = "general"
+			}
+
+			isInfra := metadata.Category == "infrastructure" || metadata.Type == "infrastructure"
+			switch typeFilter {
+			case "infrastructure":
+				if !isInfra {
+					continue
+				}
+			case "all":
+				// include everything
+			default:
+				if isInfra {
+					continue
+				}
+			}
+
+			templateList = append(templateList, Template{
+				ID:            templateID,
+				Name:          metadata.Name,
+				Description:   metadata.Description,
+				Icon:          metadata.Icon,
+				Logo:          metadata.Logo,
+				Category:      metadata.Category,
+				Priority:      metadata.Priority,
+				ContainerPort: metadata.ContainerPort,
+				Mounts:        metadata.Mounts,
+				Files:         metadata.Files,
+				Content:       string(composeContent),
+			})
+		}
 	}
+	scanDir(templatesDir, "")
 
 	sort.Slice(templateList, func(i, j int) bool {
 		return templateList[i].Priority > templateList[j].Priority
@@ -2428,11 +2453,39 @@ func (s *Server) getTemplateCategories(c *gin.Context) {
 	})
 }
 
+func (s *Server) resolveTemplateID(c *gin.Context) (string, bool) {
+	var id string
+	if prefix, ok := c.Get("_template_prefix"); ok {
+		id = path.Join(prefix.(string), c.Param("name"))
+	} else {
+		id = c.Param("id")
+	}
+	cleaned := path.Clean(id)
+	if strings.Contains(cleaned, "..") || strings.HasPrefix(cleaned, "/") {
+		return "", false
+	}
+	return cleaned, true
+}
+
+func (s *Server) getInfraTemplateCompose(c *gin.Context) {
+	c.Set("_template_prefix", "infra")
+	s.getTemplateCompose(c)
+}
+
+func (s *Server) generateInfraTemplateCompose(c *gin.Context) {
+	c.Set("_template_prefix", "infra")
+	s.generateTemplateCompose(c)
+}
+
 func (s *Server) getTemplateCompose(c *gin.Context) {
-	templateID := c.Param("id")
+	tid, ok := s.resolveTemplateID(c)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid template id"})
+		return
+	}
 	name := c.DefaultQuery("name", "my-app")
 
-	content, err := s.generateComposeContent(name, templateID)
+	content, err := s.generateComposeContent(name, tid)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": err.Error(),
@@ -2441,7 +2494,7 @@ func (s *Server) getTemplateCompose(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"template_id": templateID,
+		"template_id": tid,
 		"name":        name,
 		"content":     content,
 	})
@@ -2486,7 +2539,11 @@ type DatabaseConfig struct {
 }
 
 func (s *Server) generateTemplateCompose(c *gin.Context) {
-	templateID := c.Param("id")
+	tid, ok := s.resolveTemplateID(c)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid template id"})
+		return
+	}
 
 	var req ComposeGenerateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2496,7 +2553,7 @@ func (s *Server) generateTemplateCompose(c *gin.Context) {
 		return
 	}
 
-	content, err := s.generateComposeWithOptions(templateID, &req)
+	content, err := s.generateComposeWithOptions(tid, &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -2505,7 +2562,7 @@ func (s *Server) generateTemplateCompose(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"template_id":    templateID,
+		"template_id":    tid,
 		"name":           req.Name,
 		"content":        content,
 		"container_port": req.ContainerPort,
