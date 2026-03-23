@@ -235,7 +235,7 @@ func (d *Discovery) loadMetadata(path string) (*models.ServiceMetadata, error) {
 	return &metadata, nil
 }
 
-func (d *Discovery) CreateDeployment(name string, composeContent string) error {
+func (d *Discovery) CreateDeployment(name string, composeContent string, fileMounts []string) error {
 	dirPath := filepath.Join(d.basePath, name)
 
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
@@ -246,7 +246,7 @@ func (d *Discovery) CreateDeployment(name string, composeContent string) error {
 	composeContent = d.ensureComposeName(name, composeContent)
 
 	// Pre-create bind mount directories with permissive access for non-root containers
-	if err := d.createBindMountDirs(dirPath, composeContent); err != nil {
+	if err := d.createBindMountDirs(dirPath, composeContent, fileMounts); err != nil {
 		return fmt.Errorf("failed to create mount directories: %w", err)
 	}
 
@@ -255,8 +255,11 @@ func (d *Discovery) CreateDeployment(name string, composeContent string) error {
 }
 
 // createBindMountDirs parses compose content and creates bind mount directories
-// with world-writable permissions to support non-root containers (e.g., Bitnami)
-func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string) error {
+// with world-writable permissions to support non-root containers (e.g., Bitnami).
+// fileMounts lists relative paths (e.g., "./nginx.conf") that are file mounts
+// from template metadata. For paths not in fileMounts, a basename-contains-dot
+// heuristic is used as a fallback to avoid creating files as directories.
+func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string, fileMounts []string) error {
 	var compose struct {
 		Services map[string]struct {
 			Volumes []string `yaml:"volumes"`
@@ -267,6 +270,13 @@ func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string) e
 		return nil // Skip if parse fails, not critical
 	}
 
+	fileMountSet := make(map[string]bool, len(fileMounts))
+	for _, fm := range fileMounts {
+		cleanPath := filepath.Clean(fm)
+		fileMountSet[cleanPath] = true
+		fileMountSet["./"+cleanPath] = true
+	}
+
 	for _, service := range compose.Services {
 		for _, volume := range service.Volumes {
 			hostPath := extractBindMountPath(volume)
@@ -274,12 +284,27 @@ func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string) e
 				continue
 			}
 
-			// Only handle relative paths (bind mounts)
 			if !strings.HasPrefix(hostPath, "./") && !strings.HasPrefix(hostPath, "../") {
 				continue
 			}
 
 			fullPath := filepath.Join(deploymentPath, hostPath)
+
+			if _, err := os.Stat(fullPath); err == nil {
+				continue
+			}
+
+			if isFileMount(hostPath, fileMountSet) {
+				parentDir := filepath.Dir(fullPath)
+				if err := os.MkdirAll(parentDir, 0777); err != nil {
+					return err
+				}
+				if err := os.Chmod(parentDir, 0777); err != nil {
+					return err
+				}
+				continue
+			}
+
 			if err := os.MkdirAll(fullPath, 0777); err != nil {
 				return err
 			}
@@ -290,6 +315,28 @@ func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string) e
 	}
 
 	return nil
+}
+
+// isFileMount checks whether a bind mount host path refers to a file.
+// It first checks the metadata-provided fileMounts set, then falls back
+// to a heuristic: if the basename contains a dot and is not a known
+// directory pattern (e.g., conf.d), it's treated as a file.
+func isFileMount(hostPath string, fileMountSet map[string]bool) bool {
+	if fileMountSet[hostPath] {
+		return true
+	}
+
+	base := filepath.Base(hostPath)
+	if !strings.Contains(base, ".") {
+		return false
+	}
+
+	// Known directory suffixes like .d (conf.d, certs.d, etc.)
+	if strings.HasSuffix(base, ".d") {
+		return false
+	}
+
+	return true
 }
 
 // extractBindMountPath extracts the host path from a volume mount string

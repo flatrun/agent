@@ -16,10 +16,16 @@ import (
 )
 
 type templateMetadata struct {
-	Name     string        `yaml:"name"`
-	Type     string        `yaml:"type"`
-	Category string        `yaml:"category"`
-	Setup    setupManifest `yaml:"setup"`
+	Name     string         `yaml:"name"`
+	Type     string         `yaml:"type"`
+	Category string         `yaml:"category"`
+	Mounts   mountsManifest `yaml:"mounts"`
+	Setup    setupManifest  `yaml:"setup"`
+}
+
+type mountsManifest struct {
+	Dirs  []string `yaml:"dirs"`
+	Files []string `yaml:"files"`
 }
 
 type setupManifest struct {
@@ -172,11 +178,6 @@ func deployInfraService(cfg *config.Config, serviceName, templateID string) erro
 	content = strings.ReplaceAll(content, "${NAME}", serviceName)
 	content = strings.ReplaceAll(content, "${PROXY_NETWORK}", cfg.Infrastructure.DefaultProxyNetwork)
 
-	manager := docker.NewManager(cfg.DeploymentsPath)
-	if err := manager.CreateDeployment(serviceName, content); err != nil {
-		return fmt.Errorf("create deployment: %w", err)
-	}
-
 	meta, err := loadInfraMetadata(templateID)
 	if err != nil {
 		return fmt.Errorf("load metadata: %w", err)
@@ -184,6 +185,11 @@ func deployInfraService(cfg *config.Config, serviceName, templateID string) erro
 
 	if err := writeSetupFiles(meta, templateID, deployDir); err != nil {
 		return fmt.Errorf("write template files: %w", err)
+	}
+
+	manager := docker.NewManager(cfg.DeploymentsPath)
+	if err := manager.CreateDeployment(serviceName, content, meta.Mounts.Files); err != nil {
+		return fmt.Errorf("create deployment: %w", err)
 	}
 
 	netManager := networks.NewManager()
