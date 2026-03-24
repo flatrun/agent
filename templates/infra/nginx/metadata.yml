@@ -29,6 +29,9 @@ setup:
       dest: html/index.html
       overwrite: false
       external: true
+    - src: default.conf
+      dest: conf.d/default.conf
+      overwrite: false
     - dest: conf.d/rate_limits.conf
       overwrite: false
       empty: true
