@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/flatrun/agent/pkg/models"
+	"gopkg.in/yaml.v3"
 )
 
 func TestExtractBindMountPath(t *testing.T) {
@@ -405,6 +408,138 @@ func TestGenerateMetadataFromCompose_ServiceName(t *testing.T) {
 				t.Errorf("Networking.Service = %q, want %q", metadata.Networking.Service, tt.wantService)
 			}
 		})
+	}
+}
+
+func TestGenerateMetadataFromCompose_Expose(t *testing.T) {
+	tests := []struct {
+		name     string
+		compose  string
+		wantPort int
+	}{
+		{
+			name: "expose sets container port",
+			compose: `services:
+  app:
+    image: myapp:latest
+    expose:
+      - "80"
+`,
+			wantPort: 80,
+		},
+		{
+			name: "ports takes precedence over expose",
+			compose: `services:
+  app:
+    image: myapp:latest
+    ports:
+      - "8080:3000"
+    expose:
+      - "80"
+`,
+			wantPort: 3000,
+		},
+		{
+			name: "expose picks primary service in multi-service",
+			compose: `services:
+  app:
+    image: myapp:latest
+    expose:
+      - "8080"
+  db:
+    image: postgres:15
+`,
+			wantPort: 8080,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "expose-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			composePath := filepath.Join(tmpDir, "docker-compose.yml")
+			if err := os.WriteFile(composePath, []byte(tt.compose), 0644); err != nil {
+				t.Fatalf("Failed to write compose file: %v", err)
+			}
+
+			d := NewDiscovery(tmpDir)
+			metadata := d.generateMetadataFromCompose(composePath, "test")
+			if metadata == nil {
+				t.Fatal("generateMetadataFromCompose returned nil")
+			}
+
+			if metadata.Networking.ContainerPort != tt.wantPort {
+				t.Errorf("ContainerPort = %d, want %d", metadata.Networking.ContainerPort, tt.wantPort)
+			}
+		})
+	}
+}
+
+func TestUpdateComposeFile_SyncsMetadata(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "sync-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	deployDir := filepath.Join(tmpDir, "myapp")
+	if err := os.MkdirAll(deployDir, 0755); err != nil {
+		t.Fatalf("Failed to create deploy dir: %v", err)
+	}
+
+	compose := `services:
+  app:
+    image: myapp:latest
+    expose:
+      - "3000"
+`
+	composePath := filepath.Join(deployDir, "docker-compose.yml")
+	if err := os.WriteFile(composePath, []byte(compose), 0644); err != nil {
+		t.Fatalf("Failed to write compose: %v", err)
+	}
+
+	d := NewDiscovery(tmpDir)
+	metadata := &models.ServiceMetadata{
+		Name: "myapp",
+		Networking: models.NetworkingConfig{
+			ContainerPort: 3000,
+			Expose:        true,
+		},
+	}
+	if err := d.SaveMetadata("myapp", metadata); err != nil {
+		t.Fatalf("Failed to save metadata: %v", err)
+	}
+
+	updatedCompose := `services:
+  app:
+    image: myapp:latest
+    expose:
+      - "8080"
+`
+	if err := d.UpdateComposeFile("myapp", updatedCompose); err != nil {
+		t.Fatalf("UpdateComposeFile failed: %v", err)
+	}
+
+	metadataPath := filepath.Join(deployDir, "service.yml")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("Failed to read service.yml: %v", err)
+	}
+
+	var updated models.ServiceMetadata
+	if err := yaml.Unmarshal(data, &updated); err != nil {
+		t.Fatalf("Failed to parse service.yml: %v", err)
+	}
+
+	if updated.Networking.ContainerPort != 8080 {
+		t.Errorf("ContainerPort = %d, want 8080", updated.Networking.ContainerPort)
+	}
+	if !updated.Networking.Expose {
+		t.Error("Expose should be preserved as true")
 	}
 }
 
