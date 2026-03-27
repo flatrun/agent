@@ -54,7 +54,7 @@ func TestDeleteCertificate_BlockedWhenInUse(t *testing.T) {
 	}
 
 	nginxMgr := nginx.NewManager(&cfg.Nginx, tmpDir, "")
-	sslMgr := ssl.NewManager(&cfg.Certbot, tmpDir)
+	sslMgr := ssl.NewManager(&cfg.Certbot, tmpDir, nil)
 
 	orchestrator := proxy.NewOrchestratorWithManagers(nginxMgr, sslMgr)
 

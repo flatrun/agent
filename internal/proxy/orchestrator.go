@@ -18,7 +18,7 @@ type Orchestrator struct {
 func NewOrchestrator(cfg *config.Config) *Orchestrator {
 	return &Orchestrator{
 		nginx: nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath),
-		ssl:   ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath),
+		ssl:   ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath, nil),
 	}
 }
 

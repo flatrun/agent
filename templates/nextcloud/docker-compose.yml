@@ -1,9 +1,11 @@
+name: ${NAME}
 services:
   app:
     image: nextcloud:latest
+    container_name: ${NAME}
     restart: unless-stopped
-    ports:
-      - "${PORT:-8080}:80"
+    expose:
+      - "80"
     volumes:
       - ./data:/var/www/html/data
       - ./config:/var/www/html/config
@@ -17,9 +19,11 @@ services:
       - NEXTCLOUD_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
       - NEXTCLOUD_TRUSTED_DOMAINS=${TRUSTED_DOMAINS:-localhost}
     networks:
-      - default
+      - proxy
       - database
 
 networks:
+  proxy:
+    external: true
   database:
     external: true

@@ -28,6 +28,7 @@ type composeFile struct {
 type composeService struct {
 	Image    string        `yaml:"image"`
 	Ports    []interface{} `yaml:"ports"`
+	Expose   []interface{} `yaml:"expose"`
 	Networks []string      `yaml:"networks"`
 	Volumes  []string      `yaml:"volumes"`
 }
@@ -191,6 +192,12 @@ func (d *Discovery) parseComposeServices(composePath string) ([]models.Service, 
 		}
 
 		for _, p := range svc.Ports {
+			portStr := d.parsePort(p)
+			if portStr != "" {
+				service.Ports = append(service.Ports, portStr)
+			}
+		}
+		for _, p := range svc.Expose {
 			portStr := d.parsePort(p)
 			if portStr != "" {
 				service.Ports = append(service.Ports, portStr)
@@ -538,7 +545,25 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 		_ = os.WriteFile(backup, data, 0644)
 	}
 
-	return os.WriteFile(composePath, []byte(content), 0644)
+	if err := os.WriteFile(composePath, []byte(content), 0644); err != nil {
+		return err
+	}
+
+	metadataPath := filepath.Join(dirPath, "service.yml")
+	if _, err := os.Stat(metadataPath); err == nil {
+		if newMeta := d.generateMetadataFromCompose(composePath, name); newMeta != nil {
+			existing, err := d.loadMetadata(metadataPath)
+			if err == nil {
+				existing.Networking.ContainerPort = newMeta.Networking.ContainerPort
+				if newMeta.Networking.Service != "" {
+					existing.Networking.Service = newMeta.Networking.Service
+				}
+				d.SaveMetadata(name, existing)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (d *Discovery) SaveMetadata(name string, metadata *models.ServiceMetadata) error {
@@ -602,6 +627,12 @@ func (d *Discovery) generateMetadataFromCompose(composePath, name string) *model
 					metadata.Networking.ContainerPort = port
 				}
 			}
+		} else if len(svc.Expose) > 0 {
+			if portStr := d.parsePort(svc.Expose[0]); portStr != "" {
+				if port := d.extractContainerPort(portStr); port > 0 {
+					metadata.Networking.ContainerPort = port
+				}
+			}
 		}
 	}
 
@@ -618,7 +649,7 @@ func (d *Discovery) pickPrimaryService(services map[string]composeService) (stri
 		}
 	}
 	for name, svc := range services {
-		if len(svc.Ports) > 0 {
+		if len(svc.Ports) > 0 || len(svc.Expose) > 0 {
 			return name, svc
 		}
 	}
