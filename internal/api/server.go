@@ -3310,7 +3310,8 @@ func (s *Server) listCertificates(c *gin.Context) {
 
 func (s *Server) requestCertificate(c *gin.Context) {
 	var req struct {
-		Domain string `json:"domain" binding:"required"`
+		Domain     string `json:"domain" binding:"required"`
+		Deployment string `json:"deployment"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -3328,10 +3329,51 @@ func (s *Server) requestCertificate(c *gin.Context) {
 		return
 	}
 
+	if result.Success && req.Deployment != "" {
+		s.enableSSLForDeployment(req.Deployment, req.Domain)
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Certificate requested",
 		"result":  result,
 	})
+}
+
+func (s *Server) enableSSLForDeployment(name, domain string) {
+	dep, err := s.manager.GetDeployment(name)
+	if err != nil {
+		log.Printf("warning: failed to get deployment %s for SSL enable: %v", name, err)
+		return
+	}
+	if dep.Metadata == nil {
+		return
+	}
+
+	updated := false
+	for i, d := range dep.Metadata.Domains {
+		if d.Domain == domain && d.SSL.AutoCert && !d.SSL.Enabled {
+			dep.Metadata.Domains[i].SSL.Enabled = true
+			updated = true
+		}
+	}
+	if !updated {
+		return
+	}
+
+	if err := s.manager.SaveMetadata(name, dep.Metadata); err != nil {
+		log.Printf("warning: failed to save metadata after SSL enable for %s: %v", name, err)
+	}
+	if err := s.proxyOrchestrator.NginxManager().UpdateVirtualHost(dep); err != nil {
+		log.Printf("warning: failed to update vhost after SSL enable for %s: %v", name, err)
+		return
+	}
+	if err := s.proxyOrchestrator.NginxManager().TestConfig(); err != nil {
+		log.Printf("warning: SSL config test failed for %s: %v", name, err)
+		return
+	}
+	if err := s.proxyOrchestrator.NginxManager().Reload(); err != nil {
+		log.Printf("warning: failed to reload nginx after SSL enable for %s: %v", name, err)
+	}
 }
 
 func (s *Server) renewCertificates(c *gin.Context) {
