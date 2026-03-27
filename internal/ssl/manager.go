@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,15 +16,26 @@ import (
 	"github.com/flatrun/agent/pkg/models"
 )
 
+type ServiceExecutor interface {
+	Execute(cfg *config.ServiceExecConfig, args []string) ([]byte, error)
+}
+
+type dockerServiceExecutor struct{}
+
+func (e *dockerServiceExecutor) Execute(cfg *config.ServiceExecConfig, args []string) ([]byte, error) {
+	return docker.ExecuteService(cfg, args)
+}
+
 type Manager struct {
 	config           *config.CertbotConfig
 	certsPath        string
 	webRoot          string
 	containerWebRoot string
+	executor         ServiceExecutor
 	mu               sync.RWMutex
 }
 
-func NewManager(cfg *config.CertbotConfig, deploymentsPath string) *Manager {
+func NewManager(cfg *config.CertbotConfig, deploymentsPath string, executor ServiceExecutor) *Manager {
 	certsPath := cfg.CertsPath
 	if certsPath == "" {
 		certsPath = filepath.Join(deploymentsPath, "nginx", "certs", "live")
@@ -39,11 +51,16 @@ func NewManager(cfg *config.CertbotConfig, deploymentsPath string) *Manager {
 		containerWebRoot = "/var/www/certbot"
 	}
 
+	if executor == nil {
+		executor = &dockerServiceExecutor{}
+	}
+
 	return &Manager{
 		config:           cfg,
 		certsPath:        certsPath,
 		webRoot:          webRoot,
 		containerWebRoot: containerWebRoot,
+		executor:         executor,
 	}
 }
 
@@ -81,7 +98,12 @@ func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) 
 	defer m.mu.Unlock()
 
 	if m.config.Email == "" {
-		return nil, fmt.Errorf("certbot email not configured")
+		log.Printf("warning: skipping SSL for %s — certbot email not configured (set it in Settings)", domain)
+		return &CertificateResult{
+			Domain:  domain,
+			Success: false,
+			Message: "certbot email not configured — configure it in Settings to enable SSL",
+		}, nil
 	}
 
 	if err := os.MkdirAll(m.webRoot, 0755); err != nil {
@@ -90,6 +112,7 @@ func (m *Manager) RequestCertificate(domain string) (*CertificateResult, error) 
 
 	certbotArgs := []string{
 		"certonly",
+		"--non-interactive",
 		"--webroot",
 		"--webroot-path", m.containerWebRoot,
 		"--email", m.config.Email,
@@ -135,14 +158,14 @@ func (m *Manager) getServiceExecConfig() *config.ServiceExecConfig {
 
 func (m *Manager) executeCertbot(args []string) ([]byte, error) {
 	cfg := m.getServiceExecConfig()
-	return docker.ExecuteService(cfg, args)
+	return m.executor.Execute(cfg, args)
 }
 
 func (m *Manager) RenewCertificates() (*RenewalResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	output, err := m.executeCertbot([]string{"renew"})
+	output, err := m.executeCertbot([]string{"renew", "--non-interactive"})
 	if err != nil {
 		return nil, fmt.Errorf("renewal failed: %s - %w", string(output), err)
 	}

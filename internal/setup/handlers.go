@@ -3,6 +3,7 @@ package setup
 import (
 	"net"
 	"net/http"
+	"net/mail"
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
@@ -94,9 +95,10 @@ func (h *Handlers) VerifyDNS(c *gin.Context) {
 
 func (h *Handlers) ConfigureSettings(c *gin.Context) {
 	var req struct {
-		Domain      string   `json:"domain"`
-		AutoSSL     *bool    `json:"auto_ssl"`
-		CORSOrigins []string `json:"cors_origins"`
+		Domain       string   `json:"domain"`
+		AutoSSL      *bool    `json:"auto_ssl"`
+		CertbotEmail string   `json:"certbot_email"`
+		CORSOrigins  []string `json:"cors_origins"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -110,6 +112,13 @@ func (h *Handlers) ConfigureSettings(c *gin.Context) {
 	}
 	if req.AutoSSL != nil {
 		cfg.Domain.AutoSSL = *req.AutoSSL
+	}
+	if req.CertbotEmail != "" {
+		if _, err := mail.ParseAddress(req.CertbotEmail); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid email format"})
+			return
+		}
+		cfg.Certbot.Email = req.CertbotEmail
 	}
 	if len(req.CORSOrigins) > 0 {
 		originMap := make(map[string]bool)
@@ -130,9 +139,10 @@ func (h *Handlers) ConfigureSettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "Settings configured",
-		"domain":   cfg.Domain.DefaultDomain,
-		"auto_ssl": cfg.Domain.AutoSSL,
+		"message":       "Settings configured",
+		"domain":        cfg.Domain.DefaultDomain,
+		"auto_ssl":      cfg.Domain.AutoSSL,
+		"certbot_email": cfg.Certbot.Email,
 	})
 }
 

@@ -4,11 +4,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 )
+
+type mockExecutor struct {
+	mu   sync.Mutex
+	calls []executorCall
+	err   error
+}
+
+type executorCall struct {
+	cfg  *config.ServiceExecConfig
+	args []string
+}
+
+func (e *mockExecutor) Execute(cfg *config.ServiceExecConfig, args []string) ([]byte, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.calls = append(e.calls, executorCall{cfg: cfg, args: args})
+	if e.err != nil {
+		return nil, e.err
+	}
+	return []byte("ok"), nil
+}
 
 func TestNewManager_WebrootPath(t *testing.T) {
 	tests := []struct {
@@ -43,7 +65,7 @@ func TestNewManager_WebrootPath(t *testing.T) {
 				WebrootPath: tt.webrootPath,
 			}
 
-			m := NewManager(cfg, tt.deploymentsPath)
+			m := NewManager(cfg, tt.deploymentsPath, nil)
 
 			if m.webRoot != tt.expectedWebroot {
 				t.Errorf("webRoot = %q, want %q", m.webRoot, tt.expectedWebroot)
@@ -56,7 +78,7 @@ func TestUpdateConfig_WebrootPath(t *testing.T) {
 	cfg := &config.CertbotConfig{
 		WebrootPath: "/initial/webroot",
 	}
-	m := NewManager(cfg, "/deployments")
+	m := NewManager(cfg, "/deployments", nil)
 
 	if m.webRoot != "/initial/webroot" {
 		t.Errorf("initial webRoot = %q, want %q", m.webRoot, "/initial/webroot")
@@ -106,7 +128,7 @@ func TestContainerWebrootPath(t *testing.T) {
 				ContainerWebrootPath: tt.containerWebrootPath,
 			}
 
-			m := NewManager(cfg, "/deployments")
+			m := NewManager(cfg, "/deployments", nil)
 
 			if m.containerWebRoot != tt.expectedContainerWebroot {
 				t.Errorf("containerWebRoot = %q, want %q", m.containerWebRoot, tt.expectedContainerWebroot)
@@ -125,7 +147,7 @@ func TestGetDomainsNeedingCertificates_AutoCertWithDisabledSSL(t *testing.T) {
 	cfg := &config.CertbotConfig{
 		CertsPath: tmpDir,
 	}
-	m := NewManager(cfg, tmpDir)
+	m := NewManager(cfg, tmpDir, nil)
 
 	domains := []models.DomainConfig{
 		{
@@ -157,7 +179,7 @@ func TestGetDomainsNeedingCertificates_SkipsWithoutAutoCert(t *testing.T) {
 	cfg := &config.CertbotConfig{
 		CertsPath: tmpDir,
 	}
-	m := NewManager(cfg, tmpDir)
+	m := NewManager(cfg, tmpDir, nil)
 
 	domains := []models.DomainConfig{
 		{
@@ -207,7 +229,7 @@ func TestGetServiceExecConfig_WebrootVolume(t *testing.T) {
 				ContainerWebrootPath: tt.containerWebrootPath,
 			}
 
-			m := NewManager(cfg, tt.deploymentsPath)
+			m := NewManager(cfg, tt.deploymentsPath, nil)
 			execCfg := m.getServiceExecConfig()
 
 			found := false
@@ -225,5 +247,88 @@ func TestGetServiceExecConfig_WebrootVolume(t *testing.T) {
 				t.Errorf("webroot volume mount not found, expected %q", tt.expectedVolume)
 			}
 		})
+	}
+}
+
+func TestRequestCertificate_PassesNonInteractive(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ssl-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mock := &mockExecutor{}
+	cfg := &config.CertbotConfig{Email: "test@example.com"}
+	m := NewManager(cfg, tmpDir, mock)
+
+	m.RequestCertificate("example.com")
+
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 executor call, got %d", len(mock.calls))
+	}
+
+	args := mock.calls[0].args
+	hasNonInteractive := false
+	for _, arg := range args {
+		if arg == "--non-interactive" {
+			hasNonInteractive = true
+			break
+		}
+	}
+	if !hasNonInteractive {
+		t.Errorf("certbot args missing --non-interactive, got %v", args)
+	}
+}
+
+func TestRenewCertificates_PassesNonInteractive(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ssl-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mock := &mockExecutor{}
+	cfg := &config.CertbotConfig{}
+	m := NewManager(cfg, tmpDir, mock)
+
+	m.RenewCertificates()
+
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 executor call, got %d", len(mock.calls))
+	}
+
+	args := mock.calls[0].args
+	hasNonInteractive := false
+	for _, arg := range args {
+		if arg == "--non-interactive" {
+			hasNonInteractive = true
+			break
+		}
+	}
+	if !hasNonInteractive {
+		t.Errorf("renew args missing --non-interactive, got %v", args)
+	}
+}
+
+func TestRequestCertificate_SkipsWhenEmailMissing(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ssl-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mock := &mockExecutor{}
+	cfg := &config.CertbotConfig{}
+	m := NewManager(cfg, tmpDir, mock)
+
+	result, err := m.RequestCertificate("example.com")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Success {
+		t.Error("expected Success=false when email is missing")
+	}
+	if len(mock.calls) != 0 {
+		t.Errorf("expected no executor calls when email is missing, got %d", len(mock.calls))
 	}
 }
