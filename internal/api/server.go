@@ -729,6 +729,15 @@ func (d *DatabaseConfigRequest) Validate() error {
 		if d.ExistingContainer == "" {
 			return fmt.Errorf("existing_container is required for mode 'existing'")
 		}
+		if d.DatabaseName == "" {
+			return fmt.Errorf("database_name is required for mode 'existing'")
+		}
+		if d.Username == "" {
+			return fmt.Errorf("username is required for mode 'existing'")
+		}
+		if d.Password == "" {
+			return fmt.Errorf("password is required for mode 'existing'")
+		}
 	case "external":
 		if d.ExternalHost == "" {
 			return fmt.Errorf("external_host is required for mode 'external'")
@@ -1140,12 +1149,27 @@ func (s *Server) createDatabasesForDeployment(deploymentName string, databases [
 		case "existing":
 			config.Container = dbReq.ExistingContainer
 			config.Host = dbReq.ExistingContainer
-			if dbReq.DatabaseName != "" {
-				config.DatabaseName = dbReq.DatabaseName
+			config.DatabaseName = dbReq.DatabaseName
+			config.Username = dbReq.Username
+
+			existDbPort := dbReq.ExternalPort
+			if existDbPort == 0 {
+				switch dbReq.Type {
+				case "mysql", "mariadb":
+					existDbPort = 3306
+				case "postgres":
+					existDbPort = 5432
+				case "mongodb":
+					existDbPort = 27017
+				case "redis":
+					existDbPort = 6379
+				default:
+					return nil, nil, fmt.Errorf("unknown database type %q for %q: port must be specified explicitly", dbReq.Type, alias)
+				}
 			}
-			if dbReq.Username != "" {
-				config.Username = dbReq.Username
-			}
+			config.Port = existDbPort
+
+			envVars = s.generateDatabaseEnvVars(envPrefix, dbReq.ExistingContainer, existDbPort, dbReq.DatabaseName, dbReq.Username, dbReq.Password, dbReq.Type, isFirst)
 
 		case "external":
 			config.Host = dbReq.ExternalHost
