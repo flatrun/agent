@@ -761,12 +761,13 @@ func (s *Server) createDeployment(c *gin.Context) {
 		UseSharedDatabase         bool                    `json:"use_shared_database"`
 		ExistingDatabaseContainer string                  `json:"existing_database_container,omitempty"`
 		Databases                 []DatabaseConfigRequest `json:"databases,omitempty"`
-		RegistryCredential        *struct {
-			CredentialID   string `json:"credential_id,omitempty"`
-			Username       string `json:"username,omitempty"`
-			Password       string `json:"password,omitempty"`
-			SaveCredential bool   `json:"save_credential,omitempty"`
-			CredentialName string `json:"credential_name,omitempty"`
+		RegistryCredential *struct {
+			CredentialID     string `json:"credential_id,omitempty"`
+			Username         string `json:"username,omitempty"`
+			Password         string `json:"password,omitempty"`
+			SaveCredential   bool   `json:"save_credential,omitempty"`
+			CredentialName   string `json:"credential_name,omitempty"`
+			RegistryTypeSlug string `json:"registry_type_slug,omitempty"`
 		} `json:"registry_credential,omitempty"`
 	}
 
@@ -919,7 +920,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 	var registryLoginError string
 	var credentialID string
 	if req.RegistryCredential != nil {
-		var username, password string
+		var username, password, loginRegistry string
 
 		if req.RegistryCredential.CredentialID != "" {
 			credentialID = req.RegistryCredential.CredentialID
@@ -930,15 +931,28 @@ func (s *Server) createDeployment(c *gin.Context) {
 			} else {
 				username = cred.Username
 				password = cred.Password
+				loginRegistry = s.credentialsManager.GetLoginRegistry(cred)
 			}
 		} else if req.RegistryCredential.Username != "" && req.RegistryCredential.Password != "" {
 			username = req.RegistryCredential.Username
 			password = req.RegistryCredential.Password
 
+			registrySlug := req.RegistryCredential.RegistryTypeSlug
+			if registrySlug == "" {
+				registrySlug = "docker-hub"
+			}
+
+			if rt, err := s.credentialsManager.GetRegistryType(registrySlug); err == nil && len(rt.URLPatterns) > 0 {
+				reg := rt.URLPatterns[0]
+				if reg != "docker.io" {
+					loginRegistry = reg
+				}
+			}
+
 			if req.RegistryCredential.SaveCredential && req.RegistryCredential.CredentialName != "" {
 				newCred, err := s.credentialsManager.CreateCredential(
 					req.RegistryCredential.CredentialName,
-					"docker-hub",
+					registrySlug,
 					username,
 					password,
 					"",
@@ -953,7 +967,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 
 		if username != "" && password != "" && registryLoginError == "" {
-			if err := credentials.DockerLogin("", username, password); err != nil {
+			if err := credentials.DockerLogin(loginRegistry, username, password); err != nil {
 				registryLoginError = err.Error()
 				log.Printf("Warning: registry login failed: %v", err)
 			}
@@ -1682,7 +1696,8 @@ func (s *Server) pullDeploymentImage(c *gin.Context) {
 		if err != nil {
 			log.Printf("Warning: failed to load credential %s for pull: %v", deployment.Metadata.CredentialID, err)
 		} else {
-			if err := credentials.DockerLogin("", cred.Username, cred.Password); err != nil {
+			loginRegistry := s.credentialsManager.GetLoginRegistry(cred)
+			if err := credentials.DockerLogin(loginRegistry, cred.Username, cred.Password); err != nil {
 				log.Printf("Warning: registry login failed for pull: %v", err)
 			}
 		}

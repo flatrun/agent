@@ -468,6 +468,21 @@ func (m *Manager) TestCredential(id string) error {
 	return testDockerLogin(rt, cred)
 }
 
+func (m *Manager) GetLoginRegistry(cred *models.RegistryCredential) string {
+	if cred == nil {
+		return ""
+	}
+	rt, err := m.GetRegistryType(cred.RegistryTypeSlug)
+	if err != nil || len(rt.URLPatterns) == 0 {
+		return ""
+	}
+	registry := rt.URLPatterns[0]
+	if registry == "docker.io" {
+		return ""
+	}
+	return registry
+}
+
 func extractRegistry(imageName string) string {
 	parts := strings.Split(imageName, "/")
 	if len(parts) == 1 {
