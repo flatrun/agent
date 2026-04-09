@@ -68,14 +68,17 @@ type NginxConfig struct {
 }
 
 type CertbotConfig struct {
-	Enabled              bool   `yaml:"enabled" json:"enabled"`
-	Image                string `yaml:"image" json:"image"`
-	Email                string `yaml:"email" json:"email"`
-	Staging              bool   `yaml:"staging" json:"staging"`
-	CertsPath            string `yaml:"certs_path" json:"certs_path"`
-	WebrootPath          string `yaml:"webroot_path" json:"webroot_path"`
-	ContainerWebrootPath string `yaml:"container_webroot_path" json:"container_webroot_path"`
-	DNSProvider          string `yaml:"dns_provider" json:"dns_provider"`
+	Enabled              bool          `yaml:"enabled" json:"enabled"`
+	Image                string        `yaml:"image" json:"image"`
+	Email                string        `yaml:"email" json:"email"`
+	Staging              bool          `yaml:"staging" json:"staging"`
+	CertsPath            string        `yaml:"certs_path" json:"certs_path"`
+	WebrootPath          string        `yaml:"webroot_path" json:"webroot_path"`
+	ContainerWebrootPath string        `yaml:"container_webroot_path" json:"container_webroot_path"`
+	DNSProvider          string        `yaml:"dns_provider" json:"dns_provider"`
+	AutoRenewalEnabled   bool          `yaml:"auto_renewal_enabled" json:"auto_renewal_enabled"`
+	RenewalThresholdDays int           `yaml:"renewal_threshold_days" json:"renewal_threshold_days"`
+	RenewalCheckInterval time.Duration `yaml:"renewal_check_interval" json:"renewal_check_interval"`
 }
 
 type ServiceExecConfig struct {
@@ -284,6 +287,12 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Certbot.Image == "" {
 		cfg.Certbot.Image = "certbot/certbot"
+	}
+	if cfg.Certbot.RenewalThresholdDays == 0 {
+		cfg.Certbot.RenewalThresholdDays = 30
+	}
+	if cfg.Certbot.RenewalCheckInterval == 0 {
+		cfg.Certbot.RenewalCheckInterval = 12 * time.Hour
 	}
 	// Security defaults
 	if cfg.Security.ScanInterval == 0 {

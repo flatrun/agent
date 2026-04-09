@@ -22,6 +22,8 @@ type SSLManager interface {
 	RequestCertificate(domain string) (*ssl.CertificateResult, error)
 	GetCertificate(domain string) (*models.Certificate, error)
 	RenewCertificates() (*ssl.RenewalResult, error)
+	RenewCertificate(domain string) (*ssl.RenewalResult, error)
 	ListCertificates() ([]models.Certificate, error)
 	GetExpiringCertificates(days int) ([]models.Certificate, error)
+	SetAutoRenew(domain string, enabled bool) error
 }
