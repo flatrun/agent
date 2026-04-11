@@ -39,10 +39,10 @@ deps:
 	go mod tidy
 
 build: deps
-	go build $(LDFLAGS) -o $(BINARY_NAME) cmd/agent/main.go
+	go build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/agent
 
 run: deps
-	go run cmd/agent/main.go --config config.example.yml
+	go run ./cmd/agent --config config.example.yml
 
 test: test-unit
 
