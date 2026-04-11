@@ -117,12 +117,20 @@ func (m *mockSSLManager) RenewCertificates() (*ssl.RenewalResult, error) {
 	return &ssl.RenewalResult{Success: true}, nil
 }
 
+func (m *mockSSLManager) RenewCertificate(domain string) (*ssl.RenewalResult, error) {
+	return &ssl.RenewalResult{Success: true, RenewedDomains: []string{domain}}, nil
+}
+
 func (m *mockSSLManager) ListCertificates() ([]models.Certificate, error) {
 	return nil, nil
 }
 
 func (m *mockSSLManager) GetExpiringCertificates(days int) ([]models.Certificate, error) {
 	return nil, nil
+}
+
+func (m *mockSSLManager) SetAutoRenew(domain string, enabled bool) error {
+	return nil
 }
 
 type testableOrchestrator struct {

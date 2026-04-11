@@ -35,6 +35,7 @@ import (
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
+	"github.com/flatrun/agent/internal/ssl"
 	"github.com/flatrun/agent/internal/setup"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/internal/traffic"
@@ -78,6 +79,7 @@ type Server struct {
 	clusterManager     *cluster.Manager
 	setupManager       *setup.Manager
 	setupHandlers      *setup.Handlers
+	certRenewer        *ssl.Renewer
 
 	statsMu    sync.RWMutex
 	statsCache gin.H
@@ -339,7 +341,11 @@ func (s *Server) setupRoutes() {
 			protected.GET("/certificates", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.listCertificates)
 			protected.POST("/certificates", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.requestCertificate)
 			protected.POST("/certificates/renew", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.renewCertificates)
+			protected.GET("/certificates/:domain", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.getCertificate)
+			protected.POST("/certificates/:domain/renew", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.renewCertificate)
+			protected.PATCH("/certificates/:domain/auto-renew", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.setCertificateAutoRenew)
 			protected.DELETE("/certificates/:domain", s.authMiddleware.RequirePermission(auth.PermCertificatesDelete), s.deleteCertificate)
+			protected.POST("/deployments/:name/certificates/renew", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.renewDeploymentCertificates)
 
 			// Proxy endpoints
 			protected.GET("/proxy/status/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.getProxyStatus)
@@ -625,11 +631,29 @@ func (s *Server) Start() error {
 		Handler: s.router,
 	}
 
+	if s.config.Certbot.Enabled && s.config.Certbot.AutoRenewalEnabled {
+		s.certRenewer = ssl.NewRenewer(
+			s.proxyOrchestrator.SSLManager(),
+			s.config.Certbot.RenewalThresholdDays,
+			s.config.Certbot.RenewalCheckInterval,
+			func(domain string) {
+				if err := s.proxyOrchestrator.NginxManager().Reload(); err != nil {
+					log.Printf("auto-renew: failed to reload nginx after %s: %v", domain, err)
+				}
+			},
+		)
+		s.certRenewer.Start(context.Background())
+		log.Printf("auto-renew: enabled (threshold=%d days, interval=%s)", s.config.Certbot.RenewalThresholdDays, s.config.Certbot.RenewalCheckInterval)
+	}
+
 	return s.server.ListenAndServe()
 }
 
 
 func (s *Server) Stop() error {
+	if s.certRenewer != nil {
+		s.certRenewer.Stop()
+	}
 	if s.clusterManager != nil {
 		s.clusterManager.Stop()
 	}
@@ -3327,9 +3351,50 @@ func (s *Server) listCertificates(c *gin.Context) {
 		return
 	}
 
+	s.annotateCertificatesWithDeployment(certificates)
+
 	c.JSON(http.StatusOK, gin.H{
 		"certificates": certificates,
 	})
+}
+
+func (s *Server) annotateCertificatesWithDeployment(certs []models.Certificate) {
+	if len(certs) == 0 {
+		return
+	}
+
+	deployments, err := s.manager.ListDeployments()
+	if err != nil {
+		log.Printf("warning: failed to list deployments for cert annotation: %v", err)
+		return
+	}
+
+	domainToDeployment := make(map[string]string)
+	for _, d := range deployments {
+		if d.Metadata == nil {
+			continue
+		}
+		for _, dom := range d.Metadata.Domains {
+			if dom.Domain != "" {
+				if _, exists := domainToDeployment[dom.Domain]; !exists {
+					domainToDeployment[dom.Domain] = d.Name
+				}
+			}
+			for _, alias := range dom.Aliases {
+				if alias != "" {
+					if _, exists := domainToDeployment[alias]; !exists {
+						domainToDeployment[alias] = d.Name
+					}
+				}
+			}
+		}
+	}
+
+	for i := range certs {
+		if name, ok := domainToDeployment[certs[i].Domain]; ok {
+			certs[i].DeploymentID = name
+		}
+	}
 }
 
 func (s *Server) requestCertificate(c *gin.Context) {
@@ -3412,6 +3477,104 @@ func (s *Server) renewCertificates(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Renewal completed",
 		"result":  result,
+	})
+}
+
+func (s *Server) getCertificate(c *gin.Context) {
+	domain := c.Param("domain")
+	cert, err := s.proxyOrchestrator.SSLManager().GetCertificate(domain)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	annotated := []models.Certificate{*cert}
+	s.annotateCertificatesWithDeployment(annotated)
+	c.JSON(http.StatusOK, gin.H{"certificate": annotated[0]})
+}
+
+func (s *Server) renewCertificate(c *gin.Context) {
+	domain := c.Param("domain")
+
+	result, err := s.proxyOrchestrator.RenewCertificate(domain)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Certificate renewed",
+		"domain":  domain,
+		"result":  result,
+	})
+}
+
+func (s *Server) setCertificateAutoRenew(c *gin.Context) {
+	domain := c.Param("domain")
+
+	var req struct {
+		AutoRenew bool `json:"auto_renew"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.proxyOrchestrator.SSLManager().SetAutoRenew(domain, req.AutoRenew); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"domain":     domain,
+		"auto_renew": req.AutoRenew,
+	})
+}
+
+func (s *Server) renewDeploymentCertificates(c *gin.Context) {
+	name := c.Param("name")
+
+	dep, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if dep.Metadata == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "no domains configured for deployment",
+			"result":  nil,
+		})
+		return
+	}
+
+	seen := make(map[string]bool)
+	var domains []string
+	for _, d := range dep.Metadata.Domains {
+		if d.Domain != "" && !seen[d.Domain] {
+			domains = append(domains, d.Domain)
+			seen[d.Domain] = true
+		}
+		for _, alias := range d.Aliases {
+			if alias != "" && !seen[alias] {
+				domains = append(domains, alias)
+				seen[alias] = true
+			}
+		}
+	}
+
+	if len(domains) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "no domains configured for deployment",
+			"result":  nil,
+		})
+		return
+	}
+
+	result := s.proxyOrchestrator.RenewCertificatesForDomains(domains)
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Deployment certificate renewal completed",
+		"deployment": name,
+		"result":     result,
 	})
 }
 

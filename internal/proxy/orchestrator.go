@@ -219,6 +219,56 @@ func (o *Orchestrator) RenewCertificates() (*ssl.RenewalResult, error) {
 	return result, nil
 }
 
+func (o *Orchestrator) RenewCertificate(domain string) (*ssl.RenewalResult, error) {
+	if err := o.ssl.ValidateDomain(domain); err != nil {
+		return nil, err
+	}
+
+	result, err := o.ssl.RenewCertificate(domain)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := o.nginx.Reload(); err != nil {
+		log.Printf("warning: failed to reload nginx after renewal of %s: %v", domain, err)
+	}
+
+	return result, nil
+}
+
+func (o *Orchestrator) RenewCertificatesForDomains(domains []string) *ssl.MultiCertificateResult {
+	result := &ssl.MultiCertificateResult{
+		Results: make([]*ssl.CertificateResult, 0, len(domains)),
+		Success: true,
+	}
+
+	for _, domain := range domains {
+		if !o.ssl.CertificateExists(domain) {
+			continue
+		}
+		if _, err := o.ssl.RenewCertificate(domain); err != nil {
+			result.Results = append(result.Results, &ssl.CertificateResult{
+				Domain:  domain,
+				Success: false,
+				Message: err.Error(),
+			})
+			result.Success = false
+			continue
+		}
+		result.Results = append(result.Results, &ssl.CertificateResult{
+			Domain:  domain,
+			Success: true,
+			Message: "renewed",
+		})
+	}
+
+	if err := o.nginx.Reload(); err != nil {
+		log.Printf("warning: failed to reload nginx after deployment renewal: %v", err)
+	}
+
+	return result
+}
+
 func (o *Orchestrator) GetDeploymentProxyStatus(deployment *models.Deployment) *ProxyStatus {
 	status := &ProxyStatus{
 		DeploymentName: deployment.Name,

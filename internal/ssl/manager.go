@@ -176,6 +176,65 @@ func (m *Manager) RenewCertificates() (*RenewalResult, error) {
 	}, nil
 }
 
+func (m *Manager) RenewCertificate(domain string) (*RenewalResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.certificateExistsLocked(domain) {
+		return nil, fmt.Errorf("certificate for domain %q not found", domain)
+	}
+
+	output, err := m.executeCertbot([]string{
+		"renew",
+		"--non-interactive",
+		"--cert-name", domain,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("renewal failed for %s: %s - %w", domain, string(output), err)
+	}
+
+	return &RenewalResult{
+		Success:        true,
+		Message:        string(output),
+		RenewedDomains: []string{domain},
+	}, nil
+}
+
+func (m *Manager) certificateExistsLocked(domain string) bool {
+	certPath := filepath.Join(m.certsPath, domain, "cert.pem")
+	_, err := os.Stat(certPath)
+	return err == nil
+}
+
+func (m *Manager) SetAutoRenew(domain string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.certificateExistsLocked(domain) {
+		return fmt.Errorf("certificate for domain %q not found", domain)
+	}
+
+	marker := filepath.Join(m.certsPath, domain, ".flatrun-auto-renew-disabled")
+	if enabled {
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to enable auto-renew: %w", err)
+		}
+		return nil
+	}
+
+	f, err := os.Create(marker)
+	if err != nil {
+		return fmt.Errorf("failed to disable auto-renew: %w", err)
+	}
+	return f.Close()
+}
+
+func (m *Manager) isAutoRenewEnabled(domain string) bool {
+	marker := filepath.Join(m.certsPath, domain, ".flatrun-auto-renew-disabled")
+	_, err := os.Stat(marker)
+	return os.IsNotExist(err)
+}
+
 func (m *Manager) RevokeCertificate(domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -302,7 +361,7 @@ func (m *Manager) parseCertificate(certPath, domain string) (*models.Certificate
 		DaysLeft:  daysLeft,
 		Status:    status,
 		Path:      certPath,
-		AutoRenew: true,
+		AutoRenew: m.isAutoRenewEnabled(domain),
 	}, nil
 }
 
