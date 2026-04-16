@@ -1,8 +1,12 @@
 package credentials
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/flatrun/agent/pkg/models"
@@ -33,54 +37,53 @@ func testDockerLogin(rt *models.RegistryType, cred *models.RegistryCredential) e
 	return nil
 }
 
-func DockerLogin(registry, username, password string) error {
-	args := []string{"login", "--username", username, "--password-stdin"}
-
-	if registry != "" && registry != "docker.io" {
-		args = append(args, registry)
-	}
-
-	cmd := exec.Command("docker", args...)
-	cmd.Stdin = strings.NewReader(password)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker login failed: %s", strings.TrimSpace(string(output)))
-	}
-
-	return nil
-}
-
-func DockerLogout(registry string) error {
-	args := []string{"logout"}
-
-	if registry != "" && registry != "docker.io" {
-		args = append(args, registry)
-	}
-
-	cmd := exec.Command("docker", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker logout failed: %s", strings.TrimSpace(string(output)))
-	}
-
-	return nil
-}
-
 func PullImageWithAuth(imageName string, cred *models.RegistryCredential) error {
-	registry := extractRegistry(imageName)
+	cmd := exec.Command("docker", "pull", imageName)
 
 	if cred != nil {
-		if err := DockerLogin(registry, cred.Username, cred.Password); err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
+		dir, err := writeEphemeralAuth(extractRegistry(imageName), cred)
+		if err != nil {
+			return fmt.Errorf("authentication setup failed: %w", err)
 		}
+		defer os.RemoveAll(dir)
+		cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+dir)
 	}
 
-	cmd := exec.Command("docker", "pull", imageName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %s", strings.TrimSpace(string(output)))
 	}
 
 	return nil
+}
+
+func writeEphemeralAuth(registry string, cred *models.RegistryCredential) (string, error) {
+	host := cred.RegistryURL
+	if host == "" {
+		host = registry
+	}
+	if host == "" {
+		host = "docker.io"
+	}
+	key := host
+	if key == "docker.io" || key == "index.docker.io" || key == "registry-1.docker.io" {
+		key = dockerHubAuthKey
+	}
+	auths := map[string]dockerAuthEntry{
+		key: {Auth: base64.StdEncoding.EncodeToString([]byte(cred.Username + ":" + cred.Password))},
+	}
+	dir, err := os.MkdirTemp("", "flatrun-docker-auth-*")
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(dockerAuthFile{Auths: auths})
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0600); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
 }

@@ -295,7 +295,7 @@ func (m *Manager) GetCredential(id string) (*models.RegistryCredential, error) {
 	return cred, nil
 }
 
-func (m *Manager) CreateCredential(name, registryTypeSlug, username, password, email string, isDefault bool) (*models.RegistryCredential, error) {
+func (m *Manager) CreateCredential(name, registryTypeSlug, registryURL, username, password, email string, isDefault bool) (*models.RegistryCredential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -324,6 +324,7 @@ func (m *Manager) CreateCredential(name, registryTypeSlug, username, password, e
 		ID:               id,
 		Name:             name,
 		RegistryTypeSlug: registryTypeSlug,
+		RegistryURL:      registryURL,
 		Username:         username,
 		Password:         password,
 		Email:            email,
@@ -342,7 +343,43 @@ func (m *Manager) CreateCredential(name, registryTypeSlug, username, password, e
 	return cred, nil
 }
 
-func (m *Manager) UpdateCredential(id, name, username, password, email string, isDefault *bool) (*models.RegistryCredential, error) {
+func (m *Manager) RegistryForCredential(credentialID string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cred, ok := m.credentials[credentialID]
+	if !ok {
+		return ""
+	}
+
+	if cred.RegistryURL != "" {
+		return cred.RegistryURL
+	}
+
+	rt, ok := m.registryTypes[cred.RegistryTypeSlug]
+	if !ok || len(rt.URLPatterns) == 0 {
+		return ""
+	}
+
+	primary := rt.URLPatterns[0]
+	if !isFullHostname(primary) {
+		return ""
+	}
+	return primary
+}
+
+func isFullHostname(s string) bool {
+	if s == "" {
+		return false
+	}
+	if !strings.Contains(s, ".") && !strings.Contains(s, ":") && s != "localhost" {
+		return false
+	}
+	first := s[0]
+	return (first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || (first >= '0' && first <= '9')
+}
+
+func (m *Manager) UpdateCredential(id, name, registryURL, username, password, email string, isDefault *bool) (*models.RegistryCredential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -360,6 +397,9 @@ func (m *Manager) UpdateCredential(id, name, username, password, email string, i
 		cred.Name = name
 	}
 
+	if registryURL != "" {
+		cred.RegistryURL = registryURL
+	}
 	if username != "" {
 		cred.Username = username
 	}
@@ -400,6 +440,19 @@ func (m *Manager) DeleteCredential(id string) error {
 
 	delete(m.credentials, id)
 	return m.saveCredentials()
+}
+
+func (m *Manager) RegistryTypeForImage(imageName string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	registry := extractRegistry(imageName)
+	for _, rt := range m.registryTypes {
+		if matchesURLPatterns(rt.URLPatterns, registry) {
+			return rt.Slug
+		}
+	}
+	return ""
 }
 
 func (m *Manager) FindCredentialForImage(imageName string) *models.RegistryCredential {
