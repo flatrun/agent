@@ -987,7 +987,10 @@ func (s *Server) createDeployment(c *gin.Context) {
 
 	}
 
-	if req.Metadata != nil && (credentialID != "" || len(req.ServiceCredentials) > 0) {
+	if credentialID != "" || len(req.ServiceCredentials) > 0 {
+		if req.Metadata == nil {
+			req.Metadata = &models.ServiceMetadata{Name: req.Name}
+		}
 		if credentialID != "" {
 			req.Metadata.CredentialID = credentialID
 		}
