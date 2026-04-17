@@ -19,46 +19,57 @@ func NewComposeExecutor(basePath string) *ComposeExecutor {
 	return &ComposeExecutor{basePath: basePath}
 }
 
-func (c *ComposeExecutor) Up(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
+type RunOption func(*runOpts)
+
+type runOpts struct {
+	extraEnv []string
 }
 
-func (c *ComposeExecutor) Down(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "down", "--remove-orphans")
+func WithDockerConfig(dir string) RunOption {
+	return func(o *runOpts) {
+		if dir != "" {
+			o.extraEnv = append(o.extraEnv, "DOCKER_CONFIG="+dir)
+		}
+	}
 }
 
-func (c *ComposeExecutor) Start(deploymentPath string) (string, error) {
-	// Try start first for existing containers
-	output, err := c.runCompose(deploymentPath, "start")
+func (c *ComposeExecutor) Up(deploymentPath string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "up", "-d", "--remove-orphans")
+}
+
+func (c *ComposeExecutor) Down(deploymentPath string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "down", "--remove-orphans")
+}
+
+func (c *ComposeExecutor) Start(deploymentPath string, opts ...RunOption) (string, error) {
+	output, err := c.runCompose(deploymentPath, opts, "start")
 	if err != nil {
-		// Fall back to up if containers don't exist
-		return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
+		return c.runCompose(deploymentPath, opts, "up", "-d", "--remove-orphans")
 	}
 	return output, nil
 }
 
-func (c *ComposeExecutor) Stop(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "stop")
+func (c *ComposeExecutor) Stop(deploymentPath string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "stop")
 }
 
-func (c *ComposeExecutor) Restart(deploymentPath string) (string, error) {
-	// Use down to properly remove containers before recreating
-	_, _ = c.runCompose(deploymentPath, "down", "--remove-orphans")
-	return c.runCompose(deploymentPath, "up", "-d", "--remove-orphans")
+func (c *ComposeExecutor) Restart(deploymentPath string, opts ...RunOption) (string, error) {
+	_, _ = c.runCompose(deploymentPath, opts, "down", "--remove-orphans")
+	return c.runCompose(deploymentPath, opts, "up", "-d", "--remove-orphans")
 }
 
-func (c *ComposeExecutor) Rebuild(deploymentPath string) (string, error) {
-	_, _ = c.runCompose(deploymentPath, "down", "--remove-orphans")
-	return c.runCompose(deploymentPath, "up", "-d", "--build", "--remove-orphans")
+func (c *ComposeExecutor) Rebuild(deploymentPath string, opts ...RunOption) (string, error) {
+	_, _ = c.runCompose(deploymentPath, opts, "down", "--remove-orphans")
+	return c.runCompose(deploymentPath, opts, "up", "-d", "--build", "--remove-orphans")
 }
 
 func (c *ComposeExecutor) Logs(deploymentPath string, tail int) (string, error) {
 	tailStr := fmt.Sprintf("%d", tail)
-	return c.runCompose(deploymentPath, "logs", "--tail", tailStr)
+	return c.runCompose(deploymentPath, nil, "logs", "--tail", tailStr)
 }
 
 func (c *ComposeExecutor) PS(deploymentPath string) (string, error) {
-	return c.runCompose(deploymentPath, "ps", "--format", "json")
+	return c.runCompose(deploymentPath, nil, "ps", "--format", "json")
 }
 
 type ImageInfo struct {
@@ -68,7 +79,7 @@ type ImageInfo struct {
 	IsBuild  bool   `json:"is_build"`
 }
 
-func (c *ComposeExecutor) Pull(deploymentPath string, onlyLatest bool) (string, error) {
+func (c *ComposeExecutor) Pull(deploymentPath string, onlyLatest bool, opts ...RunOption) (string, error) {
 	if onlyLatest {
 		services, err := c.getLatestTaggedServices(deploymentPath)
 		if err != nil || len(services) == 0 {
@@ -76,9 +87,9 @@ func (c *ComposeExecutor) Pull(deploymentPath string, onlyLatest bool) (string, 
 		}
 		args := []string{"pull", "--ignore-buildable", "--policy", "always"}
 		args = append(args, services...)
-		return c.runCompose(deploymentPath, args...)
+		return c.runCompose(deploymentPath, opts, args...)
 	}
-	return c.runCompose(deploymentPath, "pull", "--ignore-buildable", "--policy", "always")
+	return c.runCompose(deploymentPath, opts, "pull", "--ignore-buildable", "--policy", "always")
 }
 
 func (c *ComposeExecutor) GetImageInfo(deploymentPath string) ([]ImageInfo, error) {
@@ -233,7 +244,7 @@ func (c *ComposeExecutor) detectExistingProject(dirName string) string {
 	return ""
 }
 
-func (c *ComposeExecutor) runCompose(deploymentPath string, args ...string) (string, error) {
+func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, args ...string) (string, error) {
 	composeCmd := c.findComposeCommand()
 	if composeCmd == "" {
 		return "", fmt.Errorf("docker compose command not found")
@@ -266,6 +277,14 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, args ...string) (str
 	}
 
 	cmd.Dir = deploymentPath
+
+	var ro runOpts
+	for _, opt := range opts {
+		opt(&ro)
+	}
+	if len(ro.extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), ro.extraEnv...)
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -361,4 +380,3 @@ func (c *ComposeExecutor) ExecCommand(containerID string, command string) (strin
 
 	return "", fmt.Errorf("no compatible shell found in container")
 }
-

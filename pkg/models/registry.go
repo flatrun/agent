@@ -35,6 +35,7 @@ type RegistryCredential struct {
 	ID               string    `json:"id" yaml:"id"`
 	Name             string    `json:"name" yaml:"name"`
 	RegistryTypeSlug string    `json:"registry_type_slug" yaml:"registry_type_slug"`
+	RegistryURL      string    `json:"registry_url,omitempty" yaml:"registry_url,omitempty"`
 	Username         string    `json:"username" yaml:"username"`
 	Password         string    `json:"-" yaml:"password"`
 	Email            string    `json:"email,omitempty" yaml:"email,omitempty"`

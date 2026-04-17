@@ -22,9 +22,9 @@ import (
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
-	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/internal/certs"
+	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/database"
 	"github.com/flatrun/agent/internal/dns"
@@ -35,8 +35,8 @@ import (
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
-	"github.com/flatrun/agent/internal/ssl"
 	"github.com/flatrun/agent/internal/setup"
+	"github.com/flatrun/agent/internal/ssl"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/internal/traffic"
 	"github.com/flatrun/agent/pkg/config"
@@ -649,7 +649,6 @@ func (s *Server) Start() error {
 	return s.server.ListenAndServe()
 }
 
-
 func (s *Server) Stop() error {
 	if s.certRenewer != nil {
 		s.certRenewer.Stop()
@@ -786,12 +785,15 @@ func (s *Server) createDeployment(c *gin.Context) {
 		ExistingDatabaseContainer string                  `json:"existing_database_container,omitempty"`
 		Databases                 []DatabaseConfigRequest `json:"databases,omitempty"`
 		RegistryCredential        *struct {
-			CredentialID   string `json:"credential_id,omitempty"`
-			Username       string `json:"username,omitempty"`
-			Password       string `json:"password,omitempty"`
-			SaveCredential bool   `json:"save_credential,omitempty"`
-			CredentialName string `json:"credential_name,omitempty"`
+			CredentialID     string `json:"credential_id,omitempty"`
+			Username         string `json:"username,omitempty"`
+			Password         string `json:"password,omitempty"`
+			SaveCredential   bool   `json:"save_credential,omitempty"`
+			CredentialName   string `json:"credential_name,omitempty"`
+			RegistryTypeSlug string `json:"registry_type_slug,omitempty"`
+			RegistryURL      string `json:"registry_url,omitempty"`
 		} `json:"registry_credential,omitempty"`
+		ServiceCredentials map[string]string `json:"service_credentials,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -942,9 +944,8 @@ func (s *Server) createDeployment(c *gin.Context) {
 
 	var registryLoginError string
 	var credentialID string
+	var username, password string
 	if req.RegistryCredential != nil {
-		var username, password string
-
 		if req.RegistryCredential.CredentialID != "" {
 			credentialID = req.RegistryCredential.CredentialID
 			cred, err := s.credentialsManager.GetCredential(req.RegistryCredential.CredentialID)
@@ -960,9 +961,17 @@ func (s *Server) createDeployment(c *gin.Context) {
 			password = req.RegistryCredential.Password
 
 			if req.RegistryCredential.SaveCredential && req.RegistryCredential.CredentialName != "" {
+				registryTypeSlug := req.RegistryCredential.RegistryTypeSlug
+				if registryTypeSlug == "" {
+					registryTypeSlug = s.inferRegistryTypeFromCompose(req.ComposeContent)
+				}
+				if registryTypeSlug == "" {
+					registryTypeSlug = "docker-hub"
+				}
 				newCred, err := s.credentialsManager.CreateCredential(
 					req.RegistryCredential.CredentialName,
-					"docker-hub",
+					registryTypeSlug,
+					req.RegistryCredential.RegistryURL,
 					username,
 					password,
 					"",
@@ -976,25 +985,51 @@ func (s *Server) createDeployment(c *gin.Context) {
 			}
 		}
 
-		if username != "" && password != "" && registryLoginError == "" {
-			if err := credentials.DockerLogin("", username, password); err != nil {
-				registryLoginError = err.Error()
-				log.Printf("Warning: registry login failed: %v", err)
-			}
-		}
 	}
 
-	if credentialID != "" && req.Metadata != nil {
-		req.Metadata.CredentialID = credentialID
+	if req.Metadata != nil && (credentialID != "" || len(req.ServiceCredentials) > 0) {
+		if credentialID != "" {
+			req.Metadata.CredentialID = credentialID
+		}
+		if len(req.ServiceCredentials) > 0 {
+			req.Metadata.ServiceCredentials = req.ServiceCredentials
+		}
 		if err := s.manager.SaveMetadata(req.Name, req.Metadata); err != nil {
-			log.Printf("Warning: failed to update metadata with credential ID: %v", err)
+			log.Printf("Warning: failed to update metadata: %v", err)
 		}
 	}
 
 	var startOutput string
 	var startError string
 	if req.AutoStart {
-		output, err := s.manager.StartDeployment(req.Name)
+		var credIDs []string
+		if credentialID != "" {
+			credIDs = append(credIDs, credentialID)
+		}
+		for _, id := range req.ServiceCredentials {
+			credIDs = append(credIDs, id)
+		}
+		var extras []credentials.AuthEntry
+		if credentialID == "" && username != "" && password != "" {
+			inlineRegistry := ""
+			if req.RegistryCredential != nil {
+				inlineRegistry = req.RegistryCredential.RegistryURL
+			}
+			if inlineRegistry == "" {
+				inlineRegistry = s.inferRegistryHostFromCompose(req.ComposeContent)
+			}
+			extras = append(extras, credentials.AuthEntry{
+				Registry: inlineRegistry,
+				Username: username,
+				Password: password,
+			})
+		}
+		authCfg, err := s.credentialsManager.BuildAuthConfig(credIDs, extras...)
+		if err != nil {
+			log.Printf("Warning: failed to build docker auth config: %v", err)
+		}
+		output, err := s.manager.StartDeployment(req.Name, docker.WithDockerConfig(authCfg.Dir()))
+		authCfg.Close()
 		startOutput = output
 		if err != nil {
 			startError = err.Error()
@@ -1612,7 +1647,10 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 func (s *Server) startDeployment(c *gin.Context) {
 	name := c.Param("name")
 
-	output, err := s.manager.StartDeployment(name)
+	auth, opts := s.deploymentAuthOptions(name)
+	defer auth.Close()
+
+	output, err := s.manager.StartDeployment(name, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  err.Error(),
@@ -1650,7 +1688,10 @@ func (s *Server) stopDeployment(c *gin.Context) {
 func (s *Server) restartDeployment(c *gin.Context) {
 	name := c.Param("name")
 
-	output, err := s.manager.RestartDeployment(name)
+	auth, opts := s.deploymentAuthOptions(name)
+	defer auth.Close()
+
+	output, err := s.manager.RestartDeployment(name, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  err.Error(),
@@ -1669,7 +1710,10 @@ func (s *Server) restartDeployment(c *gin.Context) {
 func (s *Server) rebuildDeployment(c *gin.Context) {
 	name := c.Param("name")
 
-	output, err := s.manager.RebuildDeployment(name)
+	auth, opts := s.deploymentAuthOptions(name)
+	defer auth.Close()
+
+	output, err := s.manager.RebuildDeployment(name, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  err.Error(),
@@ -1693,26 +1737,17 @@ func (s *Server) pullDeploymentImage(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 
-	deployment, err := s.manager.GetDeployment(name)
-	if err != nil {
+	if _, err := s.manager.GetDeployment(name); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": "Deployment not found: " + err.Error(),
 		})
 		return
 	}
 
-	if deployment.Metadata != nil && deployment.Metadata.CredentialID != "" {
-		cred, err := s.credentialsManager.GetCredential(deployment.Metadata.CredentialID)
-		if err != nil {
-			log.Printf("Warning: failed to load credential %s for pull: %v", deployment.Metadata.CredentialID, err)
-		} else {
-			if err := credentials.DockerLogin("", cred.Username, cred.Password); err != nil {
-				log.Printf("Warning: registry login failed for pull: %v", err)
-			}
-		}
-	}
+	auth, opts := s.deploymentAuthOptions(name)
+	defer auth.Close()
 
-	output, err := s.manager.PullDeployment(name, req.OnlyLatest)
+	output, err := s.manager.PullDeployment(name, req.OnlyLatest, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  err.Error(),
@@ -3001,6 +3036,43 @@ type composeService struct {
 type composeNetwork struct {
 	External bool   `yaml:"external"`
 	Name     string `yaml:"name"`
+}
+
+func (s *Server) inferRegistryTypeFromCompose(content string) string {
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return ""
+	}
+	for _, svc := range compose.Services {
+		if svc.Image == "" {
+			continue
+		}
+		if slug := s.credentialsManager.RegistryTypeForImage(svc.Image); slug != "" {
+			return slug
+		}
+	}
+	return ""
+}
+
+func (s *Server) inferRegistryHostFromCompose(content string) string {
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return ""
+	}
+	for _, svc := range compose.Services {
+		if svc.Image == "" {
+			continue
+		}
+		parts := strings.SplitN(svc.Image, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		host := parts[0]
+		if strings.Contains(host, ".") || strings.Contains(host, ":") || host == "localhost" {
+			return host
+		}
+	}
+	return ""
 }
 
 func (s *Server) validateComposeContent(content, _ string) error {
@@ -4612,7 +4684,6 @@ func toTitleCase(s string) string {
 	return strings.Join(words, " ")
 }
 
-
 func (s *Server) listDeploymentFiles(c *gin.Context) {
 	name := c.Param("name")
 	path := c.DefaultQuery("path", "/")
@@ -5454,6 +5525,7 @@ func (s *Server) createCredential(c *gin.Context) {
 	var req struct {
 		Name             string `json:"name" binding:"required"`
 		RegistryTypeSlug string `json:"registry_type_slug" binding:"required"`
+		RegistryURL      string `json:"registry_url"`
 		Username         string `json:"username" binding:"required"`
 		Password         string `json:"password" binding:"required"`
 		Email            string `json:"email"`
@@ -5467,7 +5539,7 @@ func (s *Server) createCredential(c *gin.Context) {
 		return
 	}
 
-	cred, err := s.credentialsManager.CreateCredential(req.Name, req.RegistryTypeSlug, req.Username, req.Password, req.Email, req.IsDefault)
+	cred, err := s.credentialsManager.CreateCredential(req.Name, req.RegistryTypeSlug, req.RegistryURL, req.Username, req.Password, req.Email, req.IsDefault)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -5490,11 +5562,12 @@ func (s *Server) updateCredential(c *gin.Context) {
 	id := c.Param("id")
 
 	var req struct {
-		Name      string `json:"name"`
-		Username  string `json:"username"`
-		Password  string `json:"password"`
-		Email     string `json:"email"`
-		IsDefault *bool  `json:"is_default"`
+		Name        string `json:"name"`
+		RegistryURL string `json:"registry_url"`
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		Email       string `json:"email"`
+		IsDefault   *bool  `json:"is_default"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -5504,7 +5577,7 @@ func (s *Server) updateCredential(c *gin.Context) {
 		return
 	}
 
-	cred, err := s.credentialsManager.UpdateCredential(id, req.Name, req.Username, req.Password, req.Email, req.IsDefault)
+	cred, err := s.credentialsManager.UpdateCredential(id, req.Name, req.RegistryURL, req.Username, req.Password, req.Email, req.IsDefault)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -5554,4 +5627,24 @@ func (s *Server) testCredential(c *gin.Context) {
 		"message": "Credential test successful",
 		"success": true,
 	})
+}
+
+func (s *Server) deploymentAuthOptions(name string) (credentials.AuthConfig, []docker.RunOption) {
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil || deployment.Metadata == nil {
+		return credentials.AuthConfig{}, nil
+	}
+	var ids []string
+	if deployment.Metadata.CredentialID != "" {
+		ids = append(ids, deployment.Metadata.CredentialID)
+	}
+	for _, id := range deployment.Metadata.ServiceCredentials {
+		ids = append(ids, id)
+	}
+	cfg, err := s.credentialsManager.BuildAuthConfig(ids)
+	if err != nil {
+		log.Printf("Warning: failed to build docker auth config for %s: %v", name, err)
+		return credentials.AuthConfig{}, nil
+	}
+	return cfg, []docker.RunOption{docker.WithDockerConfig(cfg.Dir())}
 }

@@ -166,7 +166,7 @@ func (m *Manager) ensureContainerNames(name string) {
 	_ = os.WriteFile(composePath, []byte(updated), 0644)
 }
 
-func (m *Manager) StartDeployment(name string) (string, error) {
+func (m *Manager) StartDeployment(name string, opts ...RunOption) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
 	m.mu.RUnlock()
@@ -177,7 +177,7 @@ func (m *Manager) StartDeployment(name string) (string, error) {
 
 	m.ensureContainerNames(name)
 
-	output, err := m.executor.Up(deployment.Path)
+	output, err := m.executor.Up(deployment.Path, opts...)
 	if err != nil {
 		return output, err
 	}
@@ -344,7 +344,7 @@ func (m *Manager) StopDeployment(name string) (string, error) {
 	return m.executor.Stop(deployment.Path)
 }
 
-func (m *Manager) RestartDeployment(name string) (string, error) {
+func (m *Manager) RestartDeployment(name string, opts ...RunOption) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
 	m.mu.RUnlock()
@@ -357,7 +357,7 @@ func (m *Manager) RestartDeployment(name string) (string, error) {
 
 	snapshotDir := m.snapshotBindMounts(name, deployment.Path)
 
-	output, err := m.executor.Restart(deployment.Path)
+	output, err := m.executor.Restart(deployment.Path, opts...)
 	if err != nil {
 		m.restoreBindMounts(deployment.Path, snapshotDir)
 		return output, err
@@ -371,7 +371,7 @@ func (m *Manager) RestartDeployment(name string) (string, error) {
 	return output, nil
 }
 
-func (m *Manager) RebuildDeployment(name string) (string, error) {
+func (m *Manager) RebuildDeployment(name string, opts ...RunOption) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
 	m.mu.RUnlock()
@@ -384,7 +384,7 @@ func (m *Manager) RebuildDeployment(name string) (string, error) {
 
 	snapshotDir := m.snapshotBindMounts(name, deployment.Path)
 
-	output, err := m.executor.Rebuild(deployment.Path)
+	output, err := m.executor.Rebuild(deployment.Path, opts...)
 	if err != nil {
 		m.restoreBindMounts(deployment.Path, snapshotDir)
 		return output, err
@@ -398,7 +398,7 @@ func (m *Manager) RebuildDeployment(name string) (string, error) {
 	return output, nil
 }
 
-func (m *Manager) PullDeployment(name string, onlyLatest bool) (string, error) {
+func (m *Manager) PullDeployment(name string, onlyLatest bool, opts ...RunOption) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
 	m.mu.RUnlock()
@@ -407,7 +407,7 @@ func (m *Manager) PullDeployment(name string, onlyLatest bool) (string, error) {
 		return "", err
 	}
 
-	return m.executor.Pull(deployment.Path, onlyLatest)
+	return m.executor.Pull(deployment.Path, onlyLatest, opts...)
 }
 
 func (m *Manager) GetDeploymentImages(name string) ([]ImageInfo, error) {

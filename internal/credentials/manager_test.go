@@ -1,6 +1,8 @@
 package credentials
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,7 +67,7 @@ func TestCreateCredential(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
 
-	cred, err := m.CreateCredential("Test Credential", "docker-hub", "testuser", "testpass", "", false)
+	cred, err := m.CreateCredential("Test Credential", "docker-hub", "", "testuser", "testpass", "", false)
 	if err != nil {
 		t.Fatalf("Failed to create credential: %v", err)
 	}
@@ -93,12 +95,12 @@ func TestCreateCredentialDuplicateName(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
 
-	_, err := m.CreateCredential("Test Credential", "docker-hub", "user1", "pass1", "", false)
+	_, err := m.CreateCredential("Test Credential", "docker-hub", "", "user1", "pass1", "", false)
 	if err != nil {
 		t.Fatalf("Failed to create first credential: %v", err)
 	}
 
-	_, err = m.CreateCredential("Test Credential", "docker-hub", "user2", "pass2", "", false)
+	_, err = m.CreateCredential("Test Credential", "docker-hub", "", "user2", "pass2", "", false)
 	if err == nil {
 		t.Error("Expected error for duplicate credential name")
 	}
@@ -108,7 +110,7 @@ func TestCreateCredentialInvalidRegistry(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
 
-	_, err := m.CreateCredential("Test", "nonexistent-registry", "user", "pass", "", false)
+	_, err := m.CreateCredential("Test", "nonexistent-registry", "", "user", "pass", "", false)
 	if err == nil {
 		t.Error("Expected error for invalid registry type")
 	}
@@ -118,7 +120,7 @@ func TestGetCredential(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
 
-	created, err := m.CreateCredential("Test Cred", "docker-hub", "user", "pass", "", false)
+	created, err := m.CreateCredential("Test Cred", "docker-hub", "", "user", "pass", "", false)
 	if err != nil {
 		t.Fatalf("Failed to create credential: %v", err)
 	}
@@ -146,8 +148,8 @@ func TestListCredentials(t *testing.T) {
 		t.Errorf("Expected 0 credentials, got: %d", len(creds))
 	}
 
-	_, _ = m.CreateCredential("Cred1", "docker-hub", "user1", "pass1", "", false)
-	_, _ = m.CreateCredential("Cred2", "ghcr", "user2", "pass2", "", false)
+	_, _ = m.CreateCredential("Cred1", "docker-hub", "", "user1", "pass1", "", false)
+	_, _ = m.CreateCredential("Cred2", "ghcr", "", "user2", "pass2", "", false)
 
 	creds = m.ListCredentials()
 	if len(creds) != 2 {
@@ -159,7 +161,7 @@ func TestDeleteCredential(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
 
-	cred, _ := m.CreateCredential("To Delete", "docker-hub", "user", "pass", "", false)
+	cred, _ := m.CreateCredential("To Delete", "docker-hub", "", "user", "pass", "", false)
 
 	err := m.DeleteCredential(cred.ID)
 	if err != nil {
@@ -181,9 +183,9 @@ func TestUpdateCredential(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
 
-	cred, _ := m.CreateCredential("Original", "docker-hub", "user", "pass", "", false)
+	cred, _ := m.CreateCredential("Original", "docker-hub", "", "user", "pass", "", false)
 
-	updated, err := m.UpdateCredential(cred.ID, "Updated Name", "newuser", "newpass", "", nil)
+	updated, err := m.UpdateCredential(cred.ID, "Updated Name", "", "newuser", "newpass", "", nil)
 	if err != nil {
 		t.Fatalf("Failed to update credential: %v", err)
 	}
@@ -200,8 +202,8 @@ func TestDefaultCredential(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
 
-	cred1, _ := m.CreateCredential("Cred1", "docker-hub", "user1", "pass1", "", true)
-	cred2, _ := m.CreateCredential("Cred2", "docker-hub", "user2", "pass2", "", false)
+	cred1, _ := m.CreateCredential("Cred1", "docker-hub", "", "user1", "pass1", "", true)
+	cred2, _ := m.CreateCredential("Cred2", "docker-hub", "", "user2", "pass2", "", false)
 
 	fetched1, _ := m.GetCredential(cred1.ID)
 	if !fetched1.IsDefault {
@@ -209,7 +211,7 @@ func TestDefaultCredential(t *testing.T) {
 	}
 
 	isDefault := true
-	_, _ = m.UpdateCredential(cred2.ID, "", "", "", "", &isDefault)
+	_, _ = m.UpdateCredential(cred2.ID, "", "", "", "", "", &isDefault)
 
 	fetched1, _ = m.GetCredential(cred1.ID)
 	fetched2, _ := m.GetCredential(cred2.ID)
@@ -226,8 +228,8 @@ func TestFindCredentialForImage(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
 
-	_, _ = m.CreateCredential("Docker Hub Cred", "docker-hub", "dockeruser", "dockerpass", "", true)
-	_, _ = m.CreateCredential("GHCR Cred", "ghcr", "ghcruser", "ghcrpass", "", true)
+	_, _ = m.CreateCredential("Docker Hub Cred", "docker-hub", "", "dockeruser", "dockerpass", "", true)
+	_, _ = m.CreateCredential("GHCR Cred", "ghcr", "", "ghcruser", "ghcrpass", "", true)
 
 	tests := []struct {
 		image        string
@@ -312,7 +314,7 @@ func TestPersistence(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	m1 := NewManager(tmpDir)
-	_, err = m1.CreateCredential("Persist Test", "docker-hub", "user", "pass", "", true)
+	_, err = m1.CreateCredential("Persist Test", "docker-hub", "", "user", "pass", "", true)
 	if err != nil {
 		t.Fatalf("Failed to create credential: %v", err)
 	}
@@ -325,6 +327,186 @@ func TestPersistence(t *testing.T) {
 	if creds[0].Name != "Persist Test" {
 		t.Errorf("Expected credential name 'Persist Test', got: %s", creds[0].Name)
 	}
+}
+
+func TestRegistryForCredential(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+
+	fixed, _ := m.CreateCredential("Hub Cred", "docker-hub", "", "u", "p", "", false)
+	if got := m.RegistryForCredential(fixed.ID); got != "docker.io" {
+		t.Errorf("fixed-host: expected docker.io, got %q", got)
+	}
+
+	ecr, _ := m.CreateCredential("ECR Cred", "ecr", "", "u", "p", "", false)
+	if got := m.RegistryForCredential(ecr.ID); got != "" {
+		t.Errorf("ecr without URL: expected empty, got %q", got)
+	}
+
+	withURL, _ := m.CreateCredential("ECR Account", "ecr", "123.dkr.ecr.us-east-1.amazonaws.com", "u", "p", "", false)
+	if got := m.RegistryForCredential(withURL.ID); got != "123.dkr.ecr.us-east-1.amazonaws.com" {
+		t.Errorf("explicit URL: expected account host, got %q", got)
+	}
+
+	gar, _ := m.CreateCredential("GAR Cred", "gar", "", "u", "p", "", false)
+	if got := m.RegistryForCredential(gar.ID); got != "" {
+		t.Errorf("gar without URL: expected empty, got %q", got)
+	}
+
+	if got := m.RegistryForCredential("does-not-exist"); got != "" {
+		t.Errorf("unknown id: expected empty, got %q", got)
+	}
+}
+
+func TestRegistryTypeForImage(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+
+	tests := []struct {
+		image    string
+		expected string
+	}{
+		{"nginx:latest", "docker-hub"},
+		{"ghcr.io/owner/repo:tag", "ghcr"},
+		{"gcr.io/project/image", "gcr"},
+		{"quay.io/org/image", "quay"},
+		{"123.dkr.ecr.us-east-1.amazonaws.com/repo", "ecr"},
+		{"europe-docker.pkg.dev/project/repo/image", "gar"},
+		{"registry.example.com/image", ""},
+	}
+
+	for _, tc := range tests {
+		got := m.RegistryTypeForImage(tc.image)
+		if got != tc.expected {
+			t.Errorf("RegistryTypeForImage(%q) = %q, expected %q", tc.image, got, tc.expected)
+		}
+	}
+}
+
+func TestUpdateCredentialRegistryURL(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+
+	cred, _ := m.CreateCredential("ECR", "ecr", "old.dkr.ecr.us-east-1.amazonaws.com", "u", "p", "", false)
+	updated, err := m.UpdateCredential(cred.ID, "", "new.dkr.ecr.us-west-2.amazonaws.com", "", "", "", nil)
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if updated.RegistryURL != "new.dkr.ecr.us-west-2.amazonaws.com" {
+		t.Errorf("RegistryURL not updated, got %q", updated.RegistryURL)
+	}
+
+	unchanged, _ := m.UpdateCredential(cred.ID, "Renamed", "", "", "", "", nil)
+	if unchanged.RegistryURL != "new.dkr.ecr.us-west-2.amazonaws.com" {
+		t.Errorf("RegistryURL cleared by empty update, got %q", unchanged.RegistryURL)
+	}
+}
+
+func TestBuildAuthConfig(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+
+	hub, _ := m.CreateCredential("Hub", "docker-hub", "", "huser", "hpass", "", false)
+	ghcr, _ := m.CreateCredential("GHCR", "ghcr", "", "guser", "gpass", "", false)
+	ecr, _ := m.CreateCredential("ECR", "ecr", "123.dkr.ecr.us-east-1.amazonaws.com", "AKIA", "secret", "", false)
+
+	cfg, err := m.BuildAuthConfig([]string{hub.ID, ghcr.ID, ecr.ID})
+	if err != nil {
+		t.Fatalf("BuildAuthConfig: %v", err)
+	}
+	if cfg.Dir() == "" {
+		t.Fatal("expected non-empty AuthConfig dir")
+	}
+	defer cfg.Close()
+
+	data, err := os.ReadFile(filepath.Join(cfg.Dir(), "config.json"))
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+
+	var parsed struct {
+		Auths map[string]struct {
+			Auth string `json:"auth"`
+		} `json:"auths"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	hubKey := "https://index.docker.io/v1/"
+	if _, ok := parsed.Auths[hubKey]; !ok {
+		t.Errorf("missing docker hub auth key %q, got %v", hubKey, parsed.Auths)
+	}
+	if _, ok := parsed.Auths["ghcr.io"]; !ok {
+		t.Error("missing ghcr.io auth")
+	}
+	if _, ok := parsed.Auths["123.dkr.ecr.us-east-1.amazonaws.com"]; !ok {
+		t.Error("missing ECR auth")
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(parsed.Auths["ghcr.io"].Auth)
+	if err != nil {
+		t.Fatalf("decode ghcr auth: %v", err)
+	}
+	if string(raw) != "guser:gpass" {
+		t.Errorf("ghcr auth payload = %q, want guser:gpass", raw)
+	}
+}
+
+func TestBuildAuthConfigSkipsUnresolvable(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+
+	ecr, _ := m.CreateCredential("ECR no URL", "ecr", "", "u", "p", "", false)
+
+	cfg, err := m.BuildAuthConfig([]string{ecr.ID})
+	if err != nil {
+		t.Fatalf("BuildAuthConfig: %v", err)
+	}
+	if cfg.Dir() != "" {
+		cfg.Close()
+		t.Error("expected empty AuthConfig dir when no resolvable credentials")
+	}
+}
+
+func TestBuildAuthConfigWithExtras(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+
+	cfg, err := m.BuildAuthConfig(nil, AuthEntry{Registry: "ghcr.io", Username: "u", Password: "p"})
+	if err != nil {
+		t.Fatalf("BuildAuthConfig: %v", err)
+	}
+	if cfg.Dir() == "" {
+		t.Fatal("expected non-empty AuthConfig dir")
+	}
+	defer cfg.Close()
+
+	data, _ := os.ReadFile(filepath.Join(cfg.Dir(), "config.json"))
+	if !containsBytes(data, "ghcr.io") {
+		t.Errorf("expected ghcr.io in config, got %s", data)
+	}
+}
+
+func TestAuthConfigCloseEmpty(t *testing.T) {
+	var cfg AuthConfig
+	cfg.Close()
+	if cfg.Dir() != "" {
+		t.Errorf("zero-value AuthConfig should have empty dir, got %q", cfg.Dir())
+	}
+}
+
+func containsBytes(b []byte, sub string) bool {
+	return len(b) >= len(sub) && indexBytes(b, sub) >= 0
+}
+
+func indexBytes(b []byte, sub string) int {
+	for i := 0; i+len(sub) <= len(b); i++ {
+		if string(b[i:i+len(sub)]) == sub {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestGenerateSlug(t *testing.T) {
