@@ -2,23 +2,25 @@ package docker
 
 import (
 	"encoding/json"
+	"log"
 	"os/exec"
 	"strconv"
 	"strings"
 )
 
 type ContainerStats struct {
-	ContainerID   string  `json:"container_id"`
-	Name          string  `json:"name"`
-	CPUPercent    float64 `json:"cpu_percent"`
-	MemoryUsage   uint64  `json:"memory_usage"`
-	MemoryLimit   uint64  `json:"memory_limit"`
-	MemoryPercent float64 `json:"memory_percent"`
-	NetworkRx     uint64  `json:"network_rx"`
-	NetworkTx     uint64  `json:"network_tx"`
-	BlockRead     uint64  `json:"block_read"`
-	BlockWrite    uint64  `json:"block_write"`
-	PIDs          int     `json:"pids"`
+	ContainerID    string  `json:"container_id"`
+	Name           string  `json:"name"`
+	DeploymentName string  `json:"deployment_name,omitempty"`
+	CPUPercent     float64 `json:"cpu_percent"`
+	MemoryUsage    uint64  `json:"memory_usage"`
+	MemoryLimit    uint64  `json:"memory_limit"`
+	MemoryPercent  float64 `json:"memory_percent"`
+	NetworkRx      uint64  `json:"network_rx"`
+	NetworkTx      uint64  `json:"network_tx"`
+	BlockRead      uint64  `json:"block_read"`
+	BlockWrite     uint64  `json:"block_write"`
+	PIDs           int     `json:"pids"`
 }
 
 type dockerStatsJSON struct {
@@ -48,6 +50,7 @@ func GetContainerStats(containerID string) (*ContainerStats, error) {
 }
 
 func GetAllContainerStats() ([]ContainerStats, error) {
+	deployments := listContainerDeploymentLabels()
 	cmd := exec.Command("docker", "stats", "--no-stream", "--format", "{{json .}}")
 	output, err := cmd.Output()
 	if err != nil {
@@ -64,10 +67,38 @@ func GetAllContainerStats() ([]ContainerStats, error) {
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			continue
 		}
-		stats = append(stats, *parseStats(&raw))
+		stat := parseStats(&raw)
+		if deploymentName := deployments[stat.ContainerID]; deploymentName != "" {
+			stat.DeploymentName = deploymentName
+		} else if deploymentName := deployments[stat.Name]; deploymentName != "" {
+			stat.DeploymentName = deploymentName
+		}
+		stats = append(stats, *stat)
 	}
 
 	return stats, nil
+}
+
+func listContainerDeploymentLabels() map[string]string {
+	labels := make(map[string]string)
+	cmd := exec.Command("docker", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Label \"com.docker.compose.project\"}}")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("warning: failed to list container deployment labels: %v", err)
+		return labels
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) != 3 || parts[2] == "" {
+			continue
+		}
+		labels[parts[0]] = parts[2]
+		labels[parts[1]] = parts[2]
+	}
+	return labels
 }
 
 func GetDeploymentStats(projectName string) ([]ContainerStats, error) {

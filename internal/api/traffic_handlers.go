@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/traffic"
 	"github.com/gin-gonic/gin"
 )
@@ -44,6 +45,17 @@ func (s *Server) getTrafficLogs(c *gin.Context) {
 		StatusGroup:    c.Query("status_group"),
 		SourceIP:       c.Query("source_ip"),
 		RequestPath:    c.Query("path"),
+	}
+	if filter.DeploymentName != "" {
+		if !s.requireDeploymentAccess(c, filter.DeploymentName, auth.AccessLevelRead) {
+			return
+		}
+	} else {
+		actor := auth.GetActorFromContext(c)
+		if actor != nil && actor.Role != auth.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Deployment filter required"})
+			return
+		}
 	}
 
 	if statusCode := c.Query("status_code"); statusCode != "" {
@@ -100,6 +112,17 @@ func (s *Server) getTrafficStats(c *gin.Context) {
 	}
 
 	deploymentName := c.Query("deployment")
+	if deploymentName != "" {
+		if !s.requireDeploymentAccess(c, deploymentName, auth.AccessLevelRead) {
+			return
+		}
+	} else {
+		actor := auth.GetActorFromContext(c)
+		if actor != nil && actor.Role != auth.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Deployment filter required"})
+			return
+		}
+	}
 
 	since := 24 * time.Hour
 	if sinceStr := c.Query("since"); sinceStr != "" {

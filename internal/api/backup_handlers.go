@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,11 @@ func (s *Server) listBackups(c *gin.Context) {
 	filter := &backup.BackupListFilter{
 		DeploymentName: c.Query("deployment"),
 	}
+	if filter.DeploymentName != "" {
+		if !s.requireDeploymentAccess(c, filter.DeploymentName, auth.AccessLevelRead) {
+			return
+		}
+	}
 
 	if limit := c.Query("limit"); limit != "" {
 		if l, err := strconv.Atoi(limit); err == nil {
@@ -29,6 +35,17 @@ func (s *Server) listBackups(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		filtered := backups[:0]
+		for _, b := range backups {
+			if actor.CanAccessDeployment(b.DeploymentName, auth.AccessLevelRead) {
+				filtered = append(filtered, b)
+			}
+		}
+		backups = filtered
 	}
 
 	c.JSON(http.StatusOK, gin.H{"backups": backups})
@@ -46,6 +63,9 @@ func (s *Server) getBackup(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+	if !s.requireDeploymentAccess(c, b.DeploymentName, auth.AccessLevelRead) {
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"backup": b})
 }
@@ -59,6 +79,9 @@ func (s *Server) createBackup(c *gin.Context) {
 	var req backup.CreateBackupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !s.requireDeploymentAccess(c, req.DeploymentName, auth.AccessLevelWrite) {
 		return
 	}
 
@@ -133,6 +156,15 @@ func (s *Server) deleteBackup(c *gin.Context) {
 	}
 
 	backupID := c.Param("id")
+	b, err := s.backupManager.GetBackup(backupID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if !s.requireDeploymentAccess(c, b.DeploymentName, auth.AccessLevelWrite) {
+		return
+	}
+
 	if err := s.backupManager.DeleteBackup(backupID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -148,6 +180,15 @@ func (s *Server) downloadBackup(c *gin.Context) {
 	}
 
 	backupID := c.Param("id")
+	b, err := s.backupManager.GetBackup(backupID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if !s.requireDeploymentAccess(c, b.DeploymentName, auth.AccessLevelRead) {
+		return
+	}
+
 	backupPath, err := s.backupManager.GetBackupPath(backupID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -217,6 +258,22 @@ func (s *Server) restoreBackup(c *gin.Context) {
 	}
 	req.BackupID = backupID
 
+	b, err := s.backupManager.GetBackup(backupID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	targetDeployment := b.DeploymentName
+	if req.DeploymentName != "" {
+		targetDeployment = req.DeploymentName
+	}
+	if !s.requireDeploymentAccess(c, b.DeploymentName, auth.AccessLevelRead) {
+		return
+	}
+	if !s.requireDeploymentAccess(c, targetDeployment, auth.AccessLevelWrite) {
+		return
+	}
+
 	jobID := s.backupManager.StartRestoreJob(&req)
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Restore job started"})
 }
@@ -233,6 +290,9 @@ func (s *Server) getBackupJob(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 		return
 	}
+	if !s.requireDeploymentAccess(c, job.DeploymentName, auth.AccessLevelRead) {
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"job": job})
 }
@@ -244,6 +304,11 @@ func (s *Server) listBackupJobs(c *gin.Context) {
 	}
 
 	deploymentName := c.Query("deployment")
+	if deploymentName != "" {
+		if !s.requireDeploymentAccess(c, deploymentName, auth.AccessLevelRead) {
+			return
+		}
+	}
 	limit := 50
 	if l := c.Query("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil {
@@ -252,5 +317,16 @@ func (s *Server) listBackupJobs(c *gin.Context) {
 	}
 
 	jobs := s.backupManager.ListJobs(deploymentName, limit)
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		filtered := jobs[:0]
+		for _, job := range jobs {
+			if actor.CanAccessDeployment(job.DeploymentName, auth.AccessLevelRead) {
+				filtered = append(filtered, job)
+			}
+		}
+		jobs = filtered
+	}
+
 	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
 }

@@ -3,12 +3,16 @@ package api
 import (
 	"net/http"
 
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/gin-gonic/gin"
 )
 
 func (s *Server) getContainerResources(c *gin.Context) {
 	id := c.Param("id")
+	if !s.requireContainerAccess(c, id, auth.AccessLevelRead) {
+		return
+	}
 
 	resources, err := docker.GetContainerResources(id)
 	if err != nil {
@@ -39,6 +43,10 @@ func (s *Server) updateContainerResources(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "At least one resource limit must be specified",
 		})
+		return
+	}
+
+	if !s.requireContainerAccess(c, id, auth.AccessLevelWrite) {
 		return
 	}
 

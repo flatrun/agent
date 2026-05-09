@@ -3,11 +3,17 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
+	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 func TestDetectShell(t *testing.T) {
@@ -67,6 +73,97 @@ func TestWebSocketUpgrader(t *testing.T) {
 	if !upgrader.CheckOrigin(req) {
 		t.Error("expected CheckOrigin to return true for any request")
 	}
+}
+
+func TestContainerExecWebSocketDeniesReadOnlyDeploymentAccessBeforeAuthSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir, err := os.MkdirTemp("", "container-exec-ws-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.AuthConfig{
+		Enabled:   true,
+		JWTSecret: "test-jwt-secret-for-ws-exec",
+	}
+	os.Setenv("FLATRUN_ADMIN_PASSWORD", "testadminpass")
+	defer os.Unsetenv("FLATRUN_ADMIN_PASSWORD")
+
+	authManager, err := auth.NewManager(tmpDir, cfg, true)
+	if err != nil {
+		t.Fatalf("failed to create auth manager: %v", err)
+	}
+	defer authManager.Close()
+
+	user, err := authManager.CreateUser("readonly-operator", "", "password", auth.RoleOperator, nil)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	admin, err := authManager.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("failed to get admin: %v", err)
+	}
+	if err := authManager.AssignDeployment(user.ID, "app", auth.AccessLevelRead, admin.ID); err != nil {
+		t.Fatalf("failed to assign deployment: %v", err)
+	}
+
+	authMiddleware := auth.NewMiddlewareWithManager(cfg, authManager)
+	token, err := authMiddleware.GenerateJWTForUser(user, "")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	server := &Server{authMiddleware: authMiddleware}
+	router := gin.New()
+	router.GET("/containers/:id/exec", server.containerExec)
+
+	httpServer := newSkippableHTTPServer(t, router)
+	defer httpServer.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/containers/does-not-exist/exec"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteJSON(authMessage{Type: "auth", Token: token}); err != nil {
+		t.Fatalf("failed to write auth message: %v", err)
+	}
+
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read websocket response: %v", err)
+	}
+
+	text := string(message)
+	if strings.Contains(text, "auth_success") {
+		t.Fatalf("received auth_success before authorization denial: %q", text)
+	}
+	if !strings.Contains(text, "No access to this container") {
+		t.Fatalf("expected no-access denial, got %q", text)
+	}
+}
+
+func newSkippableHTTPServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+
+	var srv *httptest.Server
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				msg := fmt.Sprint(r)
+				if strings.Contains(strings.ToLower(msg), "operation not permitted") {
+					t.Skipf("httptest listener not permitted in this environment: %v", r)
+				}
+				panic(r)
+			}
+		}()
+		srv = httptest.NewServer(handler)
+	}()
+	return srv
 }
 
 func TestAuthMessageParsing(t *testing.T) {

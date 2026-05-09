@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/contextkeys"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -48,7 +50,6 @@ func (s *Server) containerExec(c *gin.Context) {
 	}
 	defer conn.Close()
 
-	// First-message authentication
 	if s.authMiddleware.IsAuthEnabled() {
 		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
@@ -64,13 +65,28 @@ func (s *Server) containerExec(c *gin.Context) {
 			return
 		}
 
-		if !s.authMiddleware.ValidateTokenString(auth.Token) {
+		actor, err := s.authMiddleware.ActorForTokenString(auth.Token, c.ClientIP())
+		if err != nil {
 			sendError(conn, "Invalid or expired token")
 			return
 		}
+		c.Set(contextkeys.Actor, actor)
 
 		_ = conn.SetReadDeadline(time.Time{})
+	} else {
+		c.Set(contextkeys.Actor, &auth.ActorContext{Type: "anonymous", Role: auth.RoleAdmin})
+	}
 
+	actor := auth.GetActorFromContext(c)
+	if actor == nil || !actor.HasPermission(auth.PermContainersWrite) {
+		sendError(conn, "Permission denied: containers:write required")
+		return
+	}
+	if !s.actorCanAccessContainer(c, containerID, auth.AccessLevelWrite) {
+		sendError(conn, "No access to this container")
+		return
+	}
+	if s.authMiddleware.IsAuthEnabled() {
 		if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"auth_success"}`)); err != nil {
 			return
 		}
@@ -192,6 +208,9 @@ func sendError(conn *websocket.Conn, msg string) {
 
 func (s *Server) containerExecHTTP(c *gin.Context) {
 	containerID := c.Param("id")
+	if !s.requireContainerAccess(c, containerID, auth.AccessLevelWrite) {
+		return
+	}
 
 	var req struct {
 		Command string   `json:"command"`
