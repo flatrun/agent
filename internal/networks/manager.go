@@ -192,13 +192,14 @@ func (m *Manager) EnsureContainerOnNetwork(networkName, containerName string) er
 }
 
 type ContainerInfo struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Image   string   `json:"image"`
-	State   string   `json:"state"`
-	Status  string   `json:"status"`
-	Ports   []string `json:"ports"`
-	Created string   `json:"created"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Image          string   `json:"image"`
+	State          string   `json:"state"`
+	Status         string   `json:"status"`
+	Ports          []string `json:"ports"`
+	Created        string   `json:"created"`
+	DeploymentName string   `json:"deployment_name,omitempty"`
 }
 
 type ImageInfo struct {
@@ -292,7 +293,7 @@ func (m *Manager) GetVolumeStats() (map[string]int, error) {
 }
 
 func (m *Manager) ListContainers() ([]ContainerInfo, error) {
-	cmd := exec.Command("docker", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}|{{.CreatedAt}}")
+	cmd := exec.Command("docker", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}|{{.CreatedAt}}|{{.Label \"com.docker.compose.project\"}}")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
@@ -305,7 +306,7 @@ func (m *Manager) ListContainers() ([]ContainerInfo, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 7)
+		parts := strings.SplitN(line, "|", 8)
 		if len(parts) < 7 {
 			continue
 		}
@@ -320,14 +321,20 @@ func (m *Manager) ListContainers() ([]ContainerInfo, error) {
 			}
 		}
 
+		deploymentName := ""
+		if len(parts) >= 8 {
+			deploymentName = parts[7]
+		}
+
 		containers = append(containers, ContainerInfo{
-			ID:      parts[0],
-			Name:    parts[1],
-			Image:   parts[2],
-			State:   parts[3],
-			Status:  parts[4],
-			Ports:   ports,
-			Created: parts[6],
+			ID:             parts[0],
+			Name:           parts[1],
+			Image:          parts[2],
+			State:          parts[3],
+			Status:         parts[4],
+			Ports:          ports,
+			Created:        parts[6],
+			DeploymentName: deploymentName,
 		})
 	}
 

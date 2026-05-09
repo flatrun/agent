@@ -489,10 +489,62 @@ func (m *Middleware) GetAuthStatus(c *gin.Context) {
 }
 
 func (m *Middleware) ValidateTokenString(token string) bool {
+	_, err := m.ActorForTokenString(token, "")
+	return err == nil
+}
+
+func (m *Middleware) ActorForTokenString(token string, clientIP string) (*ActorContext, error) {
 	if !m.config.Enabled {
-		return true
+		return &ActorContext{
+			Type: "anonymous",
+			Role: RoleAdmin,
+		}, nil
 	}
-	return m.validateJWT(token) || m.validateAPIKey(token)
+
+	if claims := m.validateJWTWithClaims(token); claims != nil {
+		if m.manager != nil && claims.SessionID != "" {
+			session, err := m.manager.GetSessionByID(claims.SessionID)
+			if err != nil || !session.RevokedAt.IsZero() {
+				return nil, fmt.Errorf("session revoked or invalid")
+			}
+		}
+
+		if m.manager != nil && claims.UserID > 0 {
+			user, err := m.manager.GetUser(claims.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if !user.IsActive {
+				return nil, ErrUserInactive
+			}
+			return m.manager.BuildActorContext(user, nil)
+		}
+
+		return &ActorContext{
+			Type: "jwt",
+			Role: RoleAdmin,
+		}, nil
+	}
+
+	if m.manager != nil {
+		apiKey, user, err := m.manager.ValidateAPIKey(token)
+		if err == nil {
+			if clientIP != "" {
+				_ = m.manager.UpdateAPIKeyLastUsed(apiKey.ID, clientIP)
+			}
+			return m.manager.BuildActorContext(user, apiKey)
+		}
+	}
+
+	if m.validateAPIKey(token) {
+		log.Printf("Warning: Legacy API key used. Consider migrating to user-based API keys.")
+		return &ActorContext{
+			Type: "legacy_key",
+			Role: RoleAdmin,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("invalid or expired token")
 }
 
 func (m *Middleware) IsAuthEnabled() bool {

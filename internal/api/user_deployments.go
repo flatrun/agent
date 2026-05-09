@@ -135,6 +135,10 @@ func (s *Server) removeUserDeployment(c *gin.Context) {
 		return
 	}
 
+	if !s.requireDeploymentAccess(c, deploymentName, auth.AccessLevelAdmin) {
+		return
+	}
+
 	if err := s.authManager.RemoveDeploymentAccess(userID, deploymentName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove deployment access"})
 		return

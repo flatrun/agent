@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
@@ -86,6 +87,17 @@ func (s *Server) listSecurityEvents(c *gin.Context) {
 		SourceIP:       c.Query("source_ip"),
 		DeploymentName: c.Query("deployment"),
 	}
+	if filter.DeploymentName != "" {
+		if !s.requireDeploymentAccess(c, filter.DeploymentName, auth.AccessLevelRead) {
+			return
+		}
+	} else {
+		actor := auth.GetActorFromContext(c)
+		if actor != nil && actor.Role != auth.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Deployment filter required"})
+			return
+		}
+	}
 
 	if limit := c.Query("limit"); limit != "" {
 		if l, err := strconv.Atoi(limit); err == nil {
@@ -143,6 +155,9 @@ func (s *Server) getSecurityEvent(c *gin.Context) {
 	event, err := s.securityManager.GetEventByID(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Event not found"})
+		return
+	}
+	if event.DeploymentName != "" && !s.requireDeploymentAccess(c, event.DeploymentName, auth.AccessLevelRead) {
 		return
 	}
 

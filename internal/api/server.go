@@ -348,9 +348,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/certificates/renew", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.renewDeploymentCertificates)
 
 			// Proxy endpoints
-			protected.GET("/proxy/status/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.getProxyStatus)
-			protected.POST("/proxy/setup/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.setupProxy)
-			protected.DELETE("/proxy/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesDelete), s.teardownProxy)
+			protected.GET("/proxy/status/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getProxyStatus)
+			protected.POST("/proxy/setup/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.setupProxy)
+			protected.DELETE("/proxy/:name", s.authMiddleware.RequirePermission(auth.PermCertificatesDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.teardownProxy)
 			protected.GET("/proxy/vhosts", s.authMiddleware.RequirePermission(auth.PermCertificatesRead), s.listVirtualHosts)
 			protected.POST("/proxy/sync", s.authMiddleware.RequirePermission(auth.PermCertificatesWrite), s.syncAllProxies)
 			protected.POST("/deployments/:name/ssl/disable", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.disableSSL)
@@ -576,7 +576,7 @@ func (s *Server) setupRoutes() {
 				}
 
 				// Get users with access to a deployment
-				protected.GET("/deployments/:name/users", s.authMiddleware.RequirePermission(auth.PermUsersRead), s.getDeploymentUsers)
+				protected.GET("/deployments/:name/users", s.authMiddleware.RequirePermission(auth.PermUsersRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.getDeploymentUsers)
 			}
 
 			// DNS plugin routes
@@ -1918,6 +1918,10 @@ func (s *Server) connectContainer(c *gin.Context) {
 		return
 	}
 
+	if !s.requireContainerAccess(c, req.Container, auth.AccessLevelWrite) {
+		return
+	}
+
 	if err := s.networksManager.ConnectContainer(networkName, req.Container); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -1943,6 +1947,10 @@ func (s *Server) disconnectContainer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
+		return
+	}
+
+	if !s.requireContainerAccess(c, req.Container, auth.AccessLevelWrite) {
 		return
 	}
 
@@ -3800,6 +3808,18 @@ func (s *Server) listVirtualHosts(c *gin.Context) {
 		return
 	}
 
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		filtered := vhosts[:0]
+		for _, vhost := range vhosts {
+			// VirtualHostInfo.Name is the deployment name derived from <deployment>.conf.
+			if actor.CanAccessDeployment(vhost.Name, auth.AccessLevelRead) {
+				filtered = append(filtered, vhost)
+			}
+		}
+		vhosts = filtered
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"virtual_hosts": vhosts,
 	})
@@ -3814,6 +3834,12 @@ type ProxySyncResult struct {
 }
 
 func (s *Server) syncAllProxies(c *gin.Context) {
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin access required"})
+		return
+	}
+
 	deployments, err := s.manager.ListDeployments()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -4325,6 +4351,18 @@ func (s *Server) listContainers(c *gin.Context) {
 		return
 	}
 
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		filtered := containers[:0]
+		for _, container := range containers {
+			// Non-admins only see FlatRun/Compose containers assigned through deployment access.
+			if actor.CanAccessDeployment(container.DeploymentName, auth.AccessLevelRead) {
+				filtered = append(filtered, container)
+			}
+		}
+		containers = filtered
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"containers": containers,
 	})
@@ -4332,6 +4370,9 @@ func (s *Server) listContainers(c *gin.Context) {
 
 func (s *Server) startContainer(c *gin.Context) {
 	id := c.Param("id")
+	if !s.requireContainerAccess(c, id, auth.AccessLevelWrite) {
+		return
+	}
 
 	if err := s.networksManager.StartContainer(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -4348,6 +4389,9 @@ func (s *Server) startContainer(c *gin.Context) {
 
 func (s *Server) stopContainer(c *gin.Context) {
 	id := c.Param("id")
+	if !s.requireContainerAccess(c, id, auth.AccessLevelWrite) {
+		return
+	}
 
 	if err := s.networksManager.StopContainer(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -4364,6 +4408,9 @@ func (s *Server) stopContainer(c *gin.Context) {
 
 func (s *Server) restartContainer(c *gin.Context) {
 	id := c.Param("id")
+	if !s.requireContainerAccess(c, id, auth.AccessLevelWrite) {
+		return
+	}
 
 	if err := s.networksManager.RestartContainer(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -4380,6 +4427,9 @@ func (s *Server) restartContainer(c *gin.Context) {
 
 func (s *Server) removeContainer(c *gin.Context) {
 	id := c.Param("id")
+	if !s.requireContainerAccess(c, id, auth.AccessLevelAdmin) {
+		return
+	}
 
 	if err := s.networksManager.RemoveContainer(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -4396,6 +4446,9 @@ func (s *Server) removeContainer(c *gin.Context) {
 
 func (s *Server) getContainerLogs(c *gin.Context) {
 	id := c.Param("id")
+	if !s.requireContainerAccess(c, id, auth.AccessLevelRead) {
+		return
+	}
 
 	tailStr := c.DefaultQuery("tail", "100")
 	tail, err := strconv.Atoi(tailStr)
@@ -4419,6 +4472,9 @@ func (s *Server) getContainerLogs(c *gin.Context) {
 
 func (s *Server) getContainerStats(c *gin.Context) {
 	id := c.Param("id")
+	if !s.requireContainerAccess(c, id, auth.AccessLevelRead) {
+		return
+	}
 
 	stats, err := docker.GetContainerStats(id)
 	if err != nil {
@@ -4440,6 +4496,18 @@ func (s *Server) getAllContainerStats(c *gin.Context) {
 			"error": err.Error(),
 		})
 		return
+	}
+
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		filtered := stats[:0]
+		for _, stat := range stats {
+			// Non-admins only see FlatRun/Compose containers assigned through deployment access.
+			if actor.CanAccessDeployment(stat.DeploymentName, auth.AccessLevelRead) {
+				filtered = append(filtered, stat)
+			}
+		}
+		stats = filtered
 	}
 
 	c.JSON(http.StatusOK, gin.H{
