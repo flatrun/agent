@@ -324,11 +324,13 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.stopDeployment)
 			protected.POST("/deployments/:name/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.restartDeployment)
 			protected.POST("/deployments/:name/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rebuildDeployment)
+			protected.POST("/deployments/:name/deploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deployDeployment)
 			protected.POST("/deployments/:name/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.pullDeploymentImage)
 			protected.GET("/deployments/:name/images", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentImages)
 			protected.POST("/deployments/:name/actions/:actionId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.executeQuickAction)
 			protected.GET("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogs)
 			protected.GET("/deployments/:name/compose", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentCompose)
+			protected.POST("/deployments/:name/compose/mount", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDeploymentComposeMount)
 
 			// Network endpoints
 			protected.GET("/networks", s.authMiddleware.RequirePermission(auth.PermNetworksRead), s.listNetworks)
@@ -776,10 +778,15 @@ func (d *DatabaseConfigRequest) Validate() error {
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
 		Name                      string                  `json:"name" binding:"required"`
+		Image                     string                  `json:"image,omitempty"`
 		ComposeContent            string                  `json:"compose_content"`
 		TemplateID                string                  `json:"template_id,omitempty"`
 		Metadata                  *models.ServiceMetadata `json:"metadata,omitempty"`
 		EnvVars                   []EnvVar                `json:"env_vars,omitempty"`
+		ContainerPort             int                     `json:"container_port,omitempty"`
+		MapPorts                  bool                    `json:"map_ports,omitempty"`
+		HostPort                  string                  `json:"host_port,omitempty"`
+		Ports                     []PortConfig            `json:"ports,omitempty"`
 		AutoStart                 bool                    `json:"auto_start"`
 		UseSharedDatabase         bool                    `json:"use_shared_database"`
 		ExistingDatabaseContainer string                  `json:"existing_database_container,omitempty"`
@@ -804,7 +811,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	if req.ComposeContent == "" {
-		generated, err := s.generateComposeContent(req.Name, req.TemplateID)
+		generated, err := s.generateDeploymentCompose(req.Name, req.Image, req.TemplateID, req.ContainerPort, req.MapPorts, req.HostPort, req.Ports)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "compose_content is required when template cannot be resolved: " + err.Error(),
@@ -1732,6 +1739,98 @@ func (s *Server) rebuildDeployment(c *gin.Context) {
 	})
 }
 
+func (s *Server) deployDeployment(c *gin.Context) {
+	name := c.Param("name")
+
+	req := struct {
+		Action     string `json:"action"`
+		Pull       *bool  `json:"pull"`
+		OnlyLatest bool   `json:"only_latest"`
+	}{
+		Action: "restart",
+	}
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid request body: " + err.Error(),
+			})
+			return
+		}
+	}
+	if req.Action == "" {
+		req.Action = "restart"
+	}
+
+	pull := true
+	if req.Pull != nil {
+		pull = *req.Pull
+	}
+
+	if req.Action != "restart" && req.Action != "rebuild" && req.Action != "start" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Unsupported deploy action. Use one of: restart, rebuild, start",
+		})
+		return
+	}
+
+	if _, err := s.manager.GetDeployment(name); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found: " + err.Error(),
+		})
+		return
+	}
+
+	dockerAuth, opts := s.deploymentAuthOptions(name)
+	defer dockerAuth.Close()
+
+	var pullOutput string
+	if pull {
+		output, err := s.manager.PullDeployment(name, req.OnlyLatest, opts...)
+		pullOutput = output
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":       err.Error(),
+				"name":        name,
+				"action":      req.Action,
+				"pulled":      false,
+				"pull_output": pullOutput,
+			})
+			return
+		}
+	}
+
+	var output string
+	var err error
+	switch req.Action {
+	case "restart":
+		output, err = s.manager.RestartDeployment(name, opts...)
+	case "rebuild":
+		output, err = s.manager.RebuildDeployment(name, opts...)
+	case "start":
+		output, err = s.manager.StartDeployment(name, opts...)
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":         err.Error(),
+			"name":          name,
+			"action":        req.Action,
+			"pulled":        pull,
+			"pull_output":   pullOutput,
+			"deploy_output": output,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "Deployment completed",
+		"name":          name,
+		"action":        req.Action,
+		"pulled":        pull,
+		"pull_output":   pullOutput,
+		"deploy_output": output,
+	})
+}
+
 func (s *Server) pullDeploymentImage(c *gin.Context) {
 	name := c.Param("name")
 
@@ -1841,6 +1940,141 @@ func (s *Server) getDeploymentCompose(c *gin.Context) {
 		"content":  content,
 		"filename": filename,
 	})
+}
+
+func (s *Server) addDeploymentComposeMount(c *gin.Context) {
+	name := c.Param("name")
+
+	var req struct {
+		SourcePath  string `json:"source_path" binding:"required"`
+		TargetPath  string `json:"target_path" binding:"required"`
+		ServiceName string `json:"service_name" binding:"required"`
+		ReadOnly    bool   `json:"read_only"`
+		SELinux     string `json:"selinux"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	sourcePath, err := normalizeComposeMountSource(req.SourcePath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	targetPath := strings.TrimSpace(req.TargetPath)
+	if !strings.HasPrefix(targetPath, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "target_path must be an absolute container path",
+		})
+		return
+	}
+
+	var opts []string
+	if req.ReadOnly {
+		opts = append(opts, "ro")
+	}
+	switch req.SELinux {
+	case "":
+	case "z", "Z":
+		opts = append(opts, req.SELinux)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "selinux must be empty, 'z' (shared), or 'Z' (private)",
+		})
+		return
+	}
+
+	content, filename, err := s.manager.GetComposeFile(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	volumeMount := sourcePath + ":" + targetPath
+	if len(opts) > 0 {
+		volumeMount += ":" + strings.Join(opts, ",")
+	}
+
+	alreadyMounted := docker.HasVolumeMount(content, req.ServiceName, volumeMount)
+	updated, err := docker.AddVolumeToService(content, req.ServiceName, volumeMount)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+	if updated == content && !alreadyMounted {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "service not found or compose file could not be updated",
+		})
+		return
+	}
+
+	if err := s.validateComposeContent(updated, name); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if err := s.manager.UpdateDeployment(name, updated); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Mount added",
+		"name":         name,
+		"filename":     filename,
+		"content":      updated,
+		"service_name": req.ServiceName,
+		"mount":        volumeMount,
+		"added":        !alreadyMounted,
+	})
+}
+
+func normalizeComposeMountSource(sourcePath string) (string, error) {
+	sourcePath = strings.TrimSpace(sourcePath)
+	if sourcePath == "" {
+		return "", fmt.Errorf("source_path is required")
+	}
+	if strings.Contains(sourcePath, "\x00") {
+		return "", fmt.Errorf("source_path is invalid")
+	}
+
+	sourcePath = strings.ReplaceAll(sourcePath, "\\", "/")
+	if strings.HasPrefix(sourcePath, "/") {
+		sourcePath = "." + sourcePath
+	}
+	if sourcePath == "." {
+		return ".", nil
+	}
+	if !strings.HasPrefix(sourcePath, "./") {
+		sourcePath = "./" + strings.TrimPrefix(sourcePath, "/")
+	}
+
+	cleaned := path.Clean(sourcePath)
+	if cleaned == "." {
+		return ".", nil
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("source_path must stay inside the deployment directory")
+	}
+	if !strings.HasPrefix(cleaned, "./") {
+		cleaned = "./" + cleaned
+	}
+	return cleaned, nil
 }
 
 func (s *Server) listNetworks(c *gin.Context) {
@@ -2607,6 +2841,7 @@ type MountSelection struct {
 
 type ComposeGenerateRequest struct {
 	Name          string           `json:"name" binding:"required"`
+	Image         string           `json:"image,omitempty"`
 	ContainerPort int              `json:"container_port"`
 	MapPorts      bool             `json:"map_ports"`
 	HostPort      string           `json:"host_port"`
@@ -2615,7 +2850,9 @@ type ComposeGenerateRequest struct {
 
 type PortConfig struct {
 	ContainerPort int    `json:"container_port"`
+	Container     int    `json:"container,omitempty"`
 	HostPort      string `json:"host_port"`
+	Host          string `json:"host,omitempty"`
 }
 
 type ComposeUpdateRequest struct {
@@ -2898,6 +3135,37 @@ func (s *Server) generateComposeWithOptions(templateID string, opts *ComposeGene
 	return content, nil
 }
 
+func (s *Server) generateDeploymentCompose(name, image, templateID string, containerPort int, mapPorts bool, hostPort string, ports []PortConfig) (string, error) {
+	useCustomOptions := image != "" || containerPort != 0 || mapPorts || hostPort != "" || len(ports) > 0
+	if !useCustomOptions {
+		return s.generateComposeContent(name, templateID)
+	}
+
+	composeReq := ComposeGenerateRequest{
+		Name:          name,
+		Image:         image,
+		ContainerPort: containerPort,
+		MapPorts:      mapPorts,
+		HostPort:      hostPort,
+	}
+	if len(ports) > 0 {
+		composeReq.ContainerPort = ports[0].ContainerPort
+		if composeReq.ContainerPort == 0 {
+			composeReq.ContainerPort = ports[0].Container
+		}
+		hostPort := ports[0].HostPort
+		if hostPort == "" {
+			hostPort = ports[0].Host
+		}
+		if hostPort != "" {
+			composeReq.MapPorts = true
+			composeReq.HostPort = hostPort
+		}
+	}
+
+	return s.generateComposeWithOptions(templateID, &composeReq)
+}
+
 func (s *Server) injectMounts(content string, selections []MountSelection, available []TemplateMount) string {
 	mountMap := make(map[string]TemplateMount)
 	for _, m := range available {
@@ -2997,6 +3265,13 @@ func hasVolumeOptions(volume string) bool {
 
 func (s *Server) generateCustomCompose(opts *ComposeGenerateRequest) (string, error) {
 	networkName := s.config.Infrastructure.DefaultProxyNetwork
+	image := strings.TrimSpace(opts.Image)
+	if image == "" {
+		image = "nginx:alpine"
+	}
+	if err := validateImageName(image); err != nil {
+		return "", err
+	}
 
 	containerPort := opts.ContainerPort
 	if containerPort == 0 {
@@ -3011,7 +3286,7 @@ func (s *Server) generateCustomCompose(opts *ComposeGenerateRequest) (string, er
 	content := fmt.Sprintf(`name: %s
 services:
   app:
-    image: nginx:alpine
+    image: %s
     container_name: %s
     %s
     networks:
@@ -3021,9 +3296,23 @@ services:
 networks:
   %s:
     external: true
-`, opts.Name, opts.Name, portConfig, networkName, networkName)
+`, opts.Name, image, opts.Name, portConfig, networkName, networkName)
 
 	return content, nil
+}
+
+func validateImageName(image string) error {
+	if image == "" {
+		return fmt.Errorf("image is required")
+	}
+	if len(image) > 255 {
+		return fmt.Errorf("image name is too long")
+	}
+	validImage := regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@-]*$`)
+	if !validImage.MatchString(image) {
+		return fmt.Errorf("invalid image name %q", image)
+	}
+	return nil
 }
 
 type composeFile struct {

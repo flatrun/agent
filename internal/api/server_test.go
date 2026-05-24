@@ -585,6 +585,98 @@ func TestGenerateComposeWithOptionsCustomTemplate(t *testing.T) {
 	}
 }
 
+func TestGenerateComposeWithOptionsCustomImage(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	opts := &ComposeGenerateRequest{
+		Name:          "custom-app",
+		Image:         "ghcr.io/flatrun/example:1.2.3",
+		ContainerPort: 3000,
+	}
+
+	result, err := s.generateComposeWithOptions("custom", opts)
+	if err != nil {
+		t.Fatalf("generateComposeWithOptions failed: %v", err)
+	}
+
+	if !strings.Contains(result, "image: ghcr.io/flatrun/example:1.2.3") {
+		t.Error("Result should contain requested image")
+	}
+	if !strings.Contains(result, "3000") {
+		t.Error("Result should expose requested container port")
+	}
+}
+
+func TestGenerateDeploymentComposePreservesDefaultTemplate(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	result, err := s.generateDeploymentCompose("default-app", "", "", 0, false, "", nil)
+	if err != nil {
+		t.Fatalf("generateDeploymentCompose failed: %v", err)
+	}
+
+	if !strings.Contains(result, "image: nginx:alpine") {
+		t.Error("Default deployment compose should still use the static template")
+	}
+	if !strings.Contains(result, "./html:/usr/share/nginx/html:ro") {
+		t.Error("Default deployment compose should preserve static template mounts")
+	}
+}
+
+func TestGenerateDeploymentComposeImageWithPorts(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	result, err := s.generateDeploymentCompose("api", "registry.example.com/team/api:main", "", 0, false, "", []PortConfig{
+		{Container: 8080, Host: "18080"},
+	})
+	if err != nil {
+		t.Fatalf("generateDeploymentCompose failed: %v", err)
+	}
+
+	if !strings.Contains(result, "image: registry.example.com/team/api:main") {
+		t.Error("Result should contain requested image")
+	}
+	if !strings.Contains(result, "18080:8080") {
+		t.Error("Result should contain requested port mapping")
+	}
+}
+
+func TestGenerateComposeWithOptionsRejectsInvalidImage(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	_, err := s.generateComposeWithOptions("custom", &ComposeGenerateRequest{
+		Name:  "bad-app",
+		Image: "nginx:latest\n    privileged: true",
+	})
+	if err == nil {
+		t.Fatal("Expected invalid image to be rejected")
+	}
+}
+
 func TestInjectMounts(t *testing.T) {
 	cfg := &config.Config{}
 	s := &Server{config: cfg}
