@@ -119,7 +119,7 @@ func TestActorContextCanAccessDeployment(t *testing.T) {
 			actor: &ActorContext{
 				Role:        RoleOperator,
 				Deployments: map[string]string{"app-a": "write", "app-b": "write"},
-				APIKey:      &APIKey{Deployments: []string{"app-a"}},
+				APIKey:      &APIKey{Deployments: DeploymentAccess{"app-a": AccessLevelAdmin}},
 			},
 			deploymentName: "app-b",
 			requiredLevel:  "read",
@@ -130,7 +130,7 @@ func TestActorContextCanAccessDeployment(t *testing.T) {
 			actor: &ActorContext{
 				Role:        RoleOperator,
 				Deployments: map[string]string{"app-a": "write"},
-				APIKey:      &APIKey{Deployments: []string{"app-a"}},
+				APIKey:      &APIKey{Deployments: DeploymentAccess{"app-a": AccessLevelAdmin}},
 			},
 			deploymentName: "app-a",
 			requiredLevel:  "write",
@@ -188,7 +188,7 @@ func TestAPIKeyGetPermissionsJSON(t *testing.T) {
 }
 
 func TestAPIKeyGetDeploymentsJSON(t *testing.T) {
-	key := &APIKey{Deployments: []string{"app-a", "app-b"}}
+	key := &APIKey{Deployments: DeploymentAccess{"app-a": AccessLevelAdmin, "app-b": AccessLevelRead}}
 
 	json := key.GetDeploymentsJSON()
 	if json == "" {

@@ -487,6 +487,31 @@ func (db *DB) UpdateAPIKeyLastUsed(id int64, ip string) error {
 	return err
 }
 
+func (db *DB) UpdateAPIKey(key *APIKey) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	var roleVal sql.NullString
+	if key.Role != "" {
+		roleVal = sql.NullString{String: string(key.Role), Valid: true}
+	}
+
+	var expiresAt sql.NullTime
+	if !key.ExpiresAt.IsZero() {
+		expiresAt = sql.NullTime{Time: key.ExpiresAt, Valid: true}
+	}
+
+	_, err := db.conn.Exec(`
+		UPDATE api_keys
+		SET name = ?, description = ?, role = ?, permissions = ?, deployments = ?, expires_at = ?
+		WHERE id = ?`,
+		key.Name, key.Description, roleVal,
+		key.GetPermissionsJSON(), key.GetDeploymentsJSON(), expiresAt,
+		key.ID,
+	)
+	return err
+}
+
 func (db *DB) DeleteAPIKey(id int64) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()

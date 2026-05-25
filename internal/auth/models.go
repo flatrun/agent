@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -54,22 +56,53 @@ func (u *User) GetPermissionsJSON() string {
 	return string(b)
 }
 
+type DeploymentAccess map[string]string
+
+func (d *DeploymentAccess) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*d = nil
+		return nil
+	}
+	if trimmed[0] == '{' {
+		var m map[string]string
+		if err := json.Unmarshal(data, &m); err != nil {
+			return err
+		}
+		*d = m
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var arr []string
+		if err := json.Unmarshal(data, &arr); err != nil {
+			return err
+		}
+		out := make(map[string]string, len(arr))
+		for _, name := range arr {
+			out[name] = AccessLevelAdmin
+		}
+		*d = out
+		return nil
+	}
+	return fmt.Errorf("deployments must be an object {name:level} or array of names")
+}
+
 type APIKey struct {
-	ID          int64     `json:"id"`
-	KeyID       string    `json:"key_id"`
-	UserID      int64     `json:"user_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	KeyHash     string    `json:"-"`
-	KeyPrefix   string    `json:"key_prefix"`
-	Role        Role      `json:"role,omitempty"`
-	Permissions []string  `json:"permissions,omitempty"`
-	Deployments []string  `json:"deployments,omitempty"`
-	ExpiresAt   time.Time `json:"expires_at,omitempty"`
-	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
-	LastUsedIP  string    `json:"last_used_ip,omitempty"`
-	IsActive    bool      `json:"is_active"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          int64             `json:"id"`
+	KeyID       string            `json:"key_id"`
+	UserID      int64             `json:"user_id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	KeyHash     string            `json:"-"`
+	KeyPrefix   string            `json:"key_prefix"`
+	Role        Role              `json:"role,omitempty"`
+	Permissions []string          `json:"permissions,omitempty"`
+	Deployments DeploymentAccess  `json:"deployments,omitempty"`
+	ExpiresAt   time.Time         `json:"expires_at,omitempty"`
+	LastUsedAt  time.Time         `json:"last_used_at,omitempty"`
+	LastUsedIP  string            `json:"last_used_ip,omitempty"`
+	IsActive    bool              `json:"is_active"`
+	CreatedAt   time.Time         `json:"created_at"`
 }
 
 type Session struct {
@@ -130,14 +163,11 @@ func (a *ActorContext) CanAccessDeployment(name string, requiredLevel string) bo
 	}
 
 	if a.APIKey != nil && len(a.APIKey.Deployments) > 0 {
-		found := false
-		for _, d := range a.APIKey.Deployments {
-			if d == name {
-				found = true
-				break
-			}
+		keyLevel, ok := a.APIKey.Deployments[name]
+		if !ok {
+			return false
 		}
-		if !found {
+		if !accessLevelSufficient(keyLevel, requiredLevel) {
 			return false
 		}
 	}
@@ -184,11 +214,11 @@ func ParsePermissionsJSON(s string) []string {
 	return perms
 }
 
-func ParseDeploymentsJSON(s string) []string {
+func ParseDeploymentsJSON(s string) DeploymentAccess {
 	if s == "" {
 		return nil
 	}
-	var deps []string
-	_ = json.Unmarshal([]byte(s), &deps)
-	return deps
+	var d DeploymentAccess
+	_ = (&d).UnmarshalJSON([]byte(s))
+	return d
 }

@@ -65,6 +65,7 @@ type Server struct {
 	authManager        *auth.Manager
 	proxyOrchestrator  *proxy.Orchestrator
 	filesManager       *files.Manager
+	systemFilesManager *files.SystemManager
 	servicesManager    *system.ServicesManager
 	databaseManager    *database.Manager
 	infraManager       *infra.Manager
@@ -145,6 +146,7 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	proxyOrchestrator := proxy.NewOrchestrator(cfg)
 	filesManager := files.NewManager(cfg.DeploymentsPath)
+	systemFilesManager := files.NewSystemManager(cfg.SystemFilesRoot)
 	servicesManager := system.NewServicesManager()
 	databaseManager := database.NewManager()
 	infraManager := infra.NewManager(cfg)
@@ -248,6 +250,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		authManager:        authManager,
 		proxyOrchestrator:  proxyOrchestrator,
 		filesManager:       filesManager,
+		systemFilesManager: systemFilesManager,
 		servicesManager:    servicesManager,
 		databaseManager:    databaseManager,
 		infraManager:       infraManager,
@@ -289,6 +292,7 @@ func (s *Server) setupRoutes() {
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
+		api.GET("/system/terminal", s.systemTerminal)
 
 		// Setup endpoints (public, gated by setup state)
 		setupGroup := api.Group("/setup")
@@ -319,6 +323,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.createDeployment)
 			protected.PUT("/deployments/:name", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeployment)
 			protected.PUT("/deployments/:name/metadata", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentMetadata)
+			protected.PUT("/deployments/:name/protected-mode", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.updateDeploymentProtectedMode)
 			protected.DELETE("/deployments/:name", s.authMiddleware.RequirePermission(auth.PermDeploymentsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.deleteDeployment)
 			protected.POST("/deployments/:name/start", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.startDeployment)
 			protected.POST("/deployments/:name/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.stopDeployment)
@@ -434,7 +439,19 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/files/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.uploadDeploymentFile)
 			protected.DELETE("/deployments/:name/files/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.deleteDeploymentFile)
 			protected.POST("/deployments/:name/mkdir/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createDeploymentDir)
+			protected.POST("/deployments/:name/touch/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createDeploymentFile)
+			protected.PUT("/deployments/:name/permissions/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.chmodDeploymentFile)
 			protected.GET("/deployments/:name/files-info", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentFilesInfo)
+
+			// System file endpoints (admin-only, scoped to SystemFilesRoot)
+			protected.GET("/system/files", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.listSystemFiles)
+			protected.GET("/system/files-info", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.getSystemFilesInfo)
+			protected.GET("/system/files/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.getSystemFile)
+			protected.POST("/system/files/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.uploadSystemFile)
+			protected.DELETE("/system/files/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.deleteSystemFile)
+			protected.POST("/system/mkdir/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.createSystemDir)
+			protected.POST("/system/touch/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.createSystemFile)
+			protected.PUT("/system/permissions/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.chmodSystemFile)
 
 			// Deployment environment endpoints
 			protected.GET("/deployments/:name/env", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentEnv)
@@ -573,6 +590,7 @@ func (s *Server) setupRoutes() {
 					apiKeysGroup.GET("", s.listAPIKeys)
 					apiKeysGroup.GET("/:id", s.getAPIKey)
 					apiKeysGroup.POST("", s.authMiddleware.RequirePermission(auth.PermAPIKeysWrite), s.createAPIKey)
+					apiKeysGroup.PUT("/:id", s.authMiddleware.RequirePermission(auth.PermAPIKeysWrite), s.updateAPIKey)
 					apiKeysGroup.DELETE("/:id", s.authMiddleware.RequirePermission(auth.PermAPIKeysDelete), s.deleteAPIKey)
 					apiKeysGroup.POST("/:id/revoke", s.authMiddleware.RequirePermission(auth.PermAPIKeysDelete), s.revokeAPIKey)
 				}
@@ -1401,6 +1419,9 @@ func (s *Server) getDeploymentEnv(c *gin.Context) {
 
 func (s *Server) updateDeploymentEnv(c *gin.Context) {
 	name := c.Param("name")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionUpdateEnv) {
+		return
+	}
 
 	var req struct {
 		EnvVars []EnvVar `json:"env_vars"`
@@ -1453,6 +1474,9 @@ func generateRandomPassword(length int) string {
 
 func (s *Server) updateDeployment(c *gin.Context) {
 	name := c.Param("name")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionUpdateDeployment) {
+		return
+	}
 
 	var req struct {
 		ComposeContent string `json:"compose_content" binding:"required"`
@@ -1509,6 +1533,20 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
+		return
+	}
+
+	if _, ok := sentFields["protected_mode"]; ok {
+		if !s.requireDeploymentAccess(c, name, auth.AccessLevelAdmin) {
+			return
+		}
+		if err := validateProtectedModeConfig(incoming.ProtectedMode); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+	} else if !s.requireUnprotectedDeploymentAction(c, name, protectedActionUpdateMetadata) {
 		return
 	}
 
@@ -1582,12 +1620,61 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	if _, ok := sentFields["backup"]; ok {
 		merged.Backup = incoming.Backup
 	}
+	if _, ok := sentFields["protected_mode"]; ok {
+		merged.ProtectedMode = incoming.ProtectedMode
+	}
 
 	return &merged
 }
 
+func (s *Server) updateDeploymentProtectedMode(c *gin.Context) {
+	name := c.Param("name")
+
+	var req models.ProtectedModeConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+	if err := validateProtectedModeConfig(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found",
+		})
+		return
+	}
+	if deployment.Metadata == nil {
+		deployment.Metadata = &models.ServiceMetadata{Name: name}
+	}
+	deployment.Metadata.ProtectedMode = &req
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "Protected mode updated",
+		"name":           name,
+		"protected_mode": deployment.Metadata.ProtectedMode,
+	})
+}
+
 func (s *Server) deleteDeployment(c *gin.Context) {
 	name := c.Param("name")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionDeleteDeployment) {
+		return
+	}
 
 	deleteSSL := c.DefaultQuery("delete_ssl", "true") == "true"
 	deleteDatabase := c.DefaultQuery("delete_database", "false") == "true"
@@ -1719,6 +1806,9 @@ func (s *Server) restartDeployment(c *gin.Context) {
 
 func (s *Server) rebuildDeployment(c *gin.Context) {
 	name := c.Param("name")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionRebuild) {
+		return
+	}
 
 	auth, opts := s.deploymentAuthOptions(name)
 	defer auth.Close()
@@ -1770,6 +1860,10 @@ func (s *Server) deployDeployment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Unsupported deploy action. Use one of: restart, rebuild, start",
 		})
+		return
+	}
+
+	if req.Action == "rebuild" && !s.requireUnprotectedDeploymentAction(c, name, protectedActionRebuild) {
 		return
 	}
 
@@ -1884,6 +1978,46 @@ func (s *Server) getDeploymentImages(c *gin.Context) {
 func (s *Server) executeQuickAction(c *gin.Context) {
 	name := c.Param("name")
 	actionID := c.Param("actionId")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionQuickAction) {
+		return
+	}
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Deployment not found",
+		})
+		return
+	}
+	if deployment.Metadata != nil {
+		for _, action := range deployment.Metadata.QuickActions {
+			if action.ID != actionID {
+				continue
+			}
+			blocked, rule, err := protectedCommandBlocked(deployment.Metadata.ProtectedMode, action.Command)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": "Failed to check protected command rules: " + err.Error(),
+				})
+				return
+			}
+			if blocked {
+				ruleName := rule.Name
+				if ruleName == "" {
+					ruleName = rule.ID
+				}
+				c.JSON(http.StatusLocked, gin.H{
+					"error":     "Quick action command blocked by deployment protected mode",
+					"action_id": actionID,
+					"rule":      ruleName,
+					"match":     rule.Match,
+					"pattern":   rule.Pattern,
+				})
+				return
+			}
+			break
+		}
+	}
 
 	output, err := s.manager.ExecuteQuickAction(name, actionID)
 	if err != nil {
@@ -2260,6 +2394,9 @@ func (s *Server) getSettings(c *gin.Context) {
 				"auto_block_threshold": s.config.Security.AutoBlockThreshold,
 				"auto_block_duration":  s.config.Security.AutoBlockDuration.String(),
 			},
+			"system_terminal": gin.H{
+				"protected_mode": s.config.SystemTerminal.ProtectedMode,
+			},
 		},
 	})
 }
@@ -2320,6 +2457,9 @@ func (s *Server) updateSettings(c *gin.Context) {
 			AutoBlockThreshold int    `json:"auto_block_threshold"`
 			AutoBlockDuration  string `json:"auto_block_duration"`
 		} `json:"security,omitempty"`
+		SystemTerminal *struct {
+			ProtectedMode *models.ProtectedModeConfig `json:"protected_mode"`
+		} `json:"system_terminal,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2443,6 +2583,14 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 	}
 
+	if req.SystemTerminal != nil && req.SystemTerminal.ProtectedMode != nil {
+		if err := validateProtectedModeConfig(req.SystemTerminal.ProtectedMode); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		s.config.SystemTerminal.ProtectedMode = *req.SystemTerminal.ProtectedMode
+	}
+
 	s.infraManager.UpdateConfig(s.config)
 	s.proxyOrchestrator.UpdateConfig(s.config)
 
@@ -2505,6 +2653,9 @@ func (s *Server) updateSettings(c *gin.Context) {
 				"auto_block_enabled":   s.config.Security.AutoBlockEnabled,
 				"auto_block_threshold": s.config.Security.AutoBlockThreshold,
 				"auto_block_duration":  s.config.Security.AutoBlockDuration.String(),
+			},
+			"system_terminal": gin.H{
+				"protected_mode": s.config.SystemTerminal.ProtectedMode,
 			},
 		},
 	})
@@ -5110,6 +5261,9 @@ func (s *Server) getDeploymentFile(c *gin.Context) {
 func (s *Server) uploadDeploymentFile(c *gin.Context) {
 	name := c.Param("name")
 	path := c.Param("path")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionUploadFile) {
+		return
+	}
 
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
@@ -5137,6 +5291,9 @@ func (s *Server) uploadDeploymentFile(c *gin.Context) {
 func (s *Server) deleteDeploymentFile(c *gin.Context) {
 	name := c.Param("name")
 	path := c.Param("path")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionDeleteFile) {
+		return
+	}
 
 	if err := s.filesManager.DeleteFile(name, path); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -5153,6 +5310,9 @@ func (s *Server) deleteDeploymentFile(c *gin.Context) {
 func (s *Server) createDeploymentDir(c *gin.Context) {
 	name := c.Param("name")
 	path := c.Param("path")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionCreateDir) {
+		return
+	}
 
 	if err := s.filesManager.CreateDirectory(name, path); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -5165,6 +5325,55 @@ func (s *Server) createDeploymentDir(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "Directory created",
 		"directory": info,
+	})
+}
+
+func (s *Server) createDeploymentFile(c *gin.Context) {
+	name := c.Param("name")
+	path := c.Param("path")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionUploadFile) {
+		return
+	}
+
+	if err := s.filesManager.CreateFile(name, path); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	info, _ := s.filesManager.GetFileInfo(name, path)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "File created",
+		"file":    info,
+	})
+}
+
+func (s *Server) chmodDeploymentFile(c *gin.Context) {
+	name := c.Param("name")
+	path := c.Param("path")
+
+	var req struct {
+		Mode int `json:"mode" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	if req.Mode < 0 || req.Mode > 0o777 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be between 0 and 0777"})
+		return
+	}
+
+	if err := s.filesManager.Chmod(name, path, os.FileMode(req.Mode)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	info, _ := s.filesManager.GetFileInfo(name, path)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Permissions updated",
+		"file":    info,
 	})
 }
 

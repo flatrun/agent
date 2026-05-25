@@ -24,18 +24,19 @@ type Service struct {
 }
 
 type ServiceMetadata struct {
-	Name         string                    `yaml:"name" json:"name"`
-	Type         string                    `yaml:"type" json:"type"`
-	Networking   NetworkingConfig          `yaml:"networking" json:"networking"`
-	SSL          SSLConfig                 `yaml:"ssl" json:"ssl"`
-	HealthCheck  HealthCheckConfig         `yaml:"healthcheck" json:"healthcheck"`
-	QuickActions []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
-	Security     *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
-	Backup       *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
-	CredentialID       string            `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
-	ServiceCredentials map[string]string `yaml:"service_credentials,omitempty" json:"service_credentials,omitempty"`
-	Domains      []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
-	Databases    []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
+	Name               string                    `yaml:"name" json:"name"`
+	Type               string                    `yaml:"type" json:"type"`
+	Networking         NetworkingConfig          `yaml:"networking" json:"networking"`
+	SSL                SSLConfig                 `yaml:"ssl" json:"ssl"`
+	HealthCheck        HealthCheckConfig         `yaml:"healthcheck" json:"healthcheck"`
+	QuickActions       []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
+	Security           *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
+	Backup             *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
+	ProtectedMode      *ProtectedModeConfig      `yaml:"protected_mode,omitempty" json:"protected_mode,omitempty"`
+	CredentialID       string                    `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
+	ServiceCredentials map[string]string         `yaml:"service_credentials,omitempty" json:"service_credentials,omitempty"`
+	Domains            []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
+	Databases          []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
 }
 
 type DomainConfig struct {
@@ -167,6 +168,22 @@ type QuickAction struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	Icon        string `yaml:"icon,omitempty" json:"icon,omitempty"`
 	Service     string `yaml:"service,omitempty" json:"service,omitempty"`
+}
+
+type ProtectedModeConfig struct {
+	Enabled             bool                   `yaml:"enabled" json:"enabled"`
+	BlockedActions      []string               `yaml:"blocked_actions,omitempty" json:"blocked_actions,omitempty"`
+	BlockedCommandRules []ProtectedCommandRule `yaml:"blocked_command_rules,omitempty" json:"blocked_command_rules,omitempty"`
+	DisableTerminal     bool                   `yaml:"disable_terminal,omitempty" json:"disable_terminal,omitempty"`
+}
+
+type ProtectedCommandRule struct {
+	ID            string `yaml:"id,omitempty" json:"id,omitempty"`
+	Name          string `yaml:"name,omitempty" json:"name,omitempty"`
+	Match         string `yaml:"match" json:"match"`
+	Pattern       string `yaml:"pattern" json:"pattern"`
+	CaseSensitive bool   `yaml:"case_sensitive,omitempty" json:"case_sensitive,omitempty"`
+	Description   string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 type NetworkingConfig struct {
