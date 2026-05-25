@@ -127,6 +127,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	}
 
 	manager := docker.NewManager(cfg.DeploymentsPath)
+	manager.SetCleanupTimeout(cfg.Cleanup.Timeout)
 	certsDiscovery := certs.NewDiscovery(cfg.DeploymentsPath)
 	networksManager := networks.NewManager()
 	pluginsDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins")
@@ -375,6 +376,9 @@ func (s *Server) setupRoutes() {
 			protected.GET("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getSettings)
 			protected.PUT("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSettings)
 			protected.PUT("/settings/security", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSecuritySettings)
+			protected.GET("/config", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listConfig)
+			protected.GET("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.getConfigKey)
+			protected.PUT("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigWrite), s.updateConfigKey)
 
 			// Compose, stats, subdomain (deployment-scoped)
 			protected.GET("/subdomain/generate", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.generateSubdomain)
@@ -416,6 +420,8 @@ func (s *Server) setupRoutes() {
 			protected.GET("/images", s.authMiddleware.RequirePermission(auth.PermImagesRead), s.listImages)
 			protected.DELETE("/images/:id", s.authMiddleware.RequirePermission(auth.PermImagesDelete), s.removeImage)
 			protected.POST("/images/pull", s.authMiddleware.RequirePermission(auth.PermImagesWrite), s.pullImage)
+			protected.POST("/images/cleanup", s.authMiddleware.RequirePermission(auth.PermImagesDelete), s.cleanupSystemImages)
+			protected.POST("/deployments/:name/images/cleanup", s.authMiddleware.RequirePermission(auth.PermImagesWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.cleanupDeploymentImages)
 
 			// Volume endpoints
 			protected.GET("/volumes", s.authMiddleware.RequirePermission(auth.PermVolumesRead), s.listVolumes)
@@ -1836,6 +1842,7 @@ func (s *Server) deployDeployment(c *gin.Context) {
 		Action     string `json:"action"`
 		Pull       *bool  `json:"pull"`
 		OnlyLatest bool   `json:"only_latest"`
+		Cleanup    *bool  `json:"cleanup"`
 	}{
 		Action: "restart",
 	}
@@ -1915,13 +1922,28 @@ func (s *Server) deployDeployment(c *gin.Context) {
 		return
 	}
 
+	cleanup := docker.CleanupResult{}
+	cleanupEnabled := pull
+	if req.Cleanup != nil {
+		cleanupEnabled = *req.Cleanup
+	}
+	if cleanupEnabled {
+		if r, err := s.manager.CleanupDeploymentImages(name, false); err == nil {
+			cleanup = r
+		} else {
+			log.Printf("Warning: post-deploy image cleanup for %s failed: %v", name, err)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message":       "Deployment completed",
-		"name":          name,
-		"action":        req.Action,
-		"pulled":        pull,
-		"pull_output":   pullOutput,
-		"deploy_output": output,
+		"message":         "Deployment completed",
+		"name":            name,
+		"action":          req.Action,
+		"pulled":          pull,
+		"pull_output":     pullOutput,
+		"deploy_output":   output,
+		"cleanup_removed": cleanup.Removed,
+		"cleanup_freed":   cleanup.FreedBytes,
 	})
 }
 
@@ -1929,7 +1951,8 @@ func (s *Server) pullDeploymentImage(c *gin.Context) {
 	name := c.Param("name")
 
 	var req struct {
-		OnlyLatest bool `json:"only_latest"`
+		OnlyLatest bool  `json:"only_latest"`
+		Cleanup    *bool `json:"cleanup"`
 	}
 	_ = c.ShouldBindJSON(&req)
 
@@ -1952,10 +1975,25 @@ func (s *Server) pullDeploymentImage(c *gin.Context) {
 		return
 	}
 
+	cleanup := docker.CleanupResult{}
+	cleanupEnabled := true
+	if req.Cleanup != nil {
+		cleanupEnabled = *req.Cleanup
+	}
+	if cleanupEnabled {
+		if r, err := s.manager.CleanupDeploymentImages(name, false); err == nil {
+			cleanup = r
+		} else {
+			log.Printf("Warning: post-pull image cleanup for %s failed: %v", name, err)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Images pulled successfully",
-		"name":    name,
-		"output":  output,
+		"message":         "Images pulled successfully",
+		"name":            name,
+		"output":          output,
+		"cleanup_removed": cleanup.Removed,
+		"cleanup_freed":   cleanup.FreedBytes,
 	})
 }
 
@@ -5069,6 +5107,53 @@ func (s *Server) pullImage(c *gin.Context) {
 		"message":         "Image pulled",
 		"name":            req.Name,
 		"used_credential": cred != nil,
+	})
+}
+
+func (s *Server) cleanupSystemImages(c *gin.Context) {
+	var req struct {
+		DryRun bool `json:"dry_run"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	result, err := s.manager.PruneDanglingImages(req.DryRun)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "System image cleanup complete",
+		"removed":     result.Removed,
+		"freed_bytes": result.FreedBytes,
+		"dry_run":     result.DryRun,
+	})
+}
+
+func (s *Server) cleanupDeploymentImages(c *gin.Context) {
+	name := c.Param("name")
+
+	var req struct {
+		DryRun bool `json:"dry_run"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	if _, err := s.manager.GetDeployment(name); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found: " + err.Error()})
+		return
+	}
+
+	result, err := s.manager.CleanupDeploymentImages(name, req.DryRun)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Deployment image cleanup complete",
+		"name":        name,
+		"removed":     result.Removed,
+		"freed_bytes": result.FreedBytes,
+		"images_kept": result.ImagesKept,
+		"dry_run":     result.DryRun,
 	})
 }
 

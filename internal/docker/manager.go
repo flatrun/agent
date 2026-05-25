@@ -23,11 +23,25 @@ type composeContainer struct {
 }
 
 type Manager struct {
-	discovery *Discovery
-	executor  *ComposeExecutor
-	apiClient *APIClient
-	basePath  string
-	mu        sync.RWMutex
+	discovery      *Discovery
+	executor       *ComposeExecutor
+	apiClient      *APIClient
+	basePath       string
+	cleanupTimeout time.Duration
+	mu             sync.RWMutex
+}
+
+func (m *Manager) SetCleanupTimeout(d time.Duration) {
+	if d > 0 {
+		m.cleanupTimeout = d
+	}
+}
+
+func (m *Manager) CleanupTimeout() time.Duration {
+	if m.cleanupTimeout > 0 {
+		return m.cleanupTimeout
+	}
+	return 2 * time.Minute
 }
 
 func NewManager(deploymentsPath string) *Manager {
