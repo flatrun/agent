@@ -123,6 +123,41 @@ func (m *Manager) CreateDirectory(deploymentName, relativePath string) error {
 	return os.MkdirAll(dirPath, 0755)
 }
 
+func (m *Manager) CreateFile(deploymentName, relativePath string) error {
+	filePath, err := m.resolvePath(deploymentName, relativePath)
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create parent directories: %w", err)
+	}
+
+	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("file already exists")
+		}
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	return file.Close()
+}
+
+func (m *Manager) Chmod(deploymentName, relativePath string, mode os.FileMode) error {
+	if mode&^0o777 != 0 {
+		return fmt.Errorf("mode must be 0-0777 (no setuid, setgid, or sticky bit)")
+	}
+	target, err := m.resolvePath(deploymentName, relativePath)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(target); err != nil {
+		return err
+	}
+	return os.Chmod(target, mode)
+}
+
 func (m *Manager) WriteFile(deploymentName, relativePath string, content io.Reader) error {
 	filePath, err := m.resolvePath(deploymentName, relativePath)
 	if err != nil {

@@ -60,6 +60,7 @@ const (
 
 	PermSystemRead  Permission = "system:read"
 	PermSystemWrite Permission = "system:write"
+	PermSystemFiles Permission = "system:files"
 
 	PermDNSRead  Permission = "dns:read"
 	PermDNSWrite Permission = "dns:write"
@@ -94,7 +95,7 @@ var adminPermissions = []Permission{
 	PermDatabasesRead, PermDatabasesWrite, PermDatabasesDelete,
 	PermInfrastructureRead, PermInfrastructureWrite,
 	PermSchedulerRead, PermSchedulerWrite, PermSchedulerDelete,
-	PermSystemRead, PermSystemWrite,
+	PermSystemRead, PermSystemWrite, PermSystemFiles,
 	PermDNSRead, PermDNSWrite,
 	PermRegistriesRead, PermRegistriesWrite, PermRegistriesDelete,
 	PermTemplatesRead, PermTemplatesWrite,

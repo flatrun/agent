@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flatrun/agent/pkg/models"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,6 +23,7 @@ type ClusterConfig struct {
 
 type Config struct {
 	DeploymentsPath string               `yaml:"deployments_path"`
+	SystemFilesRoot string               `yaml:"system_files_root"`
 	DockerSocket    string               `yaml:"docker_socket"`
 	API             APIConfig            `yaml:"api"`
 	Auth            AuthConfig           `yaml:"auth"`
@@ -34,6 +36,7 @@ type Config struct {
 	Security        SecurityConfig       `yaml:"security"`
 	Audit           AuditConfig          `yaml:"audit"`
 	Cluster         ClusterConfig        `yaml:"cluster"`
+	SystemTerminal  SystemTerminalConfig `yaml:"system_terminal"`
 }
 
 type DomainConfig struct {
@@ -113,15 +116,15 @@ type InfrastructureConfig struct {
 }
 
 type PowerDNSConfig struct {
-	Enabled       bool   `yaml:"enabled" json:"enabled"`
-	Container     string `yaml:"container" json:"container"`
-	Image         string `yaml:"image" json:"image"`
-	APIPort       int    `yaml:"api_port" json:"api_port"`
-	DNSPort       int    `yaml:"dns_port" json:"dns_port"`
-	APIKey        string `yaml:"api_key" json:"api_key"`
-	DataPath      string `yaml:"data_path" json:"data_path"`
-	DefaultSOA    string `yaml:"default_soa" json:"default_soa"`
-	Nameservers   string `yaml:"nameservers" json:"nameservers"`
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	Container   string `yaml:"container" json:"container"`
+	Image       string `yaml:"image" json:"image"`
+	APIPort     int    `yaml:"api_port" json:"api_port"`
+	DNSPort     int    `yaml:"dns_port" json:"dns_port"`
+	APIKey      string `yaml:"api_key" json:"api_key"`
+	DataPath    string `yaml:"data_path" json:"data_path"`
+	DefaultSOA  string `yaml:"default_soa" json:"default_soa"`
+	Nameservers string `yaml:"nameservers" json:"nameservers"`
 }
 
 type SharedDatabaseConfig struct {
@@ -170,6 +173,10 @@ type AuditConfig struct {
 	ExcludedPaths      []string      `yaml:"excluded_paths" json:"excluded_paths"`
 	SensitiveFields    []string      `yaml:"sensitive_fields" json:"sensitive_fields"`
 	CleanupInterval    time.Duration `yaml:"cleanup_interval" json:"cleanup_interval"`
+}
+
+type SystemTerminalConfig struct {
+	ProtectedMode models.ProtectedModeConfig `yaml:"protected_mode" json:"protected_mode"`
 }
 
 func FindConfigPath(providedPath string) string {
@@ -228,6 +235,13 @@ func setDefaults(cfg *Config) {
 	} else if strings.HasPrefix(cfg.DeploymentsPath, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
 			cfg.DeploymentsPath = home + cfg.DeploymentsPath[1:]
+		}
+	}
+	if cfg.SystemFilesRoot == "" {
+		cfg.SystemFilesRoot = "/"
+	} else if strings.HasPrefix(cfg.SystemFilesRoot, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			cfg.SystemFilesRoot = home + cfg.SystemFilesRoot[1:]
 		}
 	}
 	if cfg.DockerSocket == "" {
