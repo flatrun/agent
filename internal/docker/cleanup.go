@@ -2,8 +2,8 @@ package docker
 
 import (
 	"context"
+	"log"
 	"strings"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -48,7 +48,7 @@ func (m *Manager) CleanupDeploymentImages(name string, dryRun bool) (CleanupResu
 		return CleanupResult{}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), m.CleanupTimeout())
 	defer cancel()
 
 	hostImages, err := m.apiClient.listImageRecords(ctx)
@@ -73,6 +73,7 @@ func (m *Manager) CleanupDeploymentImages(name string, dryRun bool) (CleanupResu
 		}
 		if !dryRun {
 			if _, err := m.apiClient.cli.ImageRemove(ctx, img.id, image.RemoveOptions{}); err != nil {
+				log.Printf("cleanup: failed to remove image %s (%s) for deployment %s: %v", img.id, tagLabel, name, err)
 				continue
 			}
 		}
@@ -92,7 +93,7 @@ func (m *Manager) PruneDanglingImages(dryRun bool) (CleanupResult, error) {
 		return CleanupResult{}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), m.CleanupTimeout())
 	defer cancel()
 
 	if dryRun {

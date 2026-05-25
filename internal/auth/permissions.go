@@ -33,6 +33,9 @@ const (
 	PermSettingsRead  Permission = "settings:read"
 	PermSettingsWrite Permission = "settings:write"
 
+	PermConfigRead  Permission = "config:read"
+	PermConfigWrite Permission = "config:write"
+
 	PermAuditRead Permission = "audit:read"
 
 	PermContainersRead   Permission = "containers:read"
@@ -88,6 +91,7 @@ var adminPermissions = []Permission{
 	PermUsersRead, PermUsersWrite, PermUsersDelete,
 	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
 	PermSettingsRead, PermSettingsWrite,
+	PermConfigRead, PermConfigWrite,
 	PermAuditRead,
 	PermContainersRead, PermContainersWrite, PermContainersDelete,
 	PermImagesRead, PermImagesWrite, PermImagesDelete,

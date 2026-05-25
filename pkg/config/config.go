@@ -25,6 +25,7 @@ type Config struct {
 	DeploymentsPath string               `yaml:"deployments_path"`
 	SystemFilesRoot string               `yaml:"system_files_root"`
 	DockerSocket    string               `yaml:"docker_socket"`
+	DefaultTimeout  time.Duration        `yaml:"default_timeout"`
 	API             APIConfig            `yaml:"api"`
 	Auth            AuthConfig           `yaml:"auth"`
 	Domain          DomainConfig         `yaml:"domain"`
@@ -37,6 +38,7 @@ type Config struct {
 	Audit           AuditConfig          `yaml:"audit"`
 	Cluster         ClusterConfig        `yaml:"cluster"`
 	SystemTerminal  SystemTerminalConfig `yaml:"system_terminal"`
+	Cleanup         CleanupConfig        `yaml:"cleanup"`
 }
 
 type DomainConfig struct {
@@ -179,6 +181,10 @@ type SystemTerminalConfig struct {
 	ProtectedMode models.ProtectedModeConfig `yaml:"protected_mode" json:"protected_mode"`
 }
 
+type CleanupConfig struct {
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+}
+
 func FindConfigPath(providedPath string) string {
 	if providedPath != "" && providedPath != "config.yml" {
 		return providedPath
@@ -264,6 +270,12 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Health.MetricsRetention == 0 {
 		cfg.Health.MetricsRetention = 24 * time.Hour
+	}
+	if cfg.DefaultTimeout == 0 {
+		cfg.DefaultTimeout = 2 * time.Minute
+	}
+	if cfg.Cleanup.Timeout == 0 {
+		cfg.Cleanup.Timeout = cfg.DefaultTimeout
 	}
 	if cfg.Auth.JWTSecret == "" {
 		cfg.Auth.JWTSecret = "default-secret-change-me"
