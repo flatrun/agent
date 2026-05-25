@@ -136,6 +136,93 @@ func TestActorContextCanAccessDeployment(t *testing.T) {
 			requiredLevel:  "write",
 			want:           true,
 		},
+		{
+			name: "admin user with deployment-scoped non-admin key gets the key's level",
+			actor: &ActorContext{
+				User:   &User{Role: RoleAdmin},
+				Role:   RoleOperator,
+				APIKey: &APIKey{Deployments: DeploymentAccess{"my-app": AccessLevelWrite}},
+			},
+			deploymentName: "my-app",
+			requiredLevel:  "write",
+			want:           true,
+		},
+		{
+			name: "admin user with deployment-scoped key cannot exceed the key's level",
+			actor: &ActorContext{
+				User:   &User{Role: RoleAdmin},
+				Role:   RoleOperator,
+				APIKey: &APIKey{Deployments: DeploymentAccess{"my-app": AccessLevelWrite}},
+			},
+			deploymentName: "my-app",
+			requiredLevel:  "admin",
+			want:           false,
+		},
+		{
+			name: "admin user with deployment-scoped key denies unlisted deployment",
+			actor: &ActorContext{
+				User:   &User{Role: RoleAdmin},
+				Role:   RoleOperator,
+				APIKey: &APIKey{Deployments: DeploymentAccess{"my-app": AccessLevelWrite}},
+			},
+			deploymentName: "other-app",
+			requiredLevel:  "read",
+			want:           false,
+		},
+		{
+			name: "admin-role key with deployment scope is capped by the scope",
+			actor: &ActorContext{
+				User:   &User{Role: RoleAdmin},
+				Role:   RoleAdmin,
+				APIKey: &APIKey{Role: RoleAdmin, Deployments: DeploymentAccess{"my-app": AccessLevelWrite}},
+			},
+			deploymentName: "my-app",
+			requiredLevel:  "admin",
+			want:           false,
+		},
+		{
+			name: "admin user with unscoped key keeps admin access",
+			actor: &ActorContext{
+				User:   &User{Role: RoleAdmin},
+				Role:   RoleOperator,
+				APIKey: &APIKey{},
+			},
+			deploymentName: "anything",
+			requiredLevel:  "admin",
+			want:           true,
+		},
+		{
+			name: "operator user cannot gain access via the key alone",
+			actor: &ActorContext{
+				User:   &User{Role: RoleOperator},
+				Role:   RoleOperator,
+				APIKey: &APIKey{Deployments: DeploymentAccess{"my-app": AccessLevelWrite}},
+			},
+			deploymentName: "my-app",
+			requiredLevel:  "read",
+			want:           false,
+		},
+		{
+			name: "operator user with both grants takes the lower level",
+			actor: &ActorContext{
+				User:        &User{Role: RoleOperator},
+				Role:        RoleOperator,
+				Deployments: map[string]string{"my-app": "read"},
+				APIKey:      &APIKey{Deployments: DeploymentAccess{"my-app": AccessLevelAdmin}},
+			},
+			deploymentName: "my-app",
+			requiredLevel:  "write",
+			want:           false,
+		},
+		{
+			name: "anonymous admin (no user, no key) keeps admin access",
+			actor: &ActorContext{
+				Role: RoleAdmin,
+			},
+			deploymentName: "any",
+			requiredLevel:  "admin",
+			want:           true,
+		},
 	}
 
 	for _, tt := range tests {
