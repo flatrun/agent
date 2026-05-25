@@ -573,6 +573,7 @@ func (s *Server) setupRoutes() {
 					apiKeysGroup.GET("", s.listAPIKeys)
 					apiKeysGroup.GET("/:id", s.getAPIKey)
 					apiKeysGroup.POST("", s.authMiddleware.RequirePermission(auth.PermAPIKeysWrite), s.createAPIKey)
+					apiKeysGroup.PUT("/:id", s.authMiddleware.RequirePermission(auth.PermAPIKeysWrite), s.updateAPIKey)
 					apiKeysGroup.DELETE("/:id", s.authMiddleware.RequirePermission(auth.PermAPIKeysDelete), s.deleteAPIKey)
 					apiKeysGroup.POST("/:id/revoke", s.authMiddleware.RequirePermission(auth.PermAPIKeysDelete), s.revokeAPIKey)
 				}

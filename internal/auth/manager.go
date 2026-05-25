@@ -190,7 +190,7 @@ func (m *Manager) ValidateCredentials(username, password string) (*User, error) 
 	return user, nil
 }
 
-func (m *Manager) CreateAPIKey(userID int64, name, description string, role Role, permissions, deployments []string, expiresAt time.Time) (*APIKey, string, error) {
+func (m *Manager) CreateAPIKey(userID int64, name, description string, role Role, permissions []string, deployments DeploymentAccess, expiresAt time.Time) (*APIKey, string, error) {
 	plainKey, keyHash, keyID, prefix, err := GenerateAPIKey()
 	if err != nil {
 		return nil, "", err
@@ -220,7 +220,7 @@ func (m *Manager) CreateAPIKey(userID int64, name, description string, role Role
 	return key, plainKey, nil
 }
 
-func (m *Manager) CreateAPIKeyFromRaw(rawKey string, userID int64, name, description string, role Role, permissions, deployments []string, expiresAt time.Time) (*APIKey, error) {
+func (m *Manager) CreateAPIKeyFromRaw(rawKey string, userID int64, name, description string, role Role, permissions []string, deployments DeploymentAccess, expiresAt time.Time) (*APIKey, error) {
 	keyHash := HashAPIKey(rawKey)
 
 	idBytes := make([]byte, keyIDLength/2)
@@ -308,6 +308,24 @@ func (m *Manager) ValidateAPIKey(plainKey string) (*APIKey, *User, error) {
 
 func (m *Manager) UpdateAPIKeyLastUsed(keyID int64, ip string) error {
 	return m.db.UpdateAPIKeyLastUsed(keyID, ip)
+}
+
+func (m *Manager) UpdateAPIKey(id int64, name, description string, role Role, permissions []string, deployments DeploymentAccess, expiresAt time.Time) (*APIKey, error) {
+	existing, err := m.db.GetAPIKeyByID(id)
+	if err != nil {
+		return nil, err
+	}
+	existing.Name = name
+	existing.Description = description
+	existing.Role = role
+	existing.Permissions = permissions
+	existing.Deployments = deployments
+	existing.ExpiresAt = expiresAt
+
+	if err := m.db.UpdateAPIKey(existing); err != nil {
+		return nil, err
+	}
+	return existing, nil
 }
 
 func (m *Manager) DeleteAPIKey(id int64) error {

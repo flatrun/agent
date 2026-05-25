@@ -416,8 +416,11 @@ func TestCreateAPIKeyWithDeploymentScope(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 
 	apiKey := resp["api_key"].(map[string]interface{})
-	deployments := apiKey["deployments"].([]interface{})
+	deployments := apiKey["deployments"].(map[string]interface{})
 	if len(deployments) != 2 {
 		t.Errorf("Expected 2 deployments, got %d", len(deployments))
+	}
+	if deployments["app-a"] != "admin" || deployments["app-b"] != "admin" {
+		t.Errorf("Legacy array deployments should default to admin level, got %v", deployments)
 	}
 }

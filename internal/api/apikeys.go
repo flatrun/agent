@@ -108,13 +108,13 @@ func (s *Server) createAPIKey(c *gin.Context) {
 	}
 
 	var req struct {
-		Name        string    `json:"name" binding:"required"`
-		Description string    `json:"description"`
-		Role        auth.Role `json:"role"`
-		Permissions []string  `json:"permissions"`
-		Deployments []string  `json:"deployments"`
-		ExpiresIn   int       `json:"expires_in"`
-		UserID      int64     `json:"user_id"`
+		Name        string                `json:"name" binding:"required"`
+		Description string                `json:"description"`
+		Role        auth.Role             `json:"role"`
+		Permissions []string              `json:"permissions"`
+		Deployments auth.DeploymentAccess `json:"deployments"`
+		ExpiresIn   int                   `json:"expires_in"`
+		UserID      int64                 `json:"user_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -227,4 +227,85 @@ func apiKeyToResponse(k *auth.APIKey) gin.H {
 		response["last_used_at"] = k.LastUsedAt
 	}
 	return response
+}
+
+func (s *Server) updateAPIKey(c *gin.Context) {
+	key, ok := s.getAPIKeyWithAuth(c)
+	if !ok {
+		return
+	}
+	actor := auth.GetActorFromContext(c)
+	if actor == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+		return
+	}
+
+	var req struct {
+		Name        *string                `json:"name"`
+		Description *string                `json:"description"`
+		Role        *auth.Role             `json:"role"`
+		Permissions *[]string              `json:"permissions"`
+		Deployments *auth.DeploymentAccess `json:"deployments"`
+		ExpiresIn   *int                   `json:"expires_in"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Name != nil {
+		key.Name = *req.Name
+	}
+	if req.Description != nil {
+		key.Description = *req.Description
+	}
+	if req.Role != nil {
+		if *req.Role != "" && !req.Role.IsValid() {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+			return
+		}
+		if actor.Role != auth.RoleAdmin && *req.Role == auth.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot grant admin role"})
+			return
+		}
+		key.Role = *req.Role
+	}
+	if req.Permissions != nil {
+		if actor.Role != auth.RoleAdmin {
+			for _, p := range *req.Permissions {
+				if !actor.HasPermission(auth.Permission(p)) {
+					c.JSON(http.StatusForbidden, gin.H{"error": "Cannot grant permission you don't have: " + p})
+					return
+				}
+			}
+		}
+		key.Permissions = *req.Permissions
+	}
+	if req.Deployments != nil {
+		key.Deployments = *req.Deployments
+	}
+	if req.ExpiresIn != nil {
+		if *req.ExpiresIn > 0 {
+			key.ExpiresAt = time.Now().Add(time.Duration(*req.ExpiresIn) * time.Second)
+		} else {
+			key.ExpiresAt = time.Time{}
+		}
+	}
+
+	updated, err := s.authManager.UpdateAPIKey(
+		key.ID,
+		key.Name,
+		key.Description,
+		key.Role,
+		key.Permissions,
+		key.Deployments,
+		key.ExpiresAt,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update API key"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"api_key": apiKeyToResponse(updated)})
 }
