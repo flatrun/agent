@@ -158,35 +158,63 @@ func (a *ActorContext) HasPermission(p Permission) bool {
 }
 
 func (a *ActorContext) CanAccessDeployment(name string, requiredLevel string) bool {
-	if a.Role == RoleAdmin {
-		return true
-	}
-
-	if a.APIKey != nil && len(a.APIKey.Deployments) > 0 {
-		keyLevel, ok := a.APIKey.Deployments[name]
-		if !ok {
-			return false
-		}
-		if !accessLevelSufficient(keyLevel, requiredLevel) {
-			return false
-		}
-	}
-
-	level, ok := a.Deployments[name]
-	if !ok {
+	userLevel := actorUserDeploymentLevel(a, name)
+	if userLevel == "" {
 		return false
 	}
 
-	return accessLevelSufficient(level, requiredLevel)
+	keyLevel := actorAPIKeyDeploymentLevel(a, name)
+	if keyLevel == "" {
+		return false
+	}
+
+	return accessLevelSufficient(minAccessLevel(userLevel, keyLevel), requiredLevel)
+}
+
+func actorUserDeploymentLevel(a *ActorContext, name string) string {
+	if a.User != nil && a.User.Role == RoleAdmin {
+		return AccessLevelAdmin
+	}
+	if a.User == nil && a.Role == RoleAdmin {
+		return AccessLevelAdmin
+	}
+	if lvl, ok := a.Deployments[name]; ok {
+		return lvl
+	}
+	return ""
+}
+
+func actorAPIKeyDeploymentLevel(a *ActorContext, name string) string {
+	if a.APIKey == nil || len(a.APIKey.Deployments) == 0 {
+		return AccessLevelAdmin
+	}
+	if lvl, ok := a.APIKey.Deployments[name]; ok {
+		return lvl
+	}
+	return ""
 }
 
 func accessLevelSufficient(has, required string) bool {
-	levels := map[string]int{
-		AccessLevelRead:  1,
-		AccessLevelWrite: 2,
-		AccessLevelAdmin: 3,
+	return accessLevelRank(has) >= accessLevelRank(required)
+}
+
+func minAccessLevel(a, b string) string {
+	if accessLevelRank(a) <= accessLevelRank(b) {
+		return a
 	}
-	return levels[has] >= levels[required]
+	return b
+}
+
+func accessLevelRank(level string) int {
+	switch level {
+	case AccessLevelRead:
+		return 1
+	case AccessLevelWrite:
+		return 2
+	case AccessLevelAdmin:
+		return 3
+	}
+	return 0
 }
 
 func (a *APIKey) GetPermissionsJSON() string {
