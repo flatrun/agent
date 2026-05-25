@@ -3,11 +3,19 @@ package docker
 import (
 	"context"
 	"log"
+	"regexp"
 	"strings"
 
+	"github.com/distribution/reference"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+)
+
+var (
+	shaPrefixTag   = regexp.MustCompile(`^sha-[0-9a-f]{4,}$`)
+	digestStyleTag = regexp.MustCompile(`^sha(?:256|512):[0-9a-f]{16,}$`)
+	gitShaTag      = regexp.MustCompile(`^[0-9a-f]{7,}$`)
 )
 
 type RemovedImage struct {
@@ -27,6 +35,7 @@ type imageRecord struct {
 	id       string
 	repos    []string
 	fullRefs []string
+	tags     []string
 	bytes    int64
 }
 
@@ -134,8 +143,12 @@ func composeImageRefs(executor *ComposeExecutor, deploymentPath string) (map[str
 		if img.Image == "" || img.IsBuild {
 			continue
 		}
-		refs[img.Image] = true
-		repos[splitRepo(img.Image)] = true
+		repo, _ := parseRef(img.Image)
+		if repo == "" {
+			continue
+		}
+		refs[normalizeRef(img.Image)] = true
+		repos[repo] = true
 	}
 	return refs, repos, nil
 }
@@ -161,7 +174,7 @@ func (m *Manager) imageRefsAcrossDeployments(excludeName string) (map[string]boo
 		}
 		for _, img := range images {
 			if img.Image != "" && !img.IsBuild {
-				out[img.Image] = true
+				out[normalizeRef(img.Image)] = true
 			}
 		}
 	}
@@ -180,8 +193,13 @@ func (a *APIClient) listImageRecords(ctx context.Context) ([]imageRecord, error)
 			if ref == "" || ref == "<none>:<none>" {
 				continue
 			}
-			rec.fullRefs = append(rec.fullRefs, ref)
-			rec.repos = append(rec.repos, splitRepo(ref))
+			repo, tag := parseRef(ref)
+			if repo == "" {
+				continue
+			}
+			rec.fullRefs = append(rec.fullRefs, normalizeRef(ref))
+			rec.repos = append(rec.repos, repo)
+			rec.tags = append(rec.tags, tag)
 		}
 		out = append(out, rec)
 	}
@@ -229,9 +247,33 @@ func selectStaleImages(host []imageRecord, currentRefs, currentRepos, inUse, oth
 			kept++
 			continue
 		}
+		if !allContentHashTags(img.tags) {
+			kept++
+			continue
+		}
 		stale = append(stale, img)
 	}
 	return stale, kept
+}
+
+func allContentHashTags(tags []string) bool {
+	if len(tags) == 0 {
+		return false
+	}
+	for _, t := range tags {
+		if !looksLikeContentHash(t) {
+			return false
+		}
+	}
+	return true
+}
+
+func looksLikeContentHash(tag string) bool {
+	if tag == "" {
+		return false
+	}
+	lower := strings.ToLower(tag)
+	return shaPrefixTag.MatchString(lower) || digestStyleTag.MatchString(lower) || gitShaTag.MatchString(lower)
 }
 
 func anyMatch(values []string, set map[string]bool) bool {
@@ -243,15 +285,38 @@ func anyMatch(values []string, set map[string]bool) bool {
 	return false
 }
 
-func splitRepo(ref string) string {
+func parseRef(ref string) (repo, tag string) {
+	named, err := reference.ParseNormalizedNamed(ref)
+	if err != nil {
+		return splitRefManual(ref)
+	}
+	repo = named.Name()
+	if t, ok := named.(reference.Tagged); ok {
+		tag = t.Tag()
+	}
+	return repo, tag
+}
+
+func normalizeRef(ref string) string {
+	repo, tag := parseRef(ref)
+	if repo == "" {
+		return ref
+	}
+	if tag != "" {
+		return repo + ":" + tag
+	}
+	return repo
+}
+
+func splitRefManual(ref string) (repo, tag string) {
 	if i := strings.LastIndex(ref, "@"); i > 0 {
-		return ref[:i]
+		return ref[:i], ""
 	}
 	if i := strings.LastIndex(ref, ":"); i > 0 {
 		after := ref[i+1:]
 		if !strings.Contains(after, "/") {
-			return ref[:i]
+			return ref[:i], after
 		}
 	}
-	return ref
+	return ref, ""
 }
