@@ -79,9 +79,32 @@ func (s *Server) getAPIKey(c *gin.Context) {
 
 func (s *Server) createAPIKey(c *gin.Context) {
 	actor := auth.GetActorFromContext(c)
-	if actor == nil || actor.User == nil {
+	if actor == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
 		return
+	}
+
+	ownerUser := actor.User
+	if ownerUser == nil {
+		if actor.Role != auth.RoleAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Current authentication has no user identity; API keys cannot be created"})
+			return
+		}
+		users, err := s.authManager.GetUsers()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Cannot list users to attribute API key: " + err.Error()})
+			return
+		}
+		for i := range users {
+			if users[i].Role == auth.RoleAdmin {
+				ownerUser = &users[i]
+				break
+			}
+		}
+		if ownerUser == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "No admin user available to own the new API key"})
+			return
+		}
 	}
 
 	var req struct {
@@ -99,7 +122,7 @@ func (s *Server) createAPIKey(c *gin.Context) {
 		return
 	}
 
-	userID := actor.User.ID
+	userID := ownerUser.ID
 	if req.UserID > 0 && actor.Role == auth.RoleAdmin {
 		userID = req.UserID
 	}
@@ -179,7 +202,7 @@ func (s *Server) revokeAPIKey(c *gin.Context) {
 }
 
 func apiKeyToResponse(k *auth.APIKey) gin.H {
-	return gin.H{
+	response := gin.H{
 		"id":           k.ID,
 		"key_id":       k.KeyID,
 		"user_id":      k.UserID,
@@ -189,10 +212,19 @@ func apiKeyToResponse(k *auth.APIKey) gin.H {
 		"role":         k.Role,
 		"permissions":  k.Permissions,
 		"deployments":  k.Deployments,
-		"expires_at":   k.ExpiresAt,
-		"last_used_at": k.LastUsedAt,
 		"last_used_ip": k.LastUsedIP,
 		"is_active":    k.IsActive,
 		"created_at":   k.CreatedAt,
 	}
+	if k.ExpiresAt.IsZero() {
+		response["expires_at"] = nil
+	} else {
+		response["expires_at"] = k.ExpiresAt
+	}
+	if k.LastUsedAt.IsZero() {
+		response["last_used_at"] = nil
+	} else {
+		response["last_used_at"] = k.LastUsedAt
+	}
+	return response
 }
