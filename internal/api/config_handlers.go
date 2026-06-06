@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -53,22 +54,27 @@ func (s *Server) updateConfigKey(c *gin.Context) {
 	}
 
 	applied := false
+	var applyErr error
 	if apply, ok := s.runtimeAppliers()[key]; ok {
-		apply(s)
-		applied = true
+		applyErr = apply(s)
+		applied = applyErr == nil
 	}
 
 	entry, _ := config.Get(s.config, key)
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"entry":   entry,
 		"applied": applied,
-	})
+	}
+	if applyErr != nil {
+		resp["apply_error"] = applyErr.Error()
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) runtimeAppliers() map[string]func(*Server) {
-	applyDetectorThresholds := func(srv *Server) {
+func (s *Server) runtimeAppliers() map[string]func(*Server) error {
+	applyDetectorThresholds := func(srv *Server) error {
 		if srv.securityManager == nil {
-			return
+			return nil
 		}
 		srv.securityManager.SetDetectorThresholds(
 			srv.config.Security.RateThreshold,
@@ -78,10 +84,22 @@ func (s *Server) runtimeAppliers() map[string]func(*Server) {
 			srv.config.Security.RepeatedHitsThreshold,
 			srv.config.Security.DetectionWindow,
 		)
+		return nil
 	}
-	return map[string]func(*Server){
-		"cleanup.timeout": func(srv *Server) {
+	regenerateSecurityScripts := func(srv *Server) error {
+		if !srv.config.Security.Enabled {
+			return nil
+		}
+		if !srv.infraManager.IsNginxRunning() {
+			return fmt.Errorf("value saved but nginx is not running; regenerate security scripts to apply")
+		}
+		_, err := srv.infraManager.RefreshSecurityScripts()
+		return err
+	}
+	return map[string]func(*Server) error{
+		"cleanup.timeout": func(srv *Server) error {
 			srv.manager.SetCleanupTimeout(srv.config.Cleanup.Timeout)
+			return nil
 		},
 		"security.rate_threshold":          applyDetectorThresholds,
 		"security.not_found_threshold":     applyDetectorThresholds,
@@ -89,6 +107,8 @@ func (s *Server) runtimeAppliers() map[string]func(*Server) {
 		"security.unique_paths_threshold":  applyDetectorThresholds,
 		"security.repeated_hits_threshold": applyDetectorThresholds,
 		"security.detection_window":        applyDetectorThresholds,
+		"security.trusted_proxies":         regenerateSecurityScripts,
+		"security.trust_cf_header":         regenerateSecurityScripts,
 	}
 }
 
