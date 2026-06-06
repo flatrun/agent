@@ -138,6 +138,23 @@ local scanner_patterns = {
     "zgrab",
 }
 
+local function get_real_client_ip()
+    local cf_ip = ngx.var.http_cf_connecting_ip
+    if cf_ip and cf_ip ~= "" then
+        return cf_ip
+    end
+
+    local xff = ngx.var.http_x_forwarded_for
+    if xff and xff ~= "" then
+        local first_ip = xff:match("^([^,]+)")
+        if first_ip then
+            return first_ip:match("^%s*(.-)%s*$")
+        end
+    end
+
+    return ngx.var.remote_addr
+end
+
 function _M.is_suspicious_path(uri)
     if not uri then return false end
     local uri_lower = string.lower(uri)
@@ -163,7 +180,7 @@ end
 function _M.capture_event()
     local status = ngx.status
     local uri = ngx.var.uri
-    local ip = ngx.var.remote_addr
+    local ip = get_real_client_ip()
     local method = ngx.var.request_method
     local user_agent = ngx.var.http_user_agent or ""
     local host = ngx.var.host or ""
