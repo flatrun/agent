@@ -11,6 +11,9 @@ type Manager struct {
 	detector        *Detector
 	deploymentsPath string
 	mu              sync.RWMutex
+
+	wlMu    sync.RWMutex
+	wlCache *whitelistCache
 }
 
 func NewManager(deploymentsPath string) (*Manager, error) {
@@ -188,11 +191,19 @@ func (m *Manager) GetWhitelist() ([]WhitelistEntry, error) {
 }
 
 func (m *Manager) AddWhitelistEntry(value, entryType, reason string) (int64, error) {
-	return m.db.AddWhitelistEntry(value, entryType, reason, false)
+	id, err := m.db.AddWhitelistEntry(value, entryType, reason, false)
+	if err == nil {
+		m.invalidateWhitelistCache()
+	}
+	return id, err
 }
 
 func (m *Manager) RemoveWhitelistEntry(id int64) error {
-	return m.db.RemoveWhitelistEntry(id)
+	err := m.db.RemoveWhitelistEntry(id)
+	if err == nil {
+		m.invalidateWhitelistCache()
+	}
+	return err
 }
 
 func (m *Manager) IsWhitelisted(value string) (bool, error) {
@@ -204,6 +215,9 @@ func (m *Manager) AddDockerGatewayToWhitelist(gatewayIP string) error {
 		return nil
 	}
 	_, err := m.db.AddWhitelistEntry(gatewayIP, "ip", "Docker gateway", true)
+	if err == nil {
+		m.invalidateWhitelistCache()
+	}
 	return err
 }
 

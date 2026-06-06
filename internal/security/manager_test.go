@@ -119,6 +119,41 @@ func TestIngestEventSkipsWhitelistedPathPrefix(t *testing.T) {
 	}
 }
 
+func TestWhitelistCacheInvalidatedOnMutation(t *testing.T) {
+	m := newTestManager(t)
+
+	got, err := m.IsRequestWhitelisted("203.0.113.40", "/api/v1/stats")
+	if err != nil {
+		t.Fatalf("IsRequestWhitelisted: %v", err)
+	}
+	if got {
+		t.Fatal("IP unexpectedly whitelisted before adding entry")
+	}
+
+	id, err := m.AddWhitelistEntry("203.0.113.40", "ip", "test")
+	if err != nil {
+		t.Fatalf("AddWhitelistEntry: %v", err)
+	}
+	got, err = m.IsRequestWhitelisted("203.0.113.40", "/api/v1/stats")
+	if err != nil {
+		t.Fatalf("IsRequestWhitelisted: %v", err)
+	}
+	if !got {
+		t.Fatal("expected entry added after cache build to be honored")
+	}
+
+	if err := m.RemoveWhitelistEntry(id); err != nil {
+		t.Fatalf("RemoveWhitelistEntry: %v", err)
+	}
+	got, err = m.IsRequestWhitelisted("203.0.113.40", "/api/v1/stats")
+	if err != nil {
+		t.Fatalf("IsRequestWhitelisted: %v", err)
+	}
+	if got {
+		t.Fatal("expected removed entry to stop matching")
+	}
+}
+
 func TestIsRequestWhitelisted(t *testing.T) {
 	m := newTestManager(t)
 
