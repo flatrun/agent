@@ -34,6 +34,38 @@ func TestSecurityLuaRendersTrustConfig(t *testing.T) {
 	}
 }
 
+func TestSecurityLuaSanitizesTrustedProxies(t *testing.T) {
+	malicious := []string{
+		`10.0.0.0/8";os.execute("touch /tmp/pwned");--`,
+		`fe80::1%e"vil`,
+		"1.2.3.4\nlocal x = 1",
+		"not-an-ip",
+		"  192.168.0.0/16  ",
+		"203.0.113.7",
+	}
+	out, err := GetNginxSecurityLuaWithConfig("10.0.0.1", 8080, "tok", malicious, false)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	s := string(out)
+
+	if !strings.Contains(s, `local TRUSTED_PROXIES_RAW = "192.168.0.0/16,203.0.113.7"`) {
+		t.Errorf("expected only the two valid entries, got:\n%s", grepLua(s))
+	}
+	line := ""
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(l, "TRUSTED_PROXIES_RAW") {
+			line = l
+			break
+		}
+	}
+	for _, bad := range []string{"os.execute", `\"`, "\\", "%", "not-an-ip", "local x"} {
+		if strings.Contains(line, bad) {
+			t.Errorf("sanitized line still contains %q: %s", bad, line)
+		}
+	}
+}
+
 func grepLua(s string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(s, "\n") {
