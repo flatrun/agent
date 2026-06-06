@@ -57,6 +57,14 @@ func (m *Manager) IngestEvent(event *IngestEvent, autoBlockDuration time.Duratio
 
 	result := &IngestResult{}
 
+	whitelisted, err := m.IsRequestWhitelisted(event.SourceIP, event.RequestPath)
+	if err != nil {
+		return nil, err
+	}
+	if whitelisted {
+		return result, nil
+	}
+
 	// Check if IP is blocked - if so, don't process
 	blocked, err := m.db.IsIPBlocked(event.SourceIP)
 	if err != nil {
