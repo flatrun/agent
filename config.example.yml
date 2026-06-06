@@ -74,3 +74,8 @@ security:
     auto_block_enabled: true
     auto_block_threshold: 50
     auto_block_duration: 24h0m0s
+    # Only list proxies you control. Forwarded client IPs are honored solely
+    # when the connecting peer matches; an empty list ignores them, which
+    # prevents X-Forwarded-For / CF-Connecting-IP spoofing.
+    trusted_proxies: []
+    trust_cf_header: false

@@ -11,6 +11,8 @@ local _M = {}
 -- Configuration via environment variable (test-specific)
 local AGENT_URL = os.getenv("FLATRUN_AGENT_URL") or "http://host.docker.internal:8080"
 local INTERNAL_TOKEN = os.getenv("FLATRUN_INTERNAL_TOKEN") or ""
+local TRUSTED_PROXIES_RAW = os.getenv("FLATRUN_TRUSTED_PROXIES") or ""
+local TRUST_CF_HEADER = os.getenv("FLATRUN_TRUST_CF_HEADER") == "true"
 
 -- Blocked IPs cache settings
 local BLOCKED_IPS_CACHE_TTL = 30  -- seconds
@@ -138,6 +140,75 @@ local scanner_patterns = {
     "zgrab",
 }
 
+local function ipv4_to_int(ip_str)
+    local parts = {ip_str:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")}
+    if #parts ~= 4 then return nil end
+    return tonumber(parts[1]) * 16777216 + tonumber(parts[2]) * 65536 +
+           tonumber(parts[3]) * 256 + tonumber(parts[4])
+end
+
+local function is_ipv4_in_cidr(ip, cidr)
+    local cidr_ip, cidr_bits = cidr:match("^(.+)/(%d+)$")
+    if not cidr_ip then return ip == cidr end
+    -- IPv6 ranges fail closed (untrusted) so a spoofable forwarded header is never honored
+    if ip:find(":") or cidr_ip:find(":") then return false end
+    local bits = tonumber(cidr_bits)
+    local ip_int = ipv4_to_int(ip)
+    local cidr_int = ipv4_to_int(cidr_ip)
+    if not ip_int or not cidr_int then return false end
+    local mask = bits == 0 and 0 or (0xFFFFFFFF - (2^(32 - bits) - 1))
+    return bit.band(ip_int, mask) == bit.band(cidr_int, mask)
+end
+
+local trusted_proxies = {}
+for cidr in TRUSTED_PROXIES_RAW:gmatch("[^,]+") do
+    local trimmed = cidr:match("^%s*(.-)%s*$")
+    if trimmed ~= "" then
+        trusted_proxies[#trusted_proxies + 1] = trimmed
+    end
+end
+
+local function is_trusted_proxy(ip)
+    if not ip then return false end
+    for _, cidr in ipairs(trusted_proxies) do
+        if is_ipv4_in_cidr(ip, cidr) then return true end
+    end
+    return false
+end
+
+local function get_real_client_ip()
+    local peer = ngx.var.remote_addr
+
+    if not is_trusted_proxy(peer) then
+        return peer
+    end
+
+    if TRUST_CF_HEADER then
+        local cf_ip = ngx.var.http_cf_connecting_ip
+        if cf_ip and cf_ip ~= "" then
+            return cf_ip:match("^%s*(.-)%s*$")
+        end
+    end
+
+    local xff = ngx.var.http_x_forwarded_for
+    if xff and xff ~= "" then
+        local hops = {}
+        for hop in xff:gmatch("[^,]+") do
+            hops[#hops + 1] = hop:match("^%s*(.-)%s*$")
+        end
+        for i = #hops, 1, -1 do
+            if not is_trusted_proxy(hops[i]) then
+                return hops[i]
+            end
+        end
+        if #hops > 0 then
+            return hops[1]
+        end
+    end
+
+    return peer
+end
+
 function _M.is_suspicious_path(uri)
     if not uri then return false end
     local uri_lower = string.lower(uri)
@@ -163,7 +234,7 @@ end
 function _M.capture_event()
     local status = ngx.status
     local uri = ngx.var.uri
-    local ip = ngx.var.remote_addr
+    local ip = get_real_client_ip()
     local method = ngx.var.request_method
     local user_agent = ngx.var.http_user_agent or ""
     local host = ngx.var.host or ""

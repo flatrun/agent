@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"embed"
 	"io/fs"
+	"net/netip"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -129,15 +131,41 @@ func GetNginxSecurityLua() ([]byte, error) {
 	return FS.ReadFile("infra/nginx/lua/security.lua")
 }
 
+// sanitizeTrustedProxies keeps only well-formed IP and CIDR entries in their
+// canonical form. Anything else is dropped, which both rejects malformed
+// config and guarantees the value cannot break out of the Lua string literal
+// it is injected into.
+func sanitizeTrustedProxies(entries []string) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if prefix, err := netip.ParsePrefix(e); err == nil {
+			out = append(out, prefix.String())
+			continue
+		}
+		// ParseAddr accepts IPv6 zone IDs that can carry arbitrary characters;
+		// a zone is meaningless for proxy trust, so reject those entries
+		if addr, err := netip.ParseAddr(e); err == nil && addr.Zone() == "" {
+			out = append(out, addr.String())
+		}
+	}
+	return out
+}
+
 // LuaTemplateData contains the data for Lua template processing
 type LuaTemplateData struct {
 	AgentIP          string
 	AgentPort        int
 	InternalAPIToken string
+	TrustedProxies   string
+	TrustCFHeader    bool
 }
 
 // GetNginxSecurityLuaWithConfig returns the security.lua template processed with agent config
-func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int, internalAPIToken string) ([]byte, error) {
+func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int, internalAPIToken string, trustedProxies []string, trustCFHeader bool) ([]byte, error) {
 	content, err := FS.ReadFile("infra/nginx/lua/security.lua")
 	if err != nil {
 		return nil, err
@@ -153,6 +181,8 @@ func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int, internalAPITok
 		AgentIP:          agentIP,
 		AgentPort:        agentPort,
 		InternalAPIToken: internalAPIToken,
+		TrustedProxies:   strings.Join(sanitizeTrustedProxies(trustedProxies), ","),
+		TrustCFHeader:    trustCFHeader,
 	}
 
 	if err := tmpl.Execute(&buf, data); err != nil {

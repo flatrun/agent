@@ -52,6 +52,7 @@ func TestLuaRealtimeCapture(t *testing.T) {
 
 		req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%s/admin", luaNginxPort), nil)
 		req.Header.Set("User-Agent", "Mozilla/5.0 FlatRunTest")
+		req.Header.Set("X-Forwarded-For", "203.0.113.50")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
@@ -78,6 +79,7 @@ func TestLuaRealtimeCapture(t *testing.T) {
 
 		req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%s/api/private", luaNginxPort), nil)
 		req.Header.Set("User-Agent", "Mozilla/5.0 FlatRunTest")
+		req.Header.Set("X-Forwarded-For", "203.0.113.51")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
@@ -104,6 +106,7 @@ func TestLuaRealtimeCapture(t *testing.T) {
 
 		req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%s/error", luaNginxPort), nil)
 		req.Header.Set("User-Agent", "Mozilla/5.0 FlatRunTest")
+		req.Header.Set("X-Forwarded-For", "203.0.113.52")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
@@ -130,6 +133,7 @@ func TestLuaRealtimeCapture(t *testing.T) {
 
 		req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%s/.env", luaNginxPort), nil)
 		req.Header.Set("User-Agent", "Mozilla/5.0 FlatRunTest")
+		req.Header.Set("X-Forwarded-For", "203.0.113.53")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
@@ -152,6 +156,7 @@ func TestLuaRealtimeCapture(t *testing.T) {
 
 		req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%s/", luaNginxPort), nil)
 		req.Header.Set("User-Agent", "nikto/2.1.6")
+		req.Header.Set("X-Forwarded-For", "203.0.113.54")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
