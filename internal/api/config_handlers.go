@@ -66,10 +66,29 @@ func (s *Server) updateConfigKey(c *gin.Context) {
 }
 
 func (s *Server) runtimeAppliers() map[string]func(*Server) {
+	applyDetectorThresholds := func(srv *Server) {
+		if srv.securityManager == nil {
+			return
+		}
+		srv.securityManager.SetDetectorThresholds(
+			srv.config.Security.RateThreshold,
+			srv.config.Security.NotFoundThreshold,
+			srv.config.Security.AuthFailureThreshold,
+			srv.config.Security.UniquePathsThreshold,
+			srv.config.Security.RepeatedHitsThreshold,
+			srv.config.Security.DetectionWindow,
+		)
+	}
 	return map[string]func(*Server){
 		"cleanup.timeout": func(srv *Server) {
 			srv.manager.SetCleanupTimeout(srv.config.Cleanup.Timeout)
 		},
+		"security.rate_threshold":          applyDetectorThresholds,
+		"security.not_found_threshold":     applyDetectorThresholds,
+		"security.auth_failure_threshold":  applyDetectorThresholds,
+		"security.unique_paths_threshold":  applyDetectorThresholds,
+		"security.repeated_hits_threshold": applyDetectorThresholds,
+		"security.detection_window":        applyDetectorThresholds,
 	}
 }
 
