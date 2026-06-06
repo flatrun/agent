@@ -5,6 +5,7 @@ import (
 	"embed"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -134,10 +135,12 @@ type LuaTemplateData struct {
 	AgentIP          string
 	AgentPort        int
 	InternalAPIToken string
+	TrustedProxies   string
+	TrustCFHeader    bool
 }
 
 // GetNginxSecurityLuaWithConfig returns the security.lua template processed with agent config
-func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int, internalAPIToken string) ([]byte, error) {
+func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int, internalAPIToken string, trustedProxies []string, trustCFHeader bool) ([]byte, error) {
 	content, err := FS.ReadFile("infra/nginx/lua/security.lua")
 	if err != nil {
 		return nil, err
@@ -153,6 +156,8 @@ func GetNginxSecurityLuaWithConfig(agentIP string, agentPort int, internalAPITok
 		AgentIP:          agentIP,
 		AgentPort:        agentPort,
 		InternalAPIToken: internalAPIToken,
+		TrustedProxies:   strings.Join(trustedProxies, ","),
+		TrustCFHeader:    trustCFHeader,
 	}
 
 	if err := tmpl.Execute(&buf, data); err != nil {

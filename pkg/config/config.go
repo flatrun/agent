@@ -166,6 +166,9 @@ type SecurityConfig struct {
 
 	// Internal API token for nginx-to-agent communication (auto-generated if empty)
 	InternalAPIToken string `yaml:"internal_api_token" json:"-"`
+
+	TrustedProxies []string `yaml:"trusted_proxies" json:"trusted_proxies"`
+	TrustCFHeader  bool     `yaml:"trust_cf_header" json:"trust_cf_header"`
 }
 
 type AuditConfig struct {
