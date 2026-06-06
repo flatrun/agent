@@ -150,6 +150,8 @@ end
 local function is_ipv4_in_cidr(ip, cidr)
     local cidr_ip, cidr_bits = cidr:match("^(.+)/(%d+)$")
     if not cidr_ip then return ip == cidr end
+    -- IPv6 ranges fail closed (untrusted) so a spoofable forwarded header is never honored
+    if ip:find(":") or cidr_ip:find(":") then return false end
     local bits = tonumber(cidr_bits)
     local ip_int = ipv4_to_int(ip)
     local cidr_int = ipv4_to_int(cidr_ip)
