@@ -1682,58 +1682,14 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 		return
 	}
 
-	deleteSSL := c.DefaultQuery("delete_ssl", "true") == "true"
-	deleteDatabase := c.DefaultQuery("delete_database", "false") == "true"
-	deleteVhost := c.DefaultQuery("delete_vhost", "true") == "true"
-
-	deployment, _ := s.manager.GetDeployment(name)
-
-	var deletedItems []string
-
-	if deleteVhost {
-		if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
-			log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
-		} else {
-			deletedItems = append(deletedItems, "virtual_host")
-		}
+	opts := deploymentDeleteOptions{
+		DeleteSSL:      c.DefaultQuery("delete_ssl", "true") == "true",
+		DeleteDatabase: c.DefaultQuery("delete_database", "false") == "true",
+		DeleteVhost:    c.DefaultQuery("delete_vhost", "true") == "true",
 	}
 
-	if deployment != nil && deployment.Metadata != nil && deleteSSL {
-		domainsToDelete := deployment.Metadata.GetUniqueDomainNames()
-		if len(domainsToDelete) == 0 && deployment.Metadata.Networking.Domain != "" {
-			domainsToDelete = []string{deployment.Metadata.Networking.Domain}
-		}
-
-		for _, domain := range domainsToDelete {
-			if err := s.proxyOrchestrator.SSLManager().DeleteCertificate(domain); err != nil {
-				log.Printf("Warning: failed to delete SSL certificate for %s: %v", domain, err)
-			} else {
-				deletedItems = append(deletedItems, fmt.Sprintf("ssl_certificate:%s", domain))
-			}
-		}
-	}
-
-	if deleteDatabase && s.config.Infrastructure.Database.Enabled {
-		if deployment != nil && deployment.Metadata != nil && len(deployment.Metadata.Databases) > 0 {
-			for _, dbConfig := range deployment.Metadata.Databases {
-				if dbConfig.IsShared {
-					if err := s.deleteDatabaseByAlias(name, dbConfig.Alias); err != nil {
-						log.Printf("Warning: failed to delete database %s for %s: %v", dbConfig.Alias, name, err)
-					} else {
-						deletedItems = append(deletedItems, fmt.Sprintf("database:%s", dbConfig.Alias))
-					}
-				}
-			}
-		} else {
-			if err := s.deleteDatabaseForDeployment(name); err != nil {
-				log.Printf("Warning: failed to delete database for %s: %v", name, err)
-			} else {
-				deletedItems = append(deletedItems, "database")
-			}
-		}
-	}
-
-	if err := s.manager.DeleteDeployment(name); err != nil {
+	deletedItems, err := s.applyDeploymentDelete(name, opts)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -4470,55 +4426,10 @@ func (s *Server) addDomain(c *gin.Context) {
 		return
 	}
 
-	if domain.Domain == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Domain is required"})
+	if err := s.mutateDomainAdd(deployment, &domain); err != nil {
+		respondAPIError(c, err)
 		return
 	}
-
-	resolved, err := s.resolveService(name, domain.Service)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	domain.Service = resolved
-
-	if domain.ID == "" {
-		domain.ID = generateDomainID()
-	}
-
-	if deployment.Metadata == nil {
-		deployment.Metadata = &models.ServiceMetadata{}
-	}
-
-	if len(deployment.Metadata.Domains) == 0 && deployment.Metadata.Networking.Expose {
-		existingService := deployment.Metadata.Networking.Service
-		if existingService == "" {
-			existingService = resolved
-		}
-		existingDomain := models.DomainConfig{
-			ID:            "default",
-			Service:       existingService,
-			ContainerPort: deployment.Metadata.Networking.ContainerPort,
-			Domain:        deployment.Metadata.Networking.Domain,
-			SSL:           deployment.Metadata.SSL,
-		}
-		deployment.Metadata.Domains = []models.DomainConfig{existingDomain}
-	}
-
-	for _, existing := range deployment.Metadata.Domains {
-		if existing.Domain == domain.Domain && existing.PathPrefix == domain.PathPrefix {
-			c.JSON(http.StatusConflict, gin.H{
-				"error": fmt.Sprintf("Domain %s%s already exists", domain.Domain, domain.PathPrefix),
-			})
-			return
-		}
-	}
-
-	if domain.ContainerPort == 0 && deployment.Metadata.Networking.ContainerPort != 0 {
-		domain.ContainerPort = deployment.Metadata.Networking.ContainerPort
-	}
-
-	deployment.Metadata.Domains = append(deployment.Metadata.Domains, domain)
 
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save domain: " + err.Error()})
@@ -4552,41 +4463,14 @@ func (s *Server) updateDomain(c *gin.Context) {
 		return
 	}
 
-	if deployment.Metadata == nil || len(deployment.Metadata.Domains) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
-		return
-	}
-
 	var updatedDomain models.DomainConfig
 	if err := c.ShouldBindJSON(&updatedDomain); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid domain data: " + err.Error()})
 		return
 	}
 
-	if updatedDomain.Service != "" {
-		resolved, err := s.resolveService(name, updatedDomain.Service)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		updatedDomain.Service = resolved
-	}
-
-	found := false
-	for i, d := range deployment.Metadata.Domains {
-		if d.ID == domainID {
-			updatedDomain.ID = domainID
-			if updatedDomain.Service == "" {
-				updatedDomain.Service = d.Service
-			}
-			deployment.Metadata.Domains[i] = updatedDomain
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+	if err := s.mutateDomainUpdate(deployment, domainID, &updatedDomain); err != nil {
+		respondAPIError(c, err)
 		return
 	}
 
@@ -4618,62 +4502,10 @@ func (s *Server) deleteDomain(c *gin.Context) {
 		return
 	}
 
-	if deployment.Metadata == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+	teardown, err := mutateDomainDelete(deployment, domainID)
+	if err != nil {
+		respondAPIError(c, err)
 		return
-	}
-
-	// Handle legacy "default" domain from networking config
-	if domainID == "default" && len(deployment.Metadata.Domains) == 0 {
-		if !deployment.Metadata.Networking.Expose || deployment.Metadata.Networking.Domain == "" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
-			return
-		}
-		// Clear the legacy networking config
-		deployment.Metadata.Networking.Expose = false
-		deployment.Metadata.Networking.Domain = ""
-		deployment.Metadata.SSL.Enabled = false
-		deployment.Metadata.SSL.AutoCert = false
-
-		if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metadata: " + err.Error()})
-			return
-		}
-
-		if s.proxyOrchestrator != nil {
-			if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
-				log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
-			}
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Domain deleted successfully"})
-		return
-	}
-
-	if len(deployment.Metadata.Domains) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
-		return
-	}
-
-	found := false
-	newDomains := make([]models.DomainConfig, 0)
-	for _, d := range deployment.Metadata.Domains {
-		if d.ID == domainID {
-			found = true
-			continue
-		}
-		newDomains = append(newDomains, d)
-	}
-
-	if !found {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
-		return
-	}
-
-	if len(newDomains) == 0 {
-		deployment.Metadata.Domains = nil
-	} else {
-		deployment.Metadata.Domains = newDomains
 	}
 
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
@@ -4682,15 +4514,9 @@ func (s *Server) deleteDomain(c *gin.Context) {
 	}
 
 	if s.proxyOrchestrator != nil {
-		if len(newDomains) == 0 {
-			if deployment.Metadata.Networking.Expose {
-				if _, err := s.proxyOrchestrator.SetupDeployment(deployment); err != nil {
-					log.Printf("Warning: failed to setup legacy proxy for %s: %v", name, err)
-				}
-			} else {
-				if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
-					log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
-				}
+		if teardown {
+			if err := s.proxyOrchestrator.TeardownDeployment(name); err != nil {
+				log.Printf("Warning: failed to teardown proxy for %s: %v", name, err)
 			}
 		} else {
 			if _, err := s.proxyOrchestrator.SetupDeployment(deployment); err != nil {

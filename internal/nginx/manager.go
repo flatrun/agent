@@ -133,6 +133,20 @@ func (m *Manager) UpdateVirtualHost(deployment *models.Deployment) error {
 	return m.CreateVirtualHost(deployment)
 }
 
+// RenderVirtualHost returns the config that CreateVirtualHost would
+// write, without touching disk or nginx.
+func (m *Manager) RenderVirtualHost(deployment *models.Deployment) (string, error) {
+	if deployment.Metadata == nil {
+		return "", fmt.Errorf("deployment has no metadata")
+	}
+	if len(deployment.Metadata.GetDomains()) == 0 {
+		return "", nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.generateMultiDomainConfig(deployment)
+}
+
 func (m *Manager) VirtualHostExists(deploymentName string) bool {
 	configFile := filepath.Join(m.configPath, deploymentName+".conf")
 	_, err := os.Stat(configFile)
