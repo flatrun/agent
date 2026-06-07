@@ -171,7 +171,7 @@ func TestBuildAssistMessagesTruncates(t *testing.T) {
 	msgs := BuildAssistMessages(intent, "deployment myapp", []Section{
 		{Label: "docker-compose.yml", Content: "services: {}", Format: "yaml"},
 		{Label: "Recent logs", Content: long},
-	}, "why does it crash?")
+	}, "why does it crash?", "https://flatrun.dev/docs/")
 
 	if len(msgs) != 2 {
 		t.Fatalf("got %d messages", len(msgs))
@@ -194,6 +194,9 @@ func TestBuildAssistMessagesTruncates(t *testing.T) {
 	if !strings.Contains(msgs[1].Content, "deployment myapp") {
 		t.Error("scope label missing from prompt")
 	}
+	if !strings.Contains(msgs[0].Content, "https://flatrun.dev/docs/") {
+		t.Error("docs link missing from system prompt")
+	}
 }
 
 func TestIntentRegistry(t *testing.T) {
@@ -203,7 +206,7 @@ func TestIntentRegistry(t *testing.T) {
 			t.Errorf("intent %q missing", key)
 			continue
 		}
-		msgs := BuildAssistMessages(intent, "the FlatRun host", []Section{{Label: "Output", Content: "boom"}}, "")
+		msgs := BuildAssistMessages(intent, "the FlatRun host", []Section{{Label: "Output", Content: "boom"}}, "", "")
 		hasSuggestionFormat := strings.Contains(msgs[0].Content, "suggestions")
 		if intent.AllowSuggestions && !hasSuggestionFormat {
 			t.Errorf("intent %q should request suggestions", key)

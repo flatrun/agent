@@ -1,5 +1,7 @@
-deployments_path: ~/flatrun/deployments
+deployments_path: /home/nfebe/flatrun/deployments
+system_files_root: /
 docker_socket: unix:///var/run/docker.sock
+default_timeout: 2m0s
 api:
     host: 0.0.0.0
     port: 8090
@@ -26,6 +28,7 @@ nginx:
     reload_command: nginx -s reload
     external: false
     container_webroot_path: ""
+    reject_unknown_domains: false
 certbot:
     enabled: true
     image: certbot/certbot
@@ -35,6 +38,9 @@ certbot:
     webroot_path: ""
     container_webroot_path: ""
     dns_provider: ""
+    auto_renewal_enabled: false
+    renewal_threshold_days: 30
+    renewal_check_interval: 12h0m0s
 logging:
     level: info
     format: json
@@ -58,13 +64,16 @@ infrastructure:
         host: ""
         port: 6379
         password: ""
-# cluster:
-#     enabled: false
-#     server_name: ""          # defaults to OS hostname
-#     advertise_url: ""        # reachable URL for this agent (e.g. https://my-server:8090)
-#     health_interval: "30s"
-#     request_timeout: "10s"
-
+    powerdns:
+        enabled: false
+        container: powerdns
+        image: powerdns/pdns-auth-48:latest
+        api_port: 8081
+        dns_port: 53
+        api_key: 4bd02ab8c96205b6901660e53f7d96a2bf5253596f378d12
+        data_path: ""
+        default_soa: ""
+        nameservers: ""
 security:
     enabled: true
     realtime_capture: false
@@ -74,8 +83,44 @@ security:
     auto_block_enabled: true
     auto_block_threshold: 50
     auto_block_duration: 24h0m0s
-    # Only list proxies you control. Forwarded client IPs are honored solely
-    # when the connecting peer matches; an empty list ignores them, which
-    # prevents X-Forwarded-For / CF-Connecting-IP spoofing.
+    detection_window: 2m0s
+    not_found_threshold: 10
+    auth_failure_threshold: 5
+    unique_paths_threshold: 20
+    repeated_hits_threshold: 30
+    internal_api_token: ff66c51caad086544e7a6372b681da856146ae5586b6b59408d613fbc85f0045
     trusted_proxies: []
     trust_cf_header: false
+audit:
+    enabled: false
+    retention_days: 30
+    capture_request_body: false
+    excluded_paths:
+        - /api/health
+    sensitive_fields:
+        - password
+        - token
+        - secret
+        - api_key
+        - authorization
+    cleanup_interval: 24h0m0s
+cluster:
+    enabled: false
+    server_name: nfebe-zenbk-duo
+    advertise_url: ""
+    health_interval: 30s
+    request_timeout: 10s
+system_terminal:
+    protected_mode:
+        enabled: false
+cleanup:
+    timeout: 2m0s
+plans:
+    ttl: 24h0m0s
+    retention_days: 30
+ai:
+    enabled: true
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key: AIzaSyCYBIFuQmp35NVnQI68hzlV6l4BSTZ9_lM
+    model: gemini-2.5-flash
+    timeout: 1m0s

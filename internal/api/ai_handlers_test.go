@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/flatrun/agent/internal/ai"
+	"github.com/flatrun/agent/pkg/models"
 )
 
 type stubProvider struct {
@@ -136,6 +137,47 @@ func TestAIAnalyzeReturnsValidatedSuggestions(t *testing.T) {
 	first := actions[0].(map[string]interface{})
 	if first["service"] != "web" || first["action"] != "restart" {
 		t.Errorf("suggestion = %v", first)
+	}
+}
+
+func TestAIAnalyzeIncludesPlatformContext(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{
+		Name: "myapp",
+		Domains: []models.DomainConfig{
+			{ID: "d1", Service: "web", Domain: "myapp.example.com"},
+		},
+	})
+	s.config.Infrastructure.DefaultProxyNetwork = "proxy"
+	s.config.Infrastructure.DefaultDatabaseNetwork = "database"
+	s.config.AI.DocsURL = "https://flatrun.dev/docs/"
+
+	stub := &stubProvider{response: &ai.Response{Content: "ok", Model: "stub"}}
+	s.aiProvider = stub
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/deployments/myapp/ai/analyze",
+		map[string]interface{}{
+			"intent":  "diagnose",
+			"sources": []map[string]interface{}{{"type": "provided", "content": "network proxyy not found"}},
+		})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+
+	var prompt strings.Builder
+	for _, m := range stub.lastRequest.Messages {
+		prompt.WriteString(m.Content)
+	}
+	for _, want := range []string{
+		"FlatRun platform context",
+		"Configured proxy network",
+		"proxy",
+		"myapp.example.com",
+		"https://flatrun.dev/docs/",
+	} {
+		if !strings.Contains(prompt.String(), want) {
+			t.Errorf("prompt missing %q", want)
+		}
 	}
 }
 

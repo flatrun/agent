@@ -49,6 +49,7 @@ type AIConfig struct {
 	APIKey  string        `yaml:"api_key" json:"api_key"`
 	Model   string        `yaml:"model" json:"model"`
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+	DocsURL string        `yaml:"docs_url" json:"docs_url"`
 }
 
 type PlansConfig struct {
@@ -414,6 +415,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.AI.Timeout == 0 {
 		cfg.AI.Timeout = 60 * time.Second
+	}
+	if cfg.AI.DocsURL == "" {
+		cfg.AI.DocsURL = "https://flatrun.dev/docs/"
 	}
 	// Plans defaults
 	if cfg.Plans.TTL == 0 {

@@ -71,9 +71,13 @@ func IntentKeys() []string {
 
 const assistBasePrompt = `You are the assistant of FlatRun, a flat-file container hosting platform: a single Go agent manages deployments (each a directory with a docker-compose.yml), Docker networks, an nginx reverse proxy and Let's Encrypt certificates on one host.
 
+FlatRun conventions: each deployment is a directory containing docker-compose.yml, an optional .env.flatrun env file and a service.yml metadata file. Services join pre-created external Docker networks: the configured proxy network connects apps to the nginx reverse proxy that serves them on the web, and the database network connects apps to shared databases. The agent generates one nginx virtual host per exposed deployment and manages Let's Encrypt certificates. Data uses bind mounts inside the deployment directory, never named volumes.
+
+Answers must fit this installation, not Docker in general. The "FlatRun platform context" section in the user message states this host's actual configuration and state; reconcile everything you recommend against it, and when the generic fix and the platform's way of doing things differ, recommend the platform's way.
+
 %s
 
-Ground every statement in the provided context; never invent log lines or configuration. Secret values appear as [REDACTED]; that is expected and not an error.%s`
+Ground every statement in the provided context; never invent log lines or configuration. Secret values appear as [REDACTED]; that is expected and not an error.%s%s`
 
 const suggestionInstructions = `
 
@@ -92,12 +96,16 @@ type Section struct {
 // BuildAssistMessages assembles the chat for an analysis. Sections
 // must already be redacted. The newest end of long sections survives
 // truncation since it matters most.
-func BuildAssistMessages(intent Intent, scopeLabel string, sections []Section, question string) []Message {
+func BuildAssistMessages(intent Intent, scopeLabel string, sections []Section, question, docsURL string) []Message {
 	suggestions := ""
 	if intent.AllowSuggestions {
 		suggestions = suggestionInstructions
 	}
-	system := fmt.Sprintf(assistBasePrompt, intent.Task, suggestions)
+	docs := ""
+	if strings.TrimSpace(docsURL) != "" {
+		docs = "\n\nProduct documentation you may reference in answers: " + strings.TrimSpace(docsURL)
+	}
+	system := fmt.Sprintf(assistBasePrompt, intent.Task, suggestions, docs)
 
 	perSection := contextBudget
 	if len(sections) > 0 {

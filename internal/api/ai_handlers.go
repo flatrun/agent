@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -73,6 +74,52 @@ func (s *Server) collectDeploymentSource(name string, src assistSource) (ai.Sect
 	}
 }
 
+// platformSection states this installation's live configuration so
+// analyses are grounded in FlatRun specifics instead of generic Docker
+// knowledge: which networks the platform expects, which networks
+// actually exist, and how the deployment is wired into them.
+func (s *Server) platformSection(deploymentName string) ai.Section {
+	var b strings.Builder
+	cfg := s.config
+
+	fmt.Fprintf(&b, "Configured proxy network (apps must join this external network to be served on the web): %s\n", cfg.Infrastructure.DefaultProxyNetwork)
+	fmt.Fprintf(&b, "Configured database network (apps reach shared databases over this external network): %s\n", cfg.Infrastructure.DefaultDatabaseNetwork)
+
+	if networks, err := s.networksManager.ListNetworks(); err == nil {
+		names := make([]string, 0, len(networks))
+		for _, n := range networks {
+			names = append(names, n.Name)
+		}
+		fmt.Fprintf(&b, "Docker networks that currently exist on this host: %s\n", strings.Join(names, ", "))
+	}
+
+	if cfg.Infrastructure.Database.Enabled {
+		fmt.Fprintf(&b, "Shared %s database server is available at host %q on the database network\n",
+			cfg.Infrastructure.Database.Type, cfg.Infrastructure.Database.Host)
+	}
+	fmt.Fprintf(&b, "Nginx reverse proxy managed by FlatRun: %t\n", cfg.Nginx.Enabled)
+
+	if deploymentName != "" {
+		if deployment, err := s.manager.GetDeployment(deploymentName); err == nil && deployment.Metadata != nil {
+			if domains := deployment.Metadata.GetUniqueDomainNames(); len(domains) > 0 {
+				fmt.Fprintf(&b, "This deployment serves the domain(s): %s\n", strings.Join(domains, ", "))
+			}
+			if len(deployment.Metadata.Databases) > 0 {
+				aliases := make([]string, 0, len(deployment.Metadata.Databases))
+				for _, db := range deployment.Metadata.Databases {
+					aliases = append(aliases, fmt.Sprintf("%s (%s)", db.Alias, db.Type))
+				}
+				fmt.Fprintf(&b, "This deployment uses database(s): %s\n", strings.Join(aliases, ", "))
+			}
+		}
+		if s.proxyOrchestrator != nil && s.proxyOrchestrator.NginxManager().VirtualHostExists(deploymentName) {
+			fmt.Fprintf(&b, "A virtual host for this deployment exists in the reverse proxy\n")
+		}
+	}
+
+	return ai.Section{Label: "FlatRun platform context", Content: b.String()}
+}
+
 func (s *Server) runAssist(c *gin.Context, scopeLabel string, sections []ai.Section, req assistRequest, secrets []string, validateSuggestions func([]ai.SuggestedAction) []ai.SuggestedAction) {
 	intent, ok := ai.GetIntent(req.Intent)
 	if !ok {
@@ -88,7 +135,7 @@ func (s *Server) runAssist(c *gin.Context, scopeLabel string, sections []ai.Sect
 		redactions += n
 	}
 
-	messages := ai.BuildAssistMessages(intent, scopeLabel, sections, req.Question)
+	messages := ai.BuildAssistMessages(intent, scopeLabel, sections, req.Question, s.config.AI.DocsURL)
 	resp, err := s.aiProvider.Complete(c.Request.Context(), ai.Request{Messages: messages})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -138,7 +185,8 @@ func (s *Server) aiAssistDeployment(c *gin.Context) {
 		return
 	}
 
-	sections := make([]ai.Section, 0, len(req.Sources))
+	sections := make([]ai.Section, 0, len(req.Sources)+1)
+	sections = append(sections, s.platformSection(name))
 	for _, src := range req.Sources {
 		section, aerr := s.collectDeploymentSource(name, src)
 		if aerr != nil {
@@ -173,7 +221,8 @@ func (s *Server) aiAssistSystem(c *gin.Context) {
 		req.Intent = "diagnose"
 	}
 
-	sections := make([]ai.Section, 0, len(req.Sources))
+	sections := make([]ai.Section, 0, len(req.Sources)+1)
+	sections = append(sections, s.platformSection(""))
 	for _, src := range req.Sources {
 		if src.Type != "provided" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "system scope only accepts provided sources"})
@@ -189,7 +238,7 @@ func (s *Server) aiAssistSystem(c *gin.Context) {
 		}
 		sections = append(sections, ai.Section{Label: label, Content: src.Content})
 	}
-	if len(sections) == 0 {
+	if len(sections) == 1 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one provided source is required"})
 		return
 	}
