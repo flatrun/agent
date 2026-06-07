@@ -20,6 +20,7 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/loader"
 	composetypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/backup"
@@ -83,6 +84,7 @@ type Server struct {
 	setupHandlers      *setup.Handlers
 	certRenewer        *ssl.Renewer
 	planStore          *plan.Store
+	aiProvider         ai.Provider
 
 	statsMu    sync.RWMutex
 	statsCache gin.H
@@ -272,6 +274,12 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
 
+	if provider, aiErr := ai.New(&cfg.AI); aiErr == nil {
+		s.aiProvider = provider
+	} else if aiErr != ai.ErrDisabled {
+		log.Printf("Warning: failed to initialize AI provider: %v", aiErr)
+	}
+
 	if backupManager != nil {
 		executor := scheduler.NewExecutor(backupManager, manager)
 		schedulerManager, err := scheduler.NewManager(cfg.DeploymentsPath, executor)
@@ -390,6 +398,10 @@ func (s *Server) setupRoutes() {
 			protected.GET("/plans/:id", s.getPlan)
 			protected.POST("/plans/:id/apply", s.applyPlan)
 			protected.DELETE("/plans/:id", s.deletePlan)
+
+			// AI endpoints
+			protected.GET("/ai/status", s.getAIStatus)
+			protected.POST("/deployments/:name/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.aiAnalyzeDeployment)
 
 			// Compose, stats, subdomain (deployment-scoped)
 			protected.GET("/subdomain/generate", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.generateSubdomain)

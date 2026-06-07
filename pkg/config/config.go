@@ -40,6 +40,15 @@ type Config struct {
 	SystemTerminal  SystemTerminalConfig `yaml:"system_terminal"`
 	Cleanup         CleanupConfig        `yaml:"cleanup"`
 	Plans           PlansConfig          `yaml:"plans"`
+	AI              AIConfig             `yaml:"ai"`
+}
+
+type AIConfig struct {
+	Enabled bool          `yaml:"enabled" json:"enabled"`
+	BaseURL string        `yaml:"base_url" json:"base_url"`
+	APIKey  string        `yaml:"api_key" json:"api_key"`
+	Model   string        `yaml:"model" json:"model"`
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 }
 
 type PlansConfig struct {
@@ -398,6 +407,13 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Audit.SensitiveFields == nil {
 		cfg.Audit.SensitiveFields = []string{"password", "token", "secret", "api_key", "authorization"}
+	}
+	// AI defaults
+	if cfg.AI.BaseURL == "" {
+		cfg.AI.BaseURL = "https://api.openai.com/v1"
+	}
+	if cfg.AI.Timeout == 0 {
+		cfg.AI.Timeout = 60 * time.Second
 	}
 	// Plans defaults
 	if cfg.Plans.TTL == 0 {

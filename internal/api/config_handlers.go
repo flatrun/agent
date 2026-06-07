@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
@@ -115,11 +116,28 @@ func (s *Server) runtimeAppliers() map[string]func(*Server) error {
 		_, err := srv.infraManager.RefreshSecurityScripts()
 		return err
 	}
+	rebuildAIProvider := func(srv *Server) error {
+		provider, err := ai.New(&srv.config.AI)
+		if err == ai.ErrDisabled {
+			srv.aiProvider = nil
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		srv.aiProvider = provider
+		return nil
+	}
 	return map[string]func(*Server) error{
 		"cleanup.timeout": func(srv *Server) error {
 			srv.manager.SetCleanupTimeout(srv.config.Cleanup.Timeout)
 			return nil
 		},
+		"ai.enabled":  rebuildAIProvider,
+		"ai.base_url": rebuildAIProvider,
+		"ai.api_key":  rebuildAIProvider,
+		"ai.model":    rebuildAIProvider,
+		"ai.timeout":  rebuildAIProvider,
 		"security.rate_threshold":          applyDetectorThresholds,
 		"security.not_found_threshold":     applyDetectorThresholds,
 		"security.auth_failure_threshold":  applyDetectorThresholds,

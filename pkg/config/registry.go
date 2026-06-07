@@ -24,6 +24,16 @@ var hiddenKeys = map[string]bool{
 	"auth.api_keys":   true,
 }
 
+// sensitiveKeys are masked on read like hiddenKeys but stay writable
+// through the API, so credentials can be configured without ever being
+// echoed back.
+var sensitiveKeys = map[string]bool{
+	"ai.api_key":                            true,
+	"infrastructure.database.root_password": true,
+	"infrastructure.redis.password":         true,
+	"infrastructure.powerdns.api_key":       true,
+}
+
 func Walk(cfg *Config) []Entry {
 	defaults := &Config{}
 	setDefaults(defaults)
@@ -33,12 +43,13 @@ func Walk(cfg *Config) []Entry {
 
 	out := make([]Entry, 0, len(current))
 	for _, e := range current {
-		if hiddenKeys[e.Key] {
-			e.Sensitive = true
-			e.Value = nil
-		}
 		if d, ok := defaultMap[e.Key]; ok {
 			e.Default = d
+		}
+		if hiddenKeys[e.Key] || sensitiveKeys[e.Key] {
+			e.Sensitive = true
+			e.Value = nil
+			e.Default = nil
 		}
 		out = append(out, e)
 	}
