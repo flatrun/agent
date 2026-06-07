@@ -191,6 +191,27 @@ func TestAIToolExecRefusesDestructive(t *testing.T) {
 	}
 }
 
+func TestAIToolHostCommandRefusesDestructive(t *testing.T) {
+	s, _, _ := setupPlanTestServer(t)
+	c := newAIToolContext()
+	result := s.runAITool(c, "", ai.ToolCall{
+		Name:      "run_host_command",
+		Arguments: `{"command":"rm -rf /"}`,
+	})
+	if !strings.Contains(result, "refused") {
+		t.Errorf("destructive host command not refused: %q", result)
+	}
+}
+
+func TestAIToolInstanceInfo(t *testing.T) {
+	s, _, _ := setupPlanTestServer(t)
+	c := newAIToolContext()
+	result := s.runAITool(c, "", ai.ToolCall{Name: "get_instance_info", Arguments: "{}"})
+	if !strings.Contains(result, "Hostname:") || !strings.Contains(result, "Public IP:") {
+		t.Errorf("instance info missing fields: %q", result)
+	}
+}
+
 func TestAIToolUnknownToolReported(t *testing.T) {
 	s, _, _ := setupPlanTestServer(t)
 	c := newAIToolContext()

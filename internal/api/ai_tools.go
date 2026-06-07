@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/setup"
 	"github.com/gin-gonic/gin"
 )
 
@@ -76,6 +79,59 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 	}
 
 	return map[string]aiTool{
+		"get_instance_info": {
+			Spec: ai.Tool{
+				Name:        "get_instance_info",
+				Description: "Get information about the FlatRun host itself: its hostname and public IP address.",
+				Parameters:  objSchema(map[string]interface{}{}),
+			},
+			Run: func(s *Server, _ *gin.Context, _ string, _ map[string]interface{}) (string, error) {
+				hostname, _ := os.Hostname()
+				var b strings.Builder
+				fmt.Fprintf(&b, "Hostname: %s\n", hostname)
+				fmt.Fprintf(&b, "Public IP: %s\n", setup.ResolvePublicIP())
+				return b.String(), nil
+			},
+		},
+		"run_host_command": {
+			Spec: ai.Tool{
+				Name:        "run_host_command",
+				Description: "Run a READ-ONLY shell command on the FlatRun host (not inside a container) to inspect the machine, for example: ip addr, hostname -I, df -h, docker ps, free -m. Commands that change state are refused. Requires system access.",
+				Parameters: objSchema(map[string]interface{}{
+					"command": strProp("The read-only shell command to run on the host."),
+				}, "command"),
+			},
+			Run: func(s *Server, c *gin.Context, _ string, args map[string]interface{}) (string, error) {
+				command := argString(args, "command")
+				if command == "" {
+					return "", fmt.Errorf("command is required")
+				}
+				actor := auth.GetActorFromContext(c)
+				if actor != nil && actor.Role != auth.RoleAdmin && !actor.HasPermission(auth.PermSystemRead) {
+					return "", fmt.Errorf("running host commands requires system access, which you do not have")
+				}
+				if s.config.SystemTerminal.ProtectedMode.Enabled && s.config.SystemTerminal.ProtectedMode.DisableTerminal {
+					return "", fmt.Errorf("the system terminal is disabled by global protected mode")
+				}
+				if destructiveCommand.MatchString(command) {
+					return "", fmt.Errorf("refused: %q looks like it changes state; only read-only commands are allowed", command)
+				}
+				if blocked, rule, _ := protectedCommandBlocked(&s.config.SystemTerminal.ProtectedMode, command); blocked {
+					return "", fmt.Errorf("command blocked by global protected mode: %s", protectedCommandBlockMessage(command, rule))
+				}
+				ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, "sh", "-c", command)
+				cmd.Dir = s.config.DeploymentsPath
+				out, err := cmd.CombinedOutput()
+				redactor := ai.NewRedactor(s.systemSecretValues())
+				redacted, _ := redactor.Redact(string(out))
+				if err != nil {
+					return truncateToolOutput(redacted) + "\n[command exited with error: " + err.Error() + "]", nil
+				}
+				return truncateToolOutput(redacted), nil
+			},
+		},
 		"list_networks": {
 			Spec: ai.Tool{
 				Name:        "list_networks",
