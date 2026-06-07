@@ -1,0 +1,124 @@
+package ai
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Intent selects what the model is asked to do with the gathered
+// context. Adding a capability is adding an entry here; the pipeline,
+// endpoints and UI do not change.
+type Intent struct {
+	Key              string
+	Task             string
+	AllowSuggestions bool
+}
+
+var intents = map[string]Intent{
+	"diagnose": {
+		Key:              "diagnose",
+		AllowSuggestions: true,
+		Task: `Diagnose the problem shown in the context. Answer with sections:
+## Diagnosis
+The most likely root cause, stated plainly in one or two sentences.
+## Evidence
+The specific lines or config fragments that support the diagnosis.
+## Fix
+Concrete steps the operator should take; show the exact command or config snippet when one applies. Common FlatRun specifics: external networks like "proxy" must exist before deployments start (docker network create proxy); virtual hosts live in nginx conf.d; deployments are plain compose projects.
+If the context is insufficient for a confident diagnosis, say so and list what to check next.`,
+	},
+	"improve": {
+		Key:              "improve",
+		AllowSuggestions: true,
+		Task: `Review the context for improvements to reliability, performance and operability. Answer with sections:
+## Findings
+What could be better and why it matters, grounded in the context.
+## Recommendations
+Concrete, prioritized changes with the exact config or command for each where applicable.`,
+	},
+	"secure": {
+		Key:              "secure",
+		AllowSuggestions: true,
+		Task: `Review the context for security weaknesses and hardening opportunities. Answer with sections:
+## Risks
+Each weakness found and its impact, grounded in the context. Do not invent vulnerabilities the context does not support.
+## Hardening
+Concrete, prioritized steps with the exact config or command for each where applicable.`,
+	},
+	"explain": {
+		Key:              "explain",
+		AllowSuggestions: false,
+		Task: `Explain what the context shows in plain language for an operator who did not build this system. Answer with sections:
+## Summary
+What is happening, in a few sentences.
+## Details
+The notable parts explained simply, defining jargon briefly when unavoidable.`,
+	},
+}
+
+func GetIntent(key string) (Intent, bool) {
+	intent, ok := intents[key]
+	return intent, ok
+}
+
+func IntentKeys() []string {
+	keys := make([]string, 0, len(intents))
+	for k := range intents {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+const assistBasePrompt = `You are the assistant of FlatRun, a flat-file container hosting platform: a single Go agent manages deployments (each a directory with a docker-compose.yml), Docker networks, an nginx reverse proxy and Let's Encrypt certificates on one host.
+
+%s
+
+Ground every statement in the provided context; never invent log lines or configuration. Secret values appear as [REDACTED]; that is expected and not an error.%s`
+
+const suggestionInstructions = `
+
+If concrete steps can be run on the server, append ONE fenced code block with language tag "suggestions" containing a JSON array. Each entry is one of:
+{"kind":"exec","service":"<compose service>","command":"<shell command run inside the service container>","title":"<short imperative label>","reason":"<one sentence why>"}
+{"kind":"service_action","service":"<compose service>","action":"start|stop|restart|rebuild|pull","title":"<short imperative label>","reason":"<one sentence why>"}
+Suggest at most 3 actions, only ones directly supported by the evidence, never destructive commands (no rm, no DROP, no down). The operator reviews and runs them manually. Omit the block entirely when nothing safe applies.`
+
+// Section is one labeled piece of gathered context, already redacted.
+type Section struct {
+	Label   string
+	Content string
+	Format  string
+}
+
+// BuildAssistMessages assembles the chat for an analysis. Sections
+// must already be redacted. The newest end of long sections survives
+// truncation since it matters most.
+func BuildAssistMessages(intent Intent, scopeLabel string, sections []Section, question string) []Message {
+	suggestions := ""
+	if intent.AllowSuggestions {
+		suggestions = suggestionInstructions
+	}
+	system := fmt.Sprintf(assistBasePrompt, intent.Task, suggestions)
+
+	perSection := contextBudget
+	if len(sections) > 0 {
+		perSection = contextBudget / len(sections)
+	}
+
+	var user strings.Builder
+	fmt.Fprintf(&user, "Scope: %s\n", scopeLabel)
+	for _, section := range sections {
+		format := section.Format
+		if format == "" {
+			format = "text"
+		}
+		fmt.Fprintf(&user, "\n## %s\n```%s\n%s\n```\n", section.Label, format, TruncateHead(section.Content, perSection))
+	}
+	if strings.TrimSpace(question) != "" {
+		fmt.Fprintf(&user, "\n## Operator question\n%s\n", strings.TrimSpace(question))
+	}
+
+	return []Message{
+		{Role: "system", Content: system},
+		{Role: "user", Content: user.String()},
+	}
+}

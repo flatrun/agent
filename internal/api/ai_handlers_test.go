@@ -47,7 +47,7 @@ func TestAIAnalyzeDisabledReturns503(t *testing.T) {
 	createTestDeployment(t, tmpDir, "myapp", nil)
 
 	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/deployments/myapp/ai/analyze",
-		map[string]interface{}{"mode": "logs"})
+		map[string]interface{}{"intent": "diagnose"})
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
 	}
@@ -68,9 +68,15 @@ func TestAIAnalyzeOperationRedactsSecrets(t *testing.T) {
 	s.aiProvider = stub
 
 	body := map[string]interface{}{
-		"mode":             "operation",
-		"operation":        "deploy",
-		"operation_output": "FATAL: password authentication failed for hunter2secret\nMYSQL_PASSWORD=other123secret",
+		"intent": "diagnose",
+		"sources": []map[string]interface{}{
+			{
+				"type":    "provided",
+				"label":   "Failed deploy output",
+				"content": "FATAL: password authentication failed for hunter2secret\nMYSQL_PASSWORD=other123secret",
+			},
+			{"type": "compose"},
+		},
 	}
 	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/deployments/myapp/ai/analyze", body)
 	if resp.StatusCode != http.StatusOK {
@@ -112,7 +118,10 @@ func TestAIAnalyzeReturnsValidatedSuggestions(t *testing.T) {
 	s.aiProvider = &stubProvider{response: &ai.Response{Content: content, Model: "stub"}}
 
 	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/deployments/myapp/ai/analyze",
-		map[string]interface{}{"mode": "operation", "operation_output": "crash"})
+		map[string]interface{}{
+			"intent":  "diagnose",
+			"sources": []map[string]interface{}{{"type": "provided", "content": "crash"}},
+		})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
 	}
@@ -136,9 +145,61 @@ func TestAIAnalyzeProviderErrorMapsTo502(t *testing.T) {
 	s.aiProvider = &stubProvider{err: context.DeadlineExceeded}
 
 	resp, _ := doJSON(t, http.MethodPost, ts.URL+"/api/deployments/myapp/ai/analyze",
-		map[string]interface{}{"mode": "operation", "operation_output": "boom"})
+		map[string]interface{}{
+			"intent":  "diagnose",
+			"sources": []map[string]interface{}{{"type": "provided", "content": "boom"}},
+		})
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	}
+}
+
+func TestAIAnalyzeSystem(t *testing.T) {
+	s, _, ts := setupPlanTestServer(t)
+	stub := &stubProvider{response: &ai.Response{Content: "## Diagnosis\nThe proxy network is missing.", Model: "stub"}}
+	s.aiProvider = stub
+	s.config.Infrastructure.Database.RootPassword = "rootpw-secret-1"
+
+	body := map[string]interface{}{
+		"intent": "diagnose",
+		"sources": []map[string]interface{}{{
+			"type":    "provided",
+			"label":   "Start failed for myapp",
+			"content": "network proxy declared as external, but could not be found\npassword=rootpw-secret-1",
+		}},
+	}
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/analyze", body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+	if parsed["analysis"] != "## Diagnosis\nThe proxy network is missing." {
+		t.Errorf("analysis = %v", parsed["analysis"])
+	}
+
+	var prompt strings.Builder
+	for _, m := range stub.lastRequest.Messages {
+		prompt.WriteString(m.Content)
+	}
+	if strings.Contains(prompt.String(), "rootpw-secret-1") {
+		t.Error("agent credential leaked into the system diagnosis prompt")
+	}
+	if !strings.Contains(prompt.String(), "Start failed for myapp") {
+		t.Error("source label missing from prompt")
+	}
+
+	// A provided source is required for system scope.
+	resp, _ = doJSON(t, http.MethodPost, ts.URL+"/api/ai/analyze", map[string]interface{}{"intent": "diagnose"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("missing sources status = %d, want 400", resp.StatusCode)
+	}
+
+	// Unknown intents are rejected.
+	resp, _ = doJSON(t, http.MethodPost, ts.URL+"/api/ai/analyze", map[string]interface{}{
+		"intent":  "world-domination",
+		"sources": []map[string]interface{}{{"type": "provided", "content": "x"}},
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("unknown intent status = %d, want 400", resp.StatusCode)
 	}
 }
 

@@ -406,9 +406,10 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/services/:service/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("rebuild"))
 			protected.POST("/deployments/:name/services/:service/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("pull"))
 
-			// AI endpoints
+			// AI assist endpoints
 			protected.GET("/ai/status", s.getAIStatus)
-			protected.POST("/deployments/:name/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.aiAnalyzeDeployment)
+			protected.POST("/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.aiAssistSystem)
+			protected.POST("/deployments/:name/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.aiAssistDeployment)
 
 			// Compose, stats, subdomain (deployment-scoped)
 			protected.GET("/subdomain/generate", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.generateSubdomain)
