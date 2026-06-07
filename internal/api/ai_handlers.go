@@ -117,9 +117,37 @@ func (s *Server) aiAnalyzeDeployment(c *gin.Context) {
 		return
 	}
 
+	analysis, suggestions := ai.ParseSuggestions(resp.Content)
+	suggestions = s.filterSuggestionsForDeployment(name, suggestions)
+
 	c.JSON(http.StatusOK, gin.H{
-		"analysis":   resp.Content,
-		"model":      resp.Model,
-		"redactions": composeRedactions + contextRedactions,
+		"analysis":          analysis,
+		"suggested_actions": suggestions,
+		"model":             resp.Model,
+		"redactions":        composeRedactions + contextRedactions,
 	})
+}
+
+// filterSuggestionsForDeployment drops suggestions naming services
+// that do not exist in the deployment's compose file, so a
+// hallucinated service name can never be acted on.
+func (s *Server) filterSuggestionsForDeployment(name string, suggestions []ai.SuggestedAction) []ai.SuggestedAction {
+	if len(suggestions) == 0 {
+		return []ai.SuggestedAction{}
+	}
+	serviceNames, err := s.manager.GetComposeServiceNames(name)
+	if err != nil {
+		return []ai.SuggestedAction{}
+	}
+	known := make(map[string]bool, len(serviceNames))
+	for _, sn := range serviceNames {
+		known[sn] = true
+	}
+	valid := make([]ai.SuggestedAction, 0, len(suggestions))
+	for _, sg := range suggestions {
+		if known[sg.Service] {
+			valid = append(valid, sg)
+		}
+	}
+	return valid
 }

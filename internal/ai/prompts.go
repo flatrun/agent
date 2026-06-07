@@ -17,7 +17,12 @@ The specific log lines or config fragments that support the diagnosis.
 ## Fix
 Concrete steps the operator should take, referencing the deployment's own files and services. If a compose or env change is needed, show the exact snippet.
 
-If the context is insufficient for a confident diagnosis, say so and list what to check next. Never invent log lines or configuration that is not in the context. Secret values appear as [REDACTED]; that is expected and not an error.`
+If the context is insufficient for a confident diagnosis, say so and list what to check next. Never invent log lines or configuration that is not in the context. Secret values appear as [REDACTED]; that is expected and not an error.
+
+If concrete remediation steps can be run on the server, append ONE fenced code block with language tag "suggestions" containing a JSON array. Each entry is one of:
+{"kind":"exec","service":"<compose service>","command":"<shell command run inside the service container>","title":"<short imperative label>","reason":"<one sentence why>"}
+{"kind":"service_action","service":"<compose service>","action":"start|stop|restart|rebuild|pull","title":"<short imperative label>","reason":"<one sentence why>"}
+Suggest at most 3 actions, only ones directly supported by the evidence, never destructive commands (no rm, no DROP, no down). The operator reviews and runs them manually. Omit the block entirely when nothing safe applies.`
 
 func TruncateHead(s string, max int) string {
 	if len(s) <= max {

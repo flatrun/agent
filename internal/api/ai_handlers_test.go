@@ -101,6 +101,35 @@ func TestAIAnalyzeOperationRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestAIAnalyzeReturnsValidatedSuggestions(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "myapp", nil)
+
+	content := "## Diagnosis\nweb is crashing.\n```suggestions\n[" +
+		`{"kind":"service_action","service":"web","action":"restart","title":"Restart web"},` +
+		`{"kind":"service_action","service":"ghost","action":"restart","title":"Restart hallucinated service"}` +
+		"]\n```"
+	s.aiProvider = &stubProvider{response: &ai.Response{Content: content, Model: "stub"}}
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/deployments/myapp/ai/analyze",
+		map[string]interface{}{"mode": "operation", "operation_output": "crash"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+
+	if strings.Contains(parsed["analysis"].(string), "suggestions") {
+		t.Error("suggestions block leaked into analysis text")
+	}
+	actions := parsed["suggested_actions"].([]interface{})
+	if len(actions) != 1 {
+		t.Fatalf("got %d suggestions, want 1 (hallucinated service dropped): %v", len(actions), actions)
+	}
+	first := actions[0].(map[string]interface{})
+	if first["service"] != "web" || first["action"] != "restart" {
+		t.Errorf("suggestion = %v", first)
+	}
+}
+
 func TestAIAnalyzeProviderErrorMapsTo502(t *testing.T) {
 	s, tmpDir, ts := setupPlanTestServer(t)
 	createTestDeployment(t, tmpDir, "myapp", nil)
