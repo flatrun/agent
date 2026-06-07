@@ -145,7 +145,7 @@ func TestAIAnalyzeIncludesPlatformContext(t *testing.T) {
 	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{
 		Name: "myapp",
 		Domains: []models.DomainConfig{
-			{ID: "d1", Service: "web", Domain: "myapp.example.com"},
+			{ID: "d1", Service: "web", ContainerPort: 8000, Domain: "myapp.example.com"},
 		},
 	})
 	s.config.Infrastructure.DefaultProxyNetwork = "proxy"
@@ -172,7 +172,7 @@ func TestAIAnalyzeIncludesPlatformContext(t *testing.T) {
 		"FlatRun platform context",
 		"Configured proxy network",
 		"proxy",
-		"myapp.example.com",
+		"myapp.example.com forwards to service web on container port 8000",
 		"https://flatrun.dev/docs/",
 	} {
 		if !strings.Contains(prompt.String(), want) {

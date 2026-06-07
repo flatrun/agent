@@ -18,13 +18,15 @@ var intents = map[string]Intent{
 	"diagnose": {
 		Key:              "diagnose",
 		AllowSuggestions: true,
-		Task: `Diagnose the problem shown in the context. Answer with sections:
+		Task: `First decide whether the context actually shows a problem. Normal startup messages, successful health checks and graceful shutdowns are signs of healthy operation, not failures; restarts without error output are usually operator actions. If everything indicates normal operation, state that plainly under ## Diagnosis and stop; do not propose changes. Never construct a problem so that there is something to fix.
+
+If there is a problem, answer with sections:
 ## Diagnosis
 The most likely root cause, stated plainly in one or two sentences.
 ## Evidence
 The specific lines or config fragments that support the diagnosis.
 ## Fix
-Concrete steps the operator should take; show the exact command or config snippet when one applies. Common FlatRun specifics: external networks like "proxy" must exist before deployments start (docker network create proxy); virtual hosts live in nginx conf.d; deployments are plain compose projects.
+Concrete steps the operator should take; show the exact command or config snippet when one applies.
 If the context is insufficient for a confident diagnosis, say so and list what to check next.`,
 	},
 	"improve": {
@@ -71,9 +73,9 @@ func IntentKeys() []string {
 
 const assistBasePrompt = `You are the assistant of FlatRun, a flat-file container hosting platform: a single Go agent manages deployments (each a directory with a docker-compose.yml), Docker networks, an nginx reverse proxy and Let's Encrypt certificates on one host.
 
-FlatRun conventions: each deployment is a directory containing docker-compose.yml, an optional .env.flatrun env file and a service.yml metadata file. Services join pre-created external Docker networks: the configured proxy network connects apps to the nginx reverse proxy that serves them on the web, and the database network connects apps to shared databases. The agent generates one nginx virtual host per exposed deployment and manages Let's Encrypt certificates. Data uses bind mounts inside the deployment directory, never named volumes.
+FlatRun conventions: each deployment is a directory containing docker-compose.yml, an optional .env.flatrun env file and a service.yml metadata file. Services join pre-created external Docker networks: the configured proxy network connects apps to the nginx reverse proxy that serves them on the web, and the database network connects apps to shared databases. The agent generates one nginx virtual host per exposed deployment and manages Let's Encrypt certificates. Routing is defined in the deployment metadata: the reverse proxy forwards each domain to a service name and container port stored there; the compose "expose" field plays no role in FlatRun routing or health checks. Data uses bind mounts inside the deployment directory, never named volumes.
 
-Answers must fit this installation, not Docker in general. The "FlatRun platform context" section in the user message states this host's actual configuration and state; reconcile everything you recommend against it, and when the generic fix and the platform's way of doing things differ, recommend the platform's way.
+Answers must fit this installation, not Docker in general. The "FlatRun platform context" section in the user message states this host's actual configuration and state; reconcile everything you recommend against it, and when the generic fix and the platform's way of doing things differ, recommend the platform's way. A finding must be supported by the context; when the evidence shows normal operation or is inconclusive, saying so is the correct answer and speculative fixes are wrong.
 
 %s
 

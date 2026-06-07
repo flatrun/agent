@@ -101,12 +101,24 @@ func (s *Server) platformSection(deploymentName string) ai.Section {
 
 	if deploymentName != "" {
 		if deployment, err := s.manager.GetDeployment(deploymentName); err == nil && deployment.Metadata != nil {
-			if domains := deployment.Metadata.GetUniqueDomainNames(); len(domains) > 0 {
-				fmt.Fprintf(&b, "This deployment serves the domain(s): %s\n", strings.Join(domains, ", "))
+			meta := deployment.Metadata
+			if domains := meta.GetDomains(); len(domains) > 0 {
+				for _, d := range domains {
+					target := d.Service
+					if d.ContainerPort > 0 {
+						target = fmt.Sprintf("%s on container port %d", d.Service, d.ContainerPort)
+					}
+					fmt.Fprintf(&b, "Reverse proxy routing: %s forwards to service %s (configured in deployment metadata; the compose expose field is not used for routing)\n", d.Domain, target)
+				}
+			} else {
+				fmt.Fprintf(&b, "This deployment is not exposed through the reverse proxy\n")
 			}
-			if len(deployment.Metadata.Databases) > 0 {
-				aliases := make([]string, 0, len(deployment.Metadata.Databases))
-				for _, db := range deployment.Metadata.Databases {
+			if meta.HealthCheck.Path != "" {
+				fmt.Fprintf(&b, "Configured health check path: %s\n", meta.HealthCheck.Path)
+			}
+			if len(meta.Databases) > 0 {
+				aliases := make([]string, 0, len(meta.Databases))
+				for _, db := range meta.Databases {
 					aliases = append(aliases, fmt.Sprintf("%s (%s)", db.Alias, db.Type))
 				}
 				fmt.Fprintf(&b, "This deployment uses database(s): %s\n", strings.Join(aliases, ", "))
