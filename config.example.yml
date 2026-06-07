@@ -115,6 +115,8 @@ system_terminal:
         enabled: false
 cleanup:
     timeout: 2m0s
+files:
+    show_hidden: true
 plans:
     ttl: 24h0m0s
     retention_days: 30

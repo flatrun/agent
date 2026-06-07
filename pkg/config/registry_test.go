@@ -119,6 +119,39 @@ func TestGetReturnsEntry(t *testing.T) {
 	}
 }
 
+func TestFilesShowHiddenDefaultsTrueAndAcceptsFalse(t *testing.T) {
+	cfg := &Config{}
+	setDefaults(cfg)
+
+	e, err := Get(cfg, "files.show_hidden")
+	if err != nil {
+		t.Fatalf("Get files.show_hidden: %v", err)
+	}
+	if e.Type != "bool" {
+		t.Errorf("type = %q, want bool", e.Type)
+	}
+	if v, _ := e.Value.(bool); !v {
+		t.Errorf("value = %v, want true", e.Value)
+	}
+	if d, _ := e.Default.(bool); !d {
+		t.Errorf("default = %v, want true", e.Default)
+	}
+
+	if err := Set(cfg, "files.show_hidden", false); err != nil {
+		t.Fatalf("Set files.show_hidden: %v", err)
+	}
+	if cfg.Files.ShowHidden == nil || *cfg.Files.ShowHidden {
+		t.Errorf("files.show_hidden = %v, want false", cfg.Files.ShowHidden)
+	}
+
+	// An explicit false must survive a save/load round trip instead of
+	// being flipped back to the default.
+	setDefaults(cfg)
+	if cfg.Files.ShowHidden == nil || *cfg.Files.ShowHidden {
+		t.Errorf("files.show_hidden reset to %v after setDefaults, want false", cfg.Files.ShowHidden)
+	}
+}
+
 func entryKeys(entries []Entry) []string {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
