@@ -41,6 +41,11 @@ func (s *Server) updateConfigKey(c *gin.Context) {
 		return
 	}
 
+	if planRequested(c) {
+		s.planConfigUpdate(c, key, req.Value)
+		return
+	}
+
 	outcome, err := s.applyConfigUpdate(key, req.Value)
 	if err != nil {
 		respondAPIError(c, err)

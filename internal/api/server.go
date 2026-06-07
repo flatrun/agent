@@ -32,6 +32,7 @@ import (
 	"github.com/flatrun/agent/internal/files"
 	"github.com/flatrun/agent/internal/infra"
 	"github.com/flatrun/agent/internal/networks"
+	"github.com/flatrun/agent/internal/plan"
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
@@ -81,6 +82,7 @@ type Server struct {
 	setupManager       *setup.Manager
 	setupHandlers      *setup.Handlers
 	certRenewer        *ssl.Renewer
+	planStore          *plan.Store
 
 	statsMu    sync.RWMutex
 	statsCache gin.H
@@ -265,7 +267,10 @@ func New(cfg *config.Config, configPath string) *Server {
 		clusterManager:     clusterManager,
 		setupManager:       setupManager,
 		setupHandlers:      setup.NewHandlers(setupManager, authManager),
+		planStore:          plan.NewStore(cfg.DeploymentsPath),
 	}
+
+	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
 
 	if backupManager != nil {
 		executor := scheduler.NewExecutor(backupManager, manager)
@@ -379,6 +384,12 @@ func (s *Server) setupRoutes() {
 			protected.GET("/config", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listConfig)
 			protected.GET("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.getConfigKey)
 			protected.PUT("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigWrite), s.updateConfigKey)
+
+			// Plan endpoints (previewed mutations; see internal/plan)
+			protected.GET("/plans", s.listPlans)
+			protected.GET("/plans/:id", s.getPlan)
+			protected.POST("/plans/:id/apply", s.applyPlan)
+			protected.DELETE("/plans/:id", s.deletePlan)
 
 			// Compose, stats, subdomain (deployment-scoped)
 			protected.GET("/subdomain/generate", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.generateSubdomain)
@@ -1437,6 +1448,11 @@ func (s *Server) updateDeploymentEnv(c *gin.Context) {
 		return
 	}
 
+	if planRequested(c) {
+		s.planEnvUpdate(c, name, req.EnvVars)
+		return
+	}
+
 	if err := s.writeEnvFile(name, req.EnvVars); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1499,6 +1515,11 @@ func (s *Server) updateDeployment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
+		return
+	}
+
+	if planRequested(c) {
+		s.planComposeUpdate(c, name, req.ComposeContent)
 		return
 	}
 
@@ -1686,6 +1707,11 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 		DeleteSSL:      c.DefaultQuery("delete_ssl", "true") == "true",
 		DeleteDatabase: c.DefaultQuery("delete_database", "false") == "true",
 		DeleteVhost:    c.DefaultQuery("delete_vhost", "true") == "true",
+	}
+
+	if planRequested(c) {
+		s.planDeploymentDelete(c, name, opts)
+		return
 	}
 
 	deletedItems, err := s.applyDeploymentDelete(name, opts)
@@ -4151,6 +4177,11 @@ func (s *Server) setupProxy(c *gin.Context) {
 		return
 	}
 
+	if planRequested(c) {
+		s.planProxySetup(c, deployment)
+		return
+	}
+
 	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -4426,6 +4457,13 @@ func (s *Server) addDomain(c *gin.Context) {
 		return
 	}
 
+	if planRequested(c) {
+		s.planDomainChange(c, deployment, "deployment.domain.add", &domain, func(dep *models.Deployment) (bool, error) {
+			return false, s.mutateDomainAdd(dep, &domain)
+		})
+		return
+	}
+
 	if err := s.mutateDomainAdd(deployment, &domain); err != nil {
 		respondAPIError(c, err)
 		return
@@ -4469,6 +4507,13 @@ func (s *Server) updateDomain(c *gin.Context) {
 		return
 	}
 
+	if planRequested(c) {
+		s.planDomainChange(c, deployment, "deployment.domain.update", &updatedDomain, func(dep *models.Deployment) (bool, error) {
+			return false, s.mutateDomainUpdate(dep, domainID, &updatedDomain)
+		})
+		return
+	}
+
 	if err := s.mutateDomainUpdate(deployment, domainID, &updatedDomain); err != nil {
 		respondAPIError(c, err)
 		return
@@ -4499,6 +4544,13 @@ func (s *Server) deleteDomain(c *gin.Context) {
 	deployment, err := s.manager.GetDeployment(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	if planRequested(c) {
+		s.planDomainChange(c, deployment, "deployment.domain.delete", nil, func(dep *models.Deployment) (bool, error) {
+			return mutateDomainDelete(dep, domainID)
+		})
 		return
 	}
 
