@@ -54,6 +54,18 @@ func serviceActionSpecs() map[string]serviceActionSpec {
 				return s.manager.RestartService(name, service, opts...)
 			},
 		},
+		"pull": {
+			verb:          "pull",
+			planAction:    "deployment.service.pull",
+			message:       "Service image pulled",
+			changeActions: []string{plan.ActionUpdate},
+			changeReason:  "latest image for this service is pulled from the registry; running containers are unchanged until the next deploy",
+			run: func(s *Server, name, service string) (string, error) {
+				auth, opts := s.deploymentAuthOptions(name)
+				defer auth.Close()
+				return s.manager.PullService(name, service, opts...)
+			},
+		},
 		"rebuild": {
 			verb:            "rebuild",
 			planAction:      "deployment.service.rebuild",

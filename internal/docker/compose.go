@@ -83,6 +83,10 @@ func (c *ComposeExecutor) RebuildService(deploymentPath, service string, opts ..
 	return c.runCompose(deploymentPath, opts, "up", "-d", "--no-deps", "--build", "--force-recreate", service)
 }
 
+func (c *ComposeExecutor) PullService(deploymentPath, service string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "pull", "--ignore-buildable", "--policy", "always", service)
+}
+
 func (c *ComposeExecutor) Logs(deploymentPath string, tail int) (string, error) {
 	tailStr := fmt.Sprintf("%d", tail)
 	return c.runCompose(deploymentPath, nil, "logs", "--tail", tailStr)

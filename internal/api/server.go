@@ -404,6 +404,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/services/:service/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("stop"))
 			protected.POST("/deployments/:name/services/:service/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("restart"))
 			protected.POST("/deployments/:name/services/:service/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("rebuild"))
+			protected.POST("/deployments/:name/services/:service/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("pull"))
 
 			// AI endpoints
 			protected.GET("/ai/status", s.getAIStatus)

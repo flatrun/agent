@@ -462,6 +462,18 @@ func (m *Manager) RebuildService(name, service string, opts ...RunOption) (strin
 	return m.executor.RebuildService(deployment.Path, service, opts...)
 }
 
+func (m *Manager) PullService(name, service string, opts ...RunOption) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	return m.executor.PullService(deployment.Path, service, opts...)
+}
+
 func (m *Manager) PullDeployment(name string, onlyLatest bool, opts ...RunOption) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)

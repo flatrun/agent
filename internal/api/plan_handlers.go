@@ -79,6 +79,11 @@ func (s *Server) planRegistry() map[string]planAction {
 			AccessLevel: auth.AccessLevelWrite,
 			Apply:       applyPlannedServiceAction("restart"),
 		},
+		"deployment.service.pull": {
+			Permission:  auth.PermDeploymentsWrite,
+			AccessLevel: auth.AccessLevelWrite,
+			Apply:       applyPlannedServiceAction("pull"),
+		},
 		"deployment.service.rebuild": {
 			Permission:      auth.PermDeploymentsWrite,
 			AccessLevel:     auth.AccessLevelWrite,
