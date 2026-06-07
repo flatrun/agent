@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
@@ -41,15 +42,41 @@ func (s *Server) updateConfigKey(c *gin.Context) {
 		return
 	}
 
-	if err := config.Set(s.config, key, req.Value); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if planRequested(c) {
+		s.planConfigUpdate(c, key, req.Value)
 		return
+	}
+
+	outcome, err := s.applyConfigUpdate(key, req.Value)
+	if err != nil {
+		respondAPIError(c, err)
+		return
+	}
+
+	resp := gin.H{
+		"entry":   outcome.Entry,
+		"applied": outcome.Applied,
+	}
+	if outcome.ApplyErr != nil {
+		resp["apply_error"] = outcome.ApplyErr.Error()
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+type configUpdateOutcome struct {
+	Entry    config.Entry
+	Applied  bool
+	ApplyErr error
+}
+
+func (s *Server) applyConfigUpdate(key string, value interface{}) (*configUpdateOutcome, error) {
+	if err := config.Set(s.config, key, value); err != nil {
+		return nil, apiErrf(http.StatusBadRequest, "%s", err.Error())
 	}
 
 	if s.configPath != "" {
 		if err := config.Save(s.config, s.configPath); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "value updated in memory but not persisted: " + err.Error()})
-			return
+			return nil, apiErrf(http.StatusInternalServerError, "value updated in memory but not persisted: %s", err.Error())
 		}
 	}
 
@@ -61,14 +88,7 @@ func (s *Server) updateConfigKey(c *gin.Context) {
 	}
 
 	entry, _ := config.Get(s.config, key)
-	resp := gin.H{
-		"entry":   entry,
-		"applied": applied,
-	}
-	if applyErr != nil {
-		resp["apply_error"] = applyErr.Error()
-	}
-	c.JSON(http.StatusOK, resp)
+	return &configUpdateOutcome{Entry: entry, Applied: applied, ApplyErr: applyErr}, nil
 }
 
 func (s *Server) runtimeAppliers() map[string]func(*Server) error {
@@ -96,11 +116,28 @@ func (s *Server) runtimeAppliers() map[string]func(*Server) error {
 		_, err := srv.infraManager.RefreshSecurityScripts()
 		return err
 	}
+	rebuildAIProvider := func(srv *Server) error {
+		provider, err := ai.New(&srv.config.AI)
+		if err == ai.ErrDisabled {
+			srv.aiProvider = nil
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		srv.aiProvider = provider
+		return nil
+	}
 	return map[string]func(*Server) error{
 		"cleanup.timeout": func(srv *Server) error {
 			srv.manager.SetCleanupTimeout(srv.config.Cleanup.Timeout)
 			return nil
 		},
+		"ai.enabled":                       rebuildAIProvider,
+		"ai.base_url":                      rebuildAIProvider,
+		"ai.api_key":                       rebuildAIProvider,
+		"ai.model":                         rebuildAIProvider,
+		"ai.timeout":                       rebuildAIProvider,
 		"security.rate_threshold":          applyDetectorThresholds,
 		"security.not_found_threshold":     applyDetectorThresholds,
 		"security.auth_failure_threshold":  applyDetectorThresholds,

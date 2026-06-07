@@ -33,6 +33,7 @@ type ServiceMetadata struct {
 	Security           *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
 	Backup             *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
 	ProtectedMode      *ProtectedModeConfig      `yaml:"protected_mode,omitempty" json:"protected_mode,omitempty"`
+	RequirePlan        bool                      `yaml:"require_plan,omitempty" json:"require_plan,omitempty"`
 	CredentialID       string                    `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
 	ServiceCredentials map[string]string         `yaml:"service_credentials,omitempty" json:"service_credentials,omitempty"`
 	Domains            []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`

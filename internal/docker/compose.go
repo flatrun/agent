@@ -63,6 +63,30 @@ func (c *ComposeExecutor) Rebuild(deploymentPath string, opts ...RunOption) (str
 	return c.runCompose(deploymentPath, opts, "up", "-d", "--build", "--remove-orphans")
 }
 
+func (c *ComposeExecutor) StartService(deploymentPath, service string, opts ...RunOption) (string, error) {
+	output, err := c.runCompose(deploymentPath, opts, "start", service)
+	if err != nil {
+		return c.runCompose(deploymentPath, opts, "up", "-d", "--no-deps", service)
+	}
+	return output, nil
+}
+
+func (c *ComposeExecutor) StopService(deploymentPath, service string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "stop", service)
+}
+
+func (c *ComposeExecutor) RestartService(deploymentPath, service string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "restart", service)
+}
+
+func (c *ComposeExecutor) RebuildService(deploymentPath, service string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "up", "-d", "--no-deps", "--build", "--force-recreate", service)
+}
+
+func (c *ComposeExecutor) PullService(deploymentPath, service string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "pull", "--ignore-buildable", "--policy", "always", service)
+}
+
 func (c *ComposeExecutor) Logs(deploymentPath string, tail int) (string, error) {
 	tailStr := fmt.Sprintf("%d", tail)
 	return c.runCompose(deploymentPath, nil, "logs", "--tail", tailStr)

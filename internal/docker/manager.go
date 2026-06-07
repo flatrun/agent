@@ -412,6 +412,68 @@ func (m *Manager) RebuildDeployment(name string, opts ...RunOption) (string, err
 	return output, nil
 }
 
+func (m *Manager) StartService(name, service string, opts ...RunOption) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	m.ensureContainerNames(name)
+	return m.executor.StartService(deployment.Path, service, opts...)
+}
+
+func (m *Manager) StopService(name, service string, opts ...RunOption) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	return m.executor.StopService(deployment.Path, service, opts...)
+}
+
+func (m *Manager) RestartService(name, service string, opts ...RunOption) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	return m.executor.RestartService(deployment.Path, service, opts...)
+}
+
+func (m *Manager) RebuildService(name, service string, opts ...RunOption) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	m.ensureContainerNames(name)
+	return m.executor.RebuildService(deployment.Path, service, opts...)
+}
+
+func (m *Manager) PullService(name, service string, opts ...RunOption) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+
+	if err != nil {
+		return "", err
+	}
+
+	return m.executor.PullService(deployment.Path, service, opts...)
+}
+
 func (m *Manager) PullDeployment(name string, onlyLatest bool, opts ...RunOption) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)

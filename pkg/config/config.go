@@ -39,6 +39,22 @@ type Config struct {
 	Cluster         ClusterConfig        `yaml:"cluster"`
 	SystemTerminal  SystemTerminalConfig `yaml:"system_terminal"`
 	Cleanup         CleanupConfig        `yaml:"cleanup"`
+	Plans           PlansConfig          `yaml:"plans"`
+	AI              AIConfig             `yaml:"ai"`
+}
+
+type AIConfig struct {
+	Enabled bool          `yaml:"enabled" json:"enabled"`
+	BaseURL string        `yaml:"base_url" json:"base_url"`
+	APIKey  string        `yaml:"api_key" json:"api_key"`
+	Model   string        `yaml:"model" json:"model"`
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+	DocsURL string        `yaml:"docs_url" json:"docs_url"`
+}
+
+type PlansConfig struct {
+	TTL           time.Duration `yaml:"ttl" json:"ttl"`
+	RetentionDays int           `yaml:"retention_days" json:"retention_days"`
 }
 
 type DomainConfig struct {
@@ -392,6 +408,23 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Audit.SensitiveFields == nil {
 		cfg.Audit.SensitiveFields = []string{"password", "token", "secret", "api_key", "authorization"}
+	}
+	// AI defaults
+	if cfg.AI.BaseURL == "" {
+		cfg.AI.BaseURL = "https://api.openai.com/v1"
+	}
+	if cfg.AI.Timeout == 0 {
+		cfg.AI.Timeout = 60 * time.Second
+	}
+	if cfg.AI.DocsURL == "" {
+		cfg.AI.DocsURL = "https://flatrun.dev/docs/"
+	}
+	// Plans defaults
+	if cfg.Plans.TTL == 0 {
+		cfg.Plans.TTL = 24 * time.Hour
+	}
+	if cfg.Plans.RetentionDays == 0 {
+		cfg.Plans.RetentionDays = 30
 	}
 	// Cluster defaults
 	if cfg.Cluster.ServerName == "" {

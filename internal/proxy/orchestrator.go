@@ -42,6 +42,35 @@ func (o *Orchestrator) UpdateConfig(cfg *config.Config) {
 	o.ssl.UpdateConfig(&cfg.Certbot, cfg.DeploymentsPath)
 }
 
+// RenderDeployment returns the virtual host content SetupDeployment
+// would install, applying the same SSL downgrade for missing
+// certificates, without writing or reloading anything. Returns "" when
+// the deployment is not exposed.
+func (o *Orchestrator) RenderDeployment(deployment *models.Deployment) (string, error) {
+	if deployment.Metadata == nil {
+		return "", nil
+	}
+	domains := deployment.Metadata.GetDomains()
+	if len(domains) == 0 {
+		return "", nil
+	}
+
+	rendered := make([]models.DomainConfig, len(domains))
+	copy(rendered, domains)
+	for i := range rendered {
+		if rendered[i].SSL.Enabled && rendered[i].SSL.AutoCert && !o.ssl.CertificateExists(rendered[i].Domain) {
+			rendered[i].SSL.Enabled = false
+		}
+	}
+
+	metaCopy := *deployment.Metadata
+	metaCopy.Domains = rendered
+	deploymentCopy := *deployment
+	deploymentCopy.Metadata = &metaCopy
+
+	return o.nginx.RenderVirtualHost(&deploymentCopy)
+}
+
 func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupResult, error) {
 	result := &SetupResult{
 		DeploymentName: deployment.Name,
