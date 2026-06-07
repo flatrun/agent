@@ -144,6 +144,39 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 				return s.platformSection(name).Content, nil
 			},
 		},
+		"get_deployment_logs": {
+			Spec: ai.Tool{
+				Name:        "get_deployment_logs",
+				Description: "Get a deployment's recent container logs. In FlatRun, application logs are the containers' stdout/stderr captured by Docker, not files on disk, so use this tool to read logs rather than searching the filesystem.",
+				Parameters: objSchema(map[string]interface{}{
+					"deployment": strProp("Deployment name. Omit to use the session's deployment."),
+					"tail":       map[string]interface{}{"type": "integer", "description": "How many recent lines to fetch (default 300, max 1000)."},
+				}),
+			},
+			Run: func(s *Server, c *gin.Context, bound string, args map[string]interface{}) (string, error) {
+				name, err := s.toolAllowedDeployment(c, bound, args)
+				if err != nil {
+					return "", err
+				}
+				tail := 300
+				if v, ok := args["tail"].(float64); ok && int(v) > 0 {
+					tail = int(v)
+				}
+				if tail > 1000 {
+					tail = 1000
+				}
+				logs, err := s.manager.GetDeploymentLogs(name, tail)
+				if err != nil {
+					return "", err
+				}
+				if strings.TrimSpace(logs) == "" {
+					return "The deployment has produced no logs.", nil
+				}
+				redactor := ai.NewRedactor(s.deploymentSecretValues(name))
+				redacted, _ := redactor.Redact(logs)
+				return truncateToolOutput(redacted), nil
+			},
+		},
 		"list_deployment_files": {
 			Spec: ai.Tool{
 				Name:        "list_deployment_files",
