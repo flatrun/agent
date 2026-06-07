@@ -3303,6 +3303,17 @@ func (s *Server) generateComposeWithOptions(templateID string, opts *ComposeGene
 
 	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
 
+	var metadata TemplateMetadata
+	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err == nil {
+		_ = yaml.Unmarshal(metadataContent, &metadata)
+	}
+
+	if opts.Image != "" {
+		return s.generateImageComposeWithTemplate(opts, &metadata)
+	}
+
 	composeBytes, err := templates.GetCompose(templateID)
 	if err != nil {
 		composePath := filepath.Join(templatesDir, templateID, "docker-compose.yml")
@@ -3319,13 +3330,6 @@ func (s *Server) generateComposeWithOptions(templateID string, opts *ComposeGene
 	networkName := s.config.Infrastructure.DefaultProxyNetwork
 	content = strings.ReplaceAll(content, "${PROXY_NETWORK}", networkName)
 	content = replaceHardcodedNetwork(content, "proxy", networkName)
-
-	var metadata TemplateMetadata
-	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
-	metadataContent, err := os.ReadFile(metadataPath)
-	if err == nil {
-		_ = yaml.Unmarshal(metadataContent, &metadata)
-	}
 
 	if opts.MapPorts && opts.HostPort != "" {
 		containerPort := opts.ContainerPort
@@ -3475,6 +3479,38 @@ func extractContainerPath(volume string) string {
 
 func hasVolumeOptions(volume string) bool {
 	return len(strings.Split(volume, ":")) >= 3
+}
+
+// generateImageComposeWithTemplate keeps the user-provided image as the
+// deployed service but applies the template's defaults (container port and
+// bind mounts) on top of the generated compose.
+func (s *Server) generateImageComposeWithTemplate(opts *ComposeGenerateRequest, metadata *TemplateMetadata) (string, error) {
+	if opts.ContainerPort == 0 && metadata.ContainerPort > 0 {
+		opts.ContainerPort = metadata.ContainerPort
+	}
+
+	content, err := s.generateCustomCompose(opts)
+	if err != nil {
+		return "", err
+	}
+
+	if len(metadata.Mounts) == 0 {
+		return content, nil
+	}
+
+	selections := opts.Mounts
+	if len(selections) == 0 {
+		for _, m := range metadata.Mounts {
+			if m.Required {
+				selections = append(selections, MountSelection{ID: m.ID, Enabled: true, Type: m.Type})
+			}
+		}
+	}
+	if len(selections) > 0 {
+		content = s.injectMounts(content, selections, metadata.Mounts)
+	}
+
+	return content, nil
 }
 
 func (s *Server) generateCustomCompose(opts *ComposeGenerateRequest) (string, error) {

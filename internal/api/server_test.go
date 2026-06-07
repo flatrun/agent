@@ -613,6 +613,92 @@ func TestGenerateComposeWithOptionsCustomImage(t *testing.T) {
 	}
 }
 
+func TestGenerateComposeWithOptionsImageKeepsUserImageWithTemplateDefaults(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	templateDir := cfg.DeploymentsPath + "/.flatrun/templates/laravel"
+	if err := createDir(templateDir); err != nil {
+		t.Fatalf("failed to create template dir: %v", err)
+	}
+
+	composeContent := `name: ${NAME}
+services:
+  app:
+    image: serversideup/php:8.3
+    expose:
+      - "8000"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+`
+	if err := writeFile(templateDir+"/docker-compose.yml", composeContent); err != nil {
+		t.Fatalf("failed to write compose: %v", err)
+	}
+
+	metadata := `name: Laravel
+container_port: 8000
+mounts:
+  - id: storage
+    name: Storage
+    container_path: /app/storage
+    type: file
+    required: true
+  - id: cache
+    name: Cache
+    container_path: /app/bootstrap/cache
+    type: file
+    required: false
+`
+	if err := writeFile(templateDir+"/metadata.yml", metadata); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+
+	opts := &ComposeGenerateRequest{
+		Name:  "my-laravel",
+		Image: "ghcr.io/me/laravel-app:1.0",
+	}
+
+	result, err := s.generateComposeWithOptions("laravel", opts)
+	if err != nil {
+		t.Fatalf("generateComposeWithOptions failed: %v", err)
+	}
+
+	if !strings.Contains(result, "ghcr.io/me/laravel-app:1.0") {
+		t.Error("Result should keep the user-provided image")
+	}
+	if strings.Contains(result, "serversideup/php") {
+		t.Error("Result should not use the template's image")
+	}
+	if !strings.Contains(result, "8000") {
+		t.Error("Result should use the template's container port")
+	}
+	if !strings.Contains(result, "./storage:/app/storage") {
+		t.Error("Result should inject the template's required mount")
+	}
+	if strings.Contains(result, "/app/bootstrap/cache") {
+		t.Error("Result should not inject optional mounts by default")
+	}
+
+	// Explicit selections override the required-mounts default.
+	opts.Mounts = []MountSelection{{ID: "cache", Enabled: true, Type: "file"}}
+	result, err = s.generateComposeWithOptions("laravel", opts)
+	if err != nil {
+		t.Fatalf("generateComposeWithOptions with selections failed: %v", err)
+	}
+	if !strings.Contains(result, "./cache:/app/bootstrap/cache") {
+		t.Error("Result should inject the selected mount")
+	}
+}
+
 func TestGenerateDeploymentComposePreservesDefaultTemplate(t *testing.T) {
 	cfg := &config.Config{
 		DeploymentsPath: t.TempDir(),
