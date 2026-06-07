@@ -10,6 +10,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// composeUserMessage merges a short message with optional bulky
+// context. The model sees both; the operator's transcript shows only
+// the message.
+func composeUserMessage(message, context string) (content, display string) {
+	message = strings.TrimSpace(message)
+	context = strings.TrimSpace(context)
+	if context == "" {
+		return message, ""
+	}
+	return message + "\n\n" + context, message
+}
+
 func sessionActorFrom(c *gin.Context) ai.SessionActor {
 	actor := auth.GetActorFromContext(c)
 	if actor == nil {
@@ -123,6 +135,7 @@ func (s *Server) createAISession(c *gin.Context) {
 		Deployment string `json:"deployment"`
 		AutoRun    bool   `json:"auto_run"`
 		Message    string `json:"message"`
+		Context    string `json:"context"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -147,7 +160,8 @@ func (s *Server) createAISession(c *gin.Context) {
 
 	prompt := ai.BuildSessionPrompt(req.Scope, req.Deployment, s.config.AI.DocsURL)
 	sess := ai.NewSession(req.Scope, req.Deployment, req.AutoRun, sessionActorFrom(c), prompt)
-	sess.AddUserMessage(req.Message)
+	content, display := composeUserMessage(req.Message, req.Context)
+	sess.AddUserMessage(content, display)
 
 	if err := s.advanceSession(c, sess); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -199,6 +213,7 @@ func (s *Server) postAISessionMessage(c *gin.Context) {
 	}
 	var req struct {
 		Message string `json:"message"`
+		Context string `json:"context"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Message) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "message is required"})
@@ -208,7 +223,8 @@ func (s *Server) postAISessionMessage(c *gin.Context) {
 		return
 	}
 
-	sess.AddUserMessage(req.Message)
+	content, display := composeUserMessage(req.Message, req.Context)
+	sess.AddUserMessage(content, display)
 	if err := s.advanceSession(c, sess); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

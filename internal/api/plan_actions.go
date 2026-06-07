@@ -91,8 +91,8 @@ func (s *Server) planEnvUpdate(c *gin.Context, name string, envVars []EnvVar) {
 	if exists && before == after {
 		p.Changes = append(p.Changes, plan.Change{
 			Type: "file", ID: ".env.flatrun",
-			Actions: []string{plan.ActionNoOp},
-			Reason:  "rendered content is identical to the current file",
+			Actions:   []string{plan.ActionNoOp},
+			Reason:    "rendered content is identical to the current file",
 			Sensitive: true,
 		})
 	} else {

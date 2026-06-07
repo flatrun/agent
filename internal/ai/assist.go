@@ -97,7 +97,7 @@ You can investigate this specific installation with the provided tools: get host
 How to use tools well:
 - If the message already contains the logs or output to analyze, analyze them directly and answer with NO tool calls.
 - When you are handed something to analyze (logs, an operation's output), respond with a short summary, then any problems you found with their likely solutions. If nothing is wrong, say so plainly.
-- If deeper investigation could help (running a lookup or command), do not run it yet: describe what you would check and why, and ask the user whether to proceed. Only run those tools after they agree, or when their message clearly asks you to investigate.
+- When deeper investigation would genuinely help, make the tool call directly; do not describe the command in prose and ask for permission. The operator's interface shows each call and lets them allow or decline it, so the approval happens there, not in your text. You may add one short sentence saying what you are about to check, then call the tool.
 - Prefer one well-chosen lookup over many speculative ones, and never run tools just to appear thorough.
 
 %s

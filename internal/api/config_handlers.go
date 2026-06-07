@@ -133,11 +133,11 @@ func (s *Server) runtimeAppliers() map[string]func(*Server) error {
 			srv.manager.SetCleanupTimeout(srv.config.Cleanup.Timeout)
 			return nil
 		},
-		"ai.enabled":  rebuildAIProvider,
-		"ai.base_url": rebuildAIProvider,
-		"ai.api_key":  rebuildAIProvider,
-		"ai.model":    rebuildAIProvider,
-		"ai.timeout":  rebuildAIProvider,
+		"ai.enabled":                       rebuildAIProvider,
+		"ai.base_url":                      rebuildAIProvider,
+		"ai.api_key":                       rebuildAIProvider,
+		"ai.model":                         rebuildAIProvider,
+		"ai.timeout":                       rebuildAIProvider,
 		"security.rate_threshold":          applyDetectorThresholds,
 		"security.not_found_threshold":     applyDetectorThresholds,
 		"security.auth_failure_threshold":  applyDetectorThresholds,

@@ -14,6 +14,11 @@ var ErrDisabled = errors.New("ai is not enabled")
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// Display, when set, is what the UI shows for this turn instead of
+	// Content. Used to send bulky context (logs, output) to the model
+	// while showing the operator a short label. Never sent to the
+	// provider.
+	Display string `json:"display,omitempty"`
 	// ToolCalls is set on an assistant message that wants tools run.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// ToolCallID and Name identify a role:"tool" result message.

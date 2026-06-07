@@ -88,9 +88,9 @@ func (s *Server) clusterAccept(c *gin.Context) {
 	}
 
 	var req struct {
-		InviteToken  string `json:"invite_token" binding:"required"`
-		PeerURL      string `json:"peer_url" binding:"required"`
-		CallbackURL  string `json:"callback_url"`
+		InviteToken string `json:"invite_token" binding:"required"`
+		PeerURL     string `json:"peer_url" binding:"required"`
+		CallbackURL string `json:"callback_url"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
