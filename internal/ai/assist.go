@@ -88,6 +88,31 @@ If concrete steps can be run on the server, append ONE fenced code block with la
 {"kind":"service_action","service":"<compose service>","action":"start|stop|restart|rebuild|pull","title":"<short imperative label>","reason":"<one sentence why>"}
 Suggest at most 3 actions, only ones directly supported by the evidence, never destructive commands (no rm, no DROP, no down). The operator reviews and runs them manually. Omit the block entirely when nothing safe applies.`
 
+const sessionBasePrompt = `You are the assistant of FlatRun, a flat-file container hosting platform: a single Go agent manages deployments (each a directory with a docker-compose.yml), Docker networks, an nginx reverse proxy and Let's Encrypt certificates on one host.
+
+FlatRun conventions: each deployment is a directory containing docker-compose.yml, an optional .env.flatrun env file and a service.yml metadata file. Services join pre-created external Docker networks: the configured proxy network connects apps to the nginx reverse proxy that serves them on the web, and the database network connects apps to shared databases. Routing is defined in deployment metadata: the reverse proxy forwards each domain to a service name and container port stored there; the compose "expose" field plays no role in FlatRun routing or health checks. Application logs and data live in bind-mounted files inside the deployment directory.
+
+You can investigate this specific installation with the provided tools instead of guessing: list the networks and deployments that actually exist, read a deployment's metadata and files (including app-generated logs), and run read-only commands inside service containers. Prefer verifying a fact with a tool over assuming it. When you have enough information, give a final answer with no further tool calls.
+
+%s
+
+Answer in Markdown. Ground every statement in what you observed; if the evidence shows normal operation or is inconclusive, say so plainly rather than inventing a problem. When you recommend a runnable fix, also append it as a "suggestions" block as described above. Secret values appear as [REDACTED]; that is expected.%s`
+
+// BuildSessionPrompt returns the system prompt for an interactive
+// session, optionally scoped to one deployment and referencing the
+// docs site.
+func BuildSessionPrompt(scope, deployment, docsURL string) string {
+	scopeLine := "This is a general session about the whole FlatRun instance and its deployments."
+	if scope == SessionScopeDeployment && deployment != "" {
+		scopeLine = "This session is focused on the deployment named \"" + deployment + "\". When a tool takes a deployment argument, that deployment is the default."
+	}
+	docs := ""
+	if strings.TrimSpace(docsURL) != "" {
+		docs = "\n\nProduct documentation you may reference: " + strings.TrimSpace(docsURL)
+	}
+	return fmt.Sprintf(sessionBasePrompt, scopeLine+suggestionInstructions, docs)
+}
+
 // Section is one labeled piece of gathered context, already redacted.
 type Section struct {
 	Label   string

@@ -14,8 +14,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/docker"
+	"github.com/flatrun/agent/internal/files"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/plan"
 	"github.com/flatrun/agent/internal/proxy"
@@ -50,6 +52,8 @@ func setupPlanTestServer(t *testing.T) (*Server, string, *httptest.Server) {
 		authMiddleware:    auth.NewMiddleware(&cfg.Auth),
 		proxyOrchestrator: proxy.NewOrchestrator(cfg),
 		planStore:         plan.NewStore(tmpDir),
+		aiSessions:        ai.NewSessionStore(tmpDir),
+		filesManager:      files.NewManager(tmpDir),
 	}
 	s.setupRoutes()
 

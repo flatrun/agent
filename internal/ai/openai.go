@@ -41,10 +41,60 @@ func (p *openAICompatible) Name() string {
 	return "openai-compatible"
 }
 
+// wireMessages converts internal messages to the OpenAI chat wire
+// format, where assistant tool calls and tool results are nested
+// differently than our flat representation.
+func wireMessages(messages []Message) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(messages))
+	for _, m := range messages {
+		wm := map[string]interface{}{"role": m.Role, "content": m.Content}
+		if len(m.ToolCalls) > 0 {
+			calls := make([]map[string]interface{}, 0, len(m.ToolCalls))
+			for _, tc := range m.ToolCalls {
+				calls = append(calls, map[string]interface{}{
+					"id":   tc.ID,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      tc.Name,
+						"arguments": tc.Arguments,
+					},
+				})
+			}
+			wm["tool_calls"] = calls
+		}
+		if m.ToolCallID != "" {
+			wm["tool_call_id"] = m.ToolCallID
+		}
+		if m.Name != "" {
+			wm["name"] = m.Name
+		}
+		out = append(out, wm)
+	}
+	return out
+}
+
+func wireTools(tools []Tool) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.Parameters,
+			},
+		})
+	}
+	return out
+}
+
 func (p *openAICompatible) Complete(ctx context.Context, req Request) (*Response, error) {
 	payload := map[string]interface{}{
 		"model":    p.model,
-		"messages": req.Messages,
+		"messages": wireMessages(req.Messages),
+	}
+	if len(req.Tools) > 0 {
+		payload["tools"] = wireTools(req.Tools)
 	}
 	if req.MaxTokens > 0 {
 		payload["max_tokens"] = req.MaxTokens
@@ -94,7 +144,16 @@ func (p *openAICompatible) Complete(ctx context.Context, req Request) (*Response
 	var parsed struct {
 		Model   string `json:"model"`
 		Choices []struct {
-			Message Message `json:"message"`
+			Message struct {
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
 		} `json:"choices"`
 		Usage Usage `json:"usage"`
 	}
@@ -109,9 +168,17 @@ func (p *openAICompatible) Complete(ctx context.Context, req Request) (*Response
 	if model == "" {
 		model = p.model
 	}
+
+	choice := parsed.Choices[0].Message
+	var toolCalls []ToolCall
+	for _, tc := range choice.ToolCalls {
+		toolCalls = append(toolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
+	}
+
 	return &Response{
-		Content: parsed.Choices[0].Message.Content,
-		Model:   model,
-		Usage:   parsed.Usage,
+		Content:   choice.Content,
+		ToolCalls: toolCalls,
+		Model:     model,
+		Usage:     parsed.Usage,
 	}, nil
 }

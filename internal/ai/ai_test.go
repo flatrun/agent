@@ -127,6 +127,69 @@ func TestOpenAICompatibleComplete(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleToolCalling(t *testing.T) {
+	var sentPayload map[string]interface{}
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&sentPayload)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"model": "test-model",
+			"choices": []map[string]interface{}{{
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": "",
+					"tool_calls": []map[string]interface{}{{
+						"id":       "call_1",
+						"type":     "function",
+						"function": map[string]interface{}{"name": "list_networks", "arguments": "{}"},
+					}},
+				},
+			}},
+		})
+	}))
+	defer fake.Close()
+
+	p, _ := New(&config.AIConfig{Enabled: true, BaseURL: fake.URL, Model: "test-model", Timeout: 5 * time.Second})
+	resp, err := p.Complete(context.Background(), Request{
+		Messages: []Message{
+			{Role: "user", Content: "what networks exist?"},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "x", Name: "noop", Arguments: "{}"}}},
+			{Role: "tool", ToolCallID: "x", Name: "noop", Content: "done"},
+		},
+		Tools: []Tool{{
+			Name:        "list_networks",
+			Description: "List docker networks",
+			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != "list_networks" {
+		t.Fatalf("tool calls = %+v", resp.ToolCalls)
+	}
+
+	tools := sentPayload["tools"].([]interface{})
+	if len(tools) != 1 {
+		t.Fatalf("tools not sent: %v", sentPayload["tools"])
+	}
+	fn := tools[0].(map[string]interface{})["function"].(map[string]interface{})
+	if fn["name"] != "list_networks" {
+		t.Errorf("tool name = %v", fn["name"])
+	}
+
+	// The assistant tool-call message and the tool result must reach the
+	// wire in OpenAI's nested shape.
+	msgs := sentPayload["messages"].([]interface{})
+	assistant := msgs[1].(map[string]interface{})
+	if _, ok := assistant["tool_calls"]; !ok {
+		t.Error("assistant tool_calls not serialized")
+	}
+	toolMsg := msgs[2].(map[string]interface{})
+	if toolMsg["tool_call_id"] != "x" || toolMsg["role"] != "tool" {
+		t.Errorf("tool result message = %v", toolMsg)
+	}
+}
+
 func TestOpenAICompatibleKeyless(t *testing.T) {
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth := r.Header.Get("Authorization"); auth != "" {

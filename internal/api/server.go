@@ -85,6 +85,7 @@ type Server struct {
 	certRenewer        *ssl.Renewer
 	planStore          *plan.Store
 	aiProvider         ai.Provider
+	aiSessions         *ai.SessionStore
 
 	statsMu    sync.RWMutex
 	statsCache gin.H
@@ -270,6 +271,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		setupManager:       setupManager,
 		setupHandlers:      setup.NewHandlers(setupManager, authManager),
 		planStore:          plan.NewStore(cfg.DeploymentsPath),
+		aiSessions:         ai.NewSessionStore(cfg.DeploymentsPath),
 	}
 
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
@@ -410,6 +412,13 @@ func (s *Server) setupRoutes() {
 			protected.GET("/ai/status", s.getAIStatus)
 			protected.POST("/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.aiAssistSystem)
 			protected.POST("/deployments/:name/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.aiAssistDeployment)
+
+			// Interactive AI sessions (agentic tool loop)
+			protected.POST("/ai/sessions", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.createAISession)
+			protected.GET("/ai/sessions/:id", s.getAISession)
+			protected.POST("/ai/sessions/:id/messages", s.postAISessionMessage)
+			protected.POST("/ai/sessions/:id/approve", s.approveAISessionTools)
+			protected.DELETE("/ai/sessions/:id", s.deleteAISession)
 
 			// Compose, stats, subdomain (deployment-scoped)
 			protected.GET("/subdomain/generate", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.generateSubdomain)
