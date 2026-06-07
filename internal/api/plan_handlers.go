@@ -64,11 +64,51 @@ func (s *Server) planRegistry() map[string]planAction {
 			Permission: auth.PermConfigWrite,
 			Apply:      applyPlannedConfigUpdate,
 		},
+		"deployment.service.start": {
+			Permission:  auth.PermDeploymentsWrite,
+			AccessLevel: auth.AccessLevelWrite,
+			Apply:       applyPlannedServiceAction("start"),
+		},
+		"deployment.service.stop": {
+			Permission:  auth.PermDeploymentsWrite,
+			AccessLevel: auth.AccessLevelWrite,
+			Apply:       applyPlannedServiceAction("stop"),
+		},
+		"deployment.service.restart": {
+			Permission:  auth.PermDeploymentsWrite,
+			AccessLevel: auth.AccessLevelWrite,
+			Apply:       applyPlannedServiceAction("restart"),
+		},
+		"deployment.service.rebuild": {
+			Permission:      auth.PermDeploymentsWrite,
+			AccessLevel:     auth.AccessLevelWrite,
+			ProtectedAction: protectedActionRebuild,
+			Apply:           applyPlannedServiceAction("rebuild"),
+		},
 	}
 }
 
 func planRequested(c *gin.Context) bool {
 	return c.Query("plan") == "true"
+}
+
+// requirePlannedAction enforces the deployment's require_plan setting:
+// when set, direct execution is refused and the caller must create and
+// apply a plan instead. Plan creation itself is always allowed, and
+// applies bypass this guard because they run the reviewed plan.
+func (s *Server) requirePlannedAction(c *gin.Context, name string) bool {
+	if planRequested(c) {
+		return true
+	}
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil || deployment.Metadata == nil || !deployment.Metadata.RequirePlan {
+		return true
+	}
+	c.JSON(http.StatusPreconditionRequired, gin.H{
+		"error": "This deployment requires changes to be planned and reviewed before they run",
+		"code":  "plan_required",
+	})
+	return false
 }
 
 func planActorFrom(c *gin.Context) plan.Actor {

@@ -399,6 +399,12 @@ func (s *Server) setupRoutes() {
 			protected.POST("/plans/:id/apply", s.applyPlan)
 			protected.DELETE("/plans/:id", s.deletePlan)
 
+			// Service-level actions
+			protected.POST("/deployments/:name/services/:service/start", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("start"))
+			protected.POST("/deployments/:name/services/:service/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("stop"))
+			protected.POST("/deployments/:name/services/:service/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("restart"))
+			protected.POST("/deployments/:name/services/:service/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("rebuild"))
+
 			// AI endpoints
 			protected.GET("/ai/status", s.getAIStatus)
 			protected.POST("/deployments/:name/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.aiAnalyzeDeployment)
@@ -1464,6 +1470,9 @@ func (s *Server) updateDeploymentEnv(c *gin.Context) {
 		s.planEnvUpdate(c, name, req.EnvVars)
 		return
 	}
+	if !s.requirePlannedAction(c, name) {
+		return
+	}
 
 	if err := s.writeEnvFile(name, req.EnvVars); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1534,6 +1543,9 @@ func (s *Server) updateDeployment(c *gin.Context) {
 		s.planComposeUpdate(c, name, req.ComposeContent)
 		return
 	}
+	if !s.requirePlannedAction(c, name) {
+		return
+	}
 
 	if err := s.manager.UpdateDeployment(name, req.ComposeContent); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -1575,7 +1587,9 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		return
 	}
 
-	if _, ok := sentFields["protected_mode"]; ok {
+	_, sentProtectedMode := sentFields["protected_mode"]
+	_, sentRequirePlan := sentFields["require_plan"]
+	if sentProtectedMode || sentRequirePlan {
 		if !s.requireDeploymentAccess(c, name, auth.AccessLevelAdmin) {
 			return
 		}
@@ -1662,6 +1676,9 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	if _, ok := sentFields["protected_mode"]; ok {
 		merged.ProtectedMode = incoming.ProtectedMode
 	}
+	if _, ok := sentFields["require_plan"]; ok {
+		merged.RequirePlan = incoming.RequirePlan
+	}
 
 	return &merged
 }
@@ -1723,6 +1740,9 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 
 	if planRequested(c) {
 		s.planDeploymentDelete(c, name, opts)
+		return
+	}
+	if !s.requirePlannedAction(c, name) {
 		return
 	}
 
@@ -4193,6 +4213,9 @@ func (s *Server) setupProxy(c *gin.Context) {
 		s.planProxySetup(c, deployment)
 		return
 	}
+	if !s.requirePlannedAction(c, name) {
+		return
+	}
 
 	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
 	if err != nil {
@@ -4476,6 +4499,10 @@ func (s *Server) addDomain(c *gin.Context) {
 		return
 	}
 
+	if !s.requirePlannedAction(c, name) {
+		return
+	}
+
 	if err := s.mutateDomainAdd(deployment, &domain); err != nil {
 		respondAPIError(c, err)
 		return
@@ -4526,6 +4553,10 @@ func (s *Server) updateDomain(c *gin.Context) {
 		return
 	}
 
+	if !s.requirePlannedAction(c, name) {
+		return
+	}
+
 	if err := s.mutateDomainUpdate(deployment, domainID, &updatedDomain); err != nil {
 		respondAPIError(c, err)
 		return
@@ -4563,6 +4594,10 @@ func (s *Server) deleteDomain(c *gin.Context) {
 		s.planDomainChange(c, deployment, "deployment.domain.delete", nil, func(dep *models.Deployment) (bool, error) {
 			return mutateDomainDelete(dep, domainID)
 		})
+		return
+	}
+
+	if !s.requirePlannedAction(c, name) {
 		return
 	}
 
