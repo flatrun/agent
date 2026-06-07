@@ -39,6 +39,12 @@ type Config struct {
 	Cluster         ClusterConfig        `yaml:"cluster"`
 	SystemTerminal  SystemTerminalConfig `yaml:"system_terminal"`
 	Cleanup         CleanupConfig        `yaml:"cleanup"`
+	Plans           PlansConfig          `yaml:"plans"`
+}
+
+type PlansConfig struct {
+	TTL           time.Duration `yaml:"ttl" json:"ttl"`
+	RetentionDays int           `yaml:"retention_days" json:"retention_days"`
 }
 
 type DomainConfig struct {
@@ -392,6 +398,13 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Audit.SensitiveFields == nil {
 		cfg.Audit.SensitiveFields = []string{"password", "token", "secret", "api_key", "authorization"}
+	}
+	// Plans defaults
+	if cfg.Plans.TTL == 0 {
+		cfg.Plans.TTL = 24 * time.Hour
+	}
+	if cfg.Plans.RetentionDays == 0 {
+		cfg.Plans.RetentionDays = 30
 	}
 	// Cluster defaults
 	if cfg.Cluster.ServerName == "" {
