@@ -70,7 +70,7 @@ infrastructure:
         image: powerdns/pdns-auth-48:latest
         api_port: 8081
         dns_port: 53
-        api_key: 4bd02ab8c96205b6901660e53f7d96a2bf5253596f378d12
+        api_key: your-powerdns-api-key-here
         data_path: ""
         default_soa: ""
         nameservers: ""
@@ -88,7 +88,7 @@ security:
     auth_failure_threshold: 5
     unique_paths_threshold: 20
     repeated_hits_threshold: 30
-    internal_api_token: ff66c51caad086544e7a6372b681da856146ae5586b6b59408d613fbc85f0045
+    internal_api_token: generate-a-secure-random-string-here
     trusted_proxies: []
     trust_cf_header: false
 audit:
@@ -123,6 +123,6 @@ plans:
 ai:
     enabled: true
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-    api_key: AIzaSyCYBIFuQmp35NVnQI68hzlV6l4BSTZ9_lM
+    api_key: your-gemini-api-key-here
     model: gemini-2.5-flash
     timeout: 1m0s
