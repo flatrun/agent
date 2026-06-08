@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"os/exec"
@@ -4115,23 +4116,31 @@ func generateSecretValue(spec TemplateEnvSecret) (string, error) {
 	if n <= 0 {
 		n = 32
 	}
-	buf := make([]byte, n)
-	if _, err := cryptoRand.Read(buf); err != nil {
-		return "", err
-	}
 
 	var value string
 	switch spec.Encoding {
 	case "hex":
+		buf := make([]byte, n)
+		if _, err := cryptoRand.Read(buf); err != nil {
+			return "", err
+		}
 		value = hex.EncodeToString(buf)
 	case "alphanumeric":
 		const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 		out := make([]byte, n)
-		for i, b := range buf {
-			out[i] = charset[int(b)%len(charset)]
+		for i := range out {
+			idx, err := cryptoRand.Int(cryptoRand.Reader, big.NewInt(int64(len(charset))))
+			if err != nil {
+				return "", err
+			}
+			out[i] = charset[idx.Int64()]
 		}
 		value = string(out)
 	default:
+		buf := make([]byte, n)
+		if _, err := cryptoRand.Read(buf); err != nil {
+			return "", err
+		}
 		value = base64.StdEncoding.EncodeToString(buf)
 	}
 
