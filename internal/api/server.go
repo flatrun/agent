@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	cryptoRand "crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -133,6 +135,13 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	manager := docker.NewManager(cfg.DeploymentsPath)
 	manager.SetCleanupTimeout(cfg.Cleanup.Timeout)
+
+	// Deploys read template copies from disk, so sync them with the
+	// binary's embedded set before anything can deploy.
+	builtinTemplatesDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "templates")
+	if err := os.MkdirAll(builtinTemplatesDir, 0755); err == nil {
+		ensureBuiltinTemplates(builtinTemplatesDir)
+	}
 	certsDiscovery := certs.NewDiscovery(cfg.DeploymentsPath)
 	networksManager := networks.NewManager()
 	pluginsDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins")
@@ -998,6 +1007,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 
 	if req.TemplateID != "" {
 		s.processTemplateFiles(req.Name, req.TemplateID, allEnvVars)
+		s.processTemplateEnv(req.Name, req.TemplateID, req.ComposeContent, allEnvVars)
 		s.applyTemplateMountOwnership(req.Name, req.TemplateID)
 	}
 
@@ -2833,17 +2843,47 @@ type TemplateMetadata struct {
 	ContainerPort int             `yaml:"container_port"`
 	Mounts        []TemplateMount `yaml:"mounts"`
 	Files         []TemplateFile  `yaml:"files"`
+	Env           TemplateEnv     `yaml:"env"`
+}
+
+// TemplateEnv describes how a platform's environment file is produced. The
+// template defines everything: which file to write (file), where the example
+// shipped inside the deployed image lives (example_path, preferred base when
+// readable), the fallback content (template), and which secrets to generate
+// fresh per deployment. Nothing is assumed about the platform.
+type TemplateEnv struct {
+	File        string              `json:"file,omitempty" yaml:"file,omitempty"`
+	ExamplePath string              `json:"example_path,omitempty" yaml:"example_path,omitempty"`
+	Template    string              `json:"template,omitempty" yaml:"template,omitempty"`
+	Secrets     []TemplateEnvSecret `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+}
+
+type TemplateEnvSecret struct {
+	Key      string `json:"key" yaml:"key"`
+	Encoding string `json:"encoding,omitempty" yaml:"encoding,omitempty"` // base64 (default), hex, alphanumeric
+	Bytes    int    `json:"bytes,omitempty" yaml:"bytes,omitempty"`
+	Prefix   string `json:"prefix,omitempty" yaml:"prefix,omitempty"`
 }
 
 type TemplateMount struct {
 	ID             string   `json:"id" yaml:"id"`
 	Name           string   `json:"name" yaml:"name"`
+	HostPath       string   `json:"host_path,omitempty" yaml:"host_path,omitempty"`
 	ContainerPath  string   `json:"container_path" yaml:"container_path"`
 	Description    string   `json:"description" yaml:"description"`
 	Type           string   `json:"type" yaml:"type"`
 	Required       bool     `json:"required" yaml:"required"`
 	User           string   `json:"user,omitempty" yaml:"user,omitempty"`
 	Subdirectories []string `json:"subdirectories,omitempty" yaml:"subdirectories,omitempty"`
+}
+
+// templateMountHostPath resolves where a template mount lives in the
+// deployment directory: an explicit host_path from the metadata, or ./<id>.
+func templateMountHostPath(m TemplateMount) string {
+	if m.HostPath != "" {
+		return m.HostPath
+	}
+	return "./" + m.ID
 }
 
 type Template struct {
@@ -2870,7 +2910,7 @@ func (s *Server) listTemplates(c *gin.Context) {
 		return
 	}
 
-	s.ensureBuiltinTemplates(templatesDir)
+	ensureBuiltinTemplates(templatesDir)
 
 	typeFilter := c.DefaultQuery("type", "")
 
@@ -3404,7 +3444,7 @@ func (s *Server) injectMounts(content string, selections []MountSelection, avail
 		if sel.Type == "volume" {
 			hostPath = sel.ID + "_data"
 		} else {
-			hostPath = "./" + sel.ID
+			hostPath = templateMountHostPath(mount)
 		}
 		newVolumes = append(newVolumes, fmt.Sprintf("%s:%s", hostPath, mount.ContainerPath))
 	}
@@ -3483,7 +3523,8 @@ func hasVolumeOptions(volume string) bool {
 
 // generateImageComposeWithTemplate keeps the user-provided image as the
 // deployed service but applies the template's defaults (container port and
-// bind mounts) on top of the generated compose.
+// bind mounts) on top of the generated compose. Explicit selections override
+// the defaults entirely; without them the template's required mounts apply.
 func (s *Server) generateImageComposeWithTemplate(opts *ComposeGenerateRequest, metadata *TemplateMetadata) (string, error) {
 	if opts.ContainerPort == 0 && metadata.ContainerPort > 0 {
 		opts.ContainerPort = metadata.ContainerPort
@@ -3494,10 +3535,6 @@ func (s *Server) generateImageComposeWithTemplate(opts *ComposeGenerateRequest, 
 		return "", err
 	}
 
-	if len(metadata.Mounts) == 0 {
-		return content, nil
-	}
-
 	selections := opts.Mounts
 	if len(selections) == 0 {
 		for _, m := range metadata.Mounts {
@@ -3506,7 +3543,7 @@ func (s *Server) generateImageComposeWithTemplate(opts *ComposeGenerateRequest, 
 			}
 		}
 	}
-	if len(selections) > 0 {
+	if len(selections) > 0 && len(metadata.Mounts) > 0 {
 		content = s.injectMounts(content, selections, metadata.Mounts)
 	}
 
@@ -3716,18 +3753,30 @@ func extractNetworkNames(networks interface{}) []string {
 	}
 }
 
-func (s *Server) ensureBuiltinTemplates(templatesDir string) {
+func ensureBuiltinTemplates(templatesDir string) {
 	builtinList, err := templates.List()
 	if err != nil {
 		return
+	}
+
+	// On-disk copies are what deploys actually read; overwrite them
+	// whenever the embedded set changed (typically an agent upgrade),
+	// otherwise stale metadata keeps shaping new deployments.
+	checksumPath := filepath.Join(templatesDir, ".builtin-checksum")
+	checksum := templates.Checksum()
+	stale := true
+	if current, err := os.ReadFile(checksumPath); err == nil && strings.TrimSpace(string(current)) == checksum {
+		stale = false
 	}
 
 	for _, tmplID := range builtinList {
 		templatePath := filepath.Join(templatesDir, tmplID)
 		composePath := filepath.Join(templatePath, "docker-compose.yml")
 
-		if _, err := os.Stat(composePath); err == nil {
-			continue
+		if !stale {
+			if _, err := os.Stat(composePath); err == nil {
+				continue
+			}
 		}
 
 		if err := os.MkdirAll(templatePath, 0755); err != nil {
@@ -3743,6 +3792,10 @@ func (s *Server) ensureBuiltinTemplates(templatesDir string) {
 		if err == nil {
 			_ = os.WriteFile(composePath, composeContent, 0644)
 		}
+	}
+
+	if stale && checksum != "" {
+		_ = os.WriteFile(checksumPath, []byte(checksum), 0644)
 	}
 }
 
@@ -3926,6 +3979,188 @@ func (s *Server) processTemplateFiles(deploymentName, templateID string, envVars
 	}
 }
 
+// processTemplateEnv produces the platform's environment file for a new
+// deployment, entirely driven by the template's env spec. Base content
+// precedence: the example file inside the deployed image (when the template
+// declares one and it is readable), then the template's own fallback content,
+// then whatever the template already placed at the target path. The
+// deployment's environment variables and freshly generated secrets are then
+// applied on top, key by key.
+func (s *Server) processTemplateEnv(deploymentName, templateID, composeContent string, envVars []EnvVar) {
+	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
+
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return
+	}
+
+	var metadata TemplateMetadata
+	if err := yaml.Unmarshal(metadataContent, &metadata); err != nil {
+		return
+	}
+
+	spec := metadata.Env
+	if spec.File == "" {
+		return
+	}
+
+	targetPath := filepath.Join(s.config.DeploymentsPath, deploymentName, spec.File)
+
+	var base string
+	if spec.ExamplePath != "" {
+		if image := mainServiceImage(composeContent); image != "" {
+			if content, err := docker.ExtractFileFromImage(image, spec.ExamplePath); err == nil {
+				base = string(content)
+			} else {
+				log.Printf("template env: could not read %s from %s: %v", spec.ExamplePath, image, err)
+			}
+		}
+	}
+	if base == "" {
+		base = spec.Template
+	}
+	if base == "" {
+		if existing, err := os.ReadFile(targetPath); err == nil {
+			base = string(existing)
+		}
+	}
+
+	content := buildTemplateEnvContent(base, deploymentName, envVars, spec)
+	if err := os.WriteFile(targetPath, []byte(content), 0600); err != nil {
+		log.Printf("template env: failed to write %s: %v", targetPath, err)
+	}
+}
+
+func buildTemplateEnvContent(base, deploymentName string, envVars []EnvVar, spec TemplateEnv) string {
+	content := strings.ReplaceAll(base, "${NAME}", deploymentName)
+
+	var keys []string
+	values := make(map[string]string)
+	for _, env := range envVars {
+		if env.Key == "" {
+			continue
+		}
+		if _, ok := values[env.Key]; !ok {
+			keys = append(keys, env.Key)
+		}
+		values[env.Key] = env.Value
+	}
+
+	for _, secret := range spec.Secrets {
+		if secret.Key == "" {
+			continue
+		}
+		if _, ok := values[secret.Key]; ok {
+			continue
+		}
+		value, err := generateSecretValue(secret)
+		if err != nil {
+			continue
+		}
+		keys = append(keys, secret.Key)
+		values[secret.Key] = value
+	}
+
+	return applyEnvValues(content, keys, values)
+}
+
+// applyEnvValues sets KEY=value pairs in dotenv-formatted content, replacing
+// lines whose key matches and appending the rest.
+func applyEnvValues(content string, keys []string, values map[string]string) string {
+	lines := strings.Split(content, "\n")
+	seen := make(map[string]bool)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		eq := strings.IndexByte(trimmed, '=')
+		if eq <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(trimmed[:eq])
+		if value, ok := values[key]; ok {
+			lines[i] = key + "=" + quoteEnvValue(value)
+			seen[key] = true
+		}
+	}
+
+	content = strings.Join(lines, "\n")
+	var missing []string
+	for _, key := range keys {
+		if !seen[key] {
+			missing = append(missing, key+"="+quoteEnvValue(values[key]))
+		}
+	}
+	if len(missing) > 0 {
+		if content != "" && !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += strings.Join(missing, "\n") + "\n"
+	}
+	return content
+}
+
+func quoteEnvValue(value string) string {
+	if strings.ContainsAny(value, " \t#\"") {
+		return strconv.Quote(value)
+	}
+	return value
+}
+
+func generateSecretValue(spec TemplateEnvSecret) (string, error) {
+	n := spec.Bytes
+	if n <= 0 {
+		n = 32
+	}
+	buf := make([]byte, n)
+	if _, err := cryptoRand.Read(buf); err != nil {
+		return "", err
+	}
+
+	var value string
+	switch spec.Encoding {
+	case "hex":
+		value = hex.EncodeToString(buf)
+	case "alphanumeric":
+		const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		out := make([]byte, n)
+		for i, b := range buf {
+			out[i] = charset[int(b)%len(charset)]
+		}
+		value = string(out)
+	default:
+		value = base64.StdEncoding.EncodeToString(buf)
+	}
+
+	return spec.Prefix + value, nil
+}
+
+// mainServiceImage picks the image of the service a template's env example
+// should come from: the conventional "app" service, or the first service with
+// an image.
+func mainServiceImage(content string) string {
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return ""
+	}
+	if svc, ok := compose.Services["app"]; ok && svc.Image != "" {
+		return svc.Image
+	}
+	names := make([]string, 0, len(compose.Services))
+	for name := range compose.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if image := compose.Services[name].Image; image != "" {
+			return image
+		}
+	}
+	return ""
+}
+
 func (s *Server) applyTemplateMountOwnership(deploymentName, templateID string) {
 	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
 	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
@@ -3949,9 +4184,8 @@ func (s *Server) applyTemplateMountOwnership(deploymentName, templateID string) 
 		if m.Type != "file" {
 			continue
 		}
-		hostPath := "./" + m.ID
 		mounts = append(mounts, docker.MountOwnership{
-			HostPath:       hostPath,
+			HostPath:       templateMountHostPath(m),
 			User:           m.User,
 			Subdirectories: m.Subdirectories,
 		})

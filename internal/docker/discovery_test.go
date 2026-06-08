@@ -306,6 +306,64 @@ func TestApplyMountOwnership(t *testing.T) {
 			t.Fatal("Expected error for invalid user format")
 		}
 	})
+
+	t.Run("keeps an existing file mount a file", func(t *testing.T) {
+		envPath := filepath.Join(deploymentPath, ".env")
+		if err := os.WriteFile(envPath, []byte("APP_ENV=production\n"), 0600); err != nil {
+			t.Fatalf("Failed to write env file: %v", err)
+		}
+
+		user := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+		mounts := []MountOwnership{
+			{
+				HostPath: "./.env",
+				User:     user,
+			},
+		}
+
+		if err := d.ApplyMountOwnership(deploymentPath, mounts); err != nil {
+			t.Fatalf("ApplyMountOwnership failed: %v", err)
+		}
+
+		info, err := os.Stat(envPath)
+		if err != nil {
+			t.Fatalf("Expected env file to still exist: %v", err)
+		}
+		if info.IsDir() {
+			t.Error("Expected env mount to stay a regular file, got a directory")
+		}
+	})
+
+	t.Run("chowns recursively including pre-existing content", func(t *testing.T) {
+		base := filepath.Join(deploymentPath, "data")
+		nested := filepath.Join(base, "deep", "dir")
+		if err := os.MkdirAll(nested, 0755); err != nil {
+			t.Fatalf("Failed to create nested dirs: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(nested, "file.txt"), []byte("x"), 0644); err != nil {
+			t.Fatalf("Failed to write nested file: %v", err)
+		}
+
+		user := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+		mounts := []MountOwnership{
+			{
+				HostPath:       "./data",
+				User:           user,
+				Subdirectories: []string{"extra"},
+			},
+		}
+
+		if err := d.ApplyMountOwnership(deploymentPath, mounts); err != nil {
+			t.Fatalf("ApplyMountOwnership failed: %v", err)
+		}
+
+		if _, err := os.Stat(filepath.Join(base, "extra")); err != nil {
+			t.Errorf("Expected subdirectory to be created: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(nested, "file.txt")); err != nil {
+			t.Errorf("Expected pre-existing file to survive: %v", err)
+		}
+	})
 }
 
 func TestParseUIDGID(t *testing.T) {

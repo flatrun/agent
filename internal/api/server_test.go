@@ -647,6 +647,11 @@ networks:
 	metadata := `name: Laravel
 container_port: 8000
 mounts:
+  - id: app
+    name: Application
+    container_path: /app
+    type: file
+    required: false
   - id: storage
     name: Storage
     container_path: /app/storage
@@ -681,21 +686,227 @@ mounts:
 	if !strings.Contains(result, "8000") {
 		t.Error("Result should use the template's container port")
 	}
+	// Without explicit selections the template's required mounts apply.
 	if !strings.Contains(result, "./storage:/app/storage") {
-		t.Error("Result should inject the template's required mount")
+		t.Error("Result should inject the template's required mounts by default")
 	}
-	if strings.Contains(result, "/app/bootstrap/cache") {
+	if strings.Contains(result, "./app:/app") || strings.Contains(result, "/app/bootstrap/cache") {
 		t.Error("Result should not inject optional mounts by default")
 	}
 
-	// Explicit selections override the required-mounts default.
-	opts.Mounts = []MountSelection{{ID: "cache", Enabled: true, Type: "file"}}
+	// Explicit selections override the defaults entirely, including
+	// deselecting required mounts.
+	opts.Mounts = []MountSelection{
+		{ID: "storage", Enabled: false, Type: "file"},
+		{ID: "cache", Enabled: true, Type: "file"},
+	}
 	result, err = s.generateComposeWithOptions("laravel", opts)
 	if err != nil {
 		t.Fatalf("generateComposeWithOptions with selections failed: %v", err)
 	}
+	if strings.Contains(result, "./storage:/app/storage") {
+		t.Error("Deselected required mount must not be injected")
+	}
 	if !strings.Contains(result, "./cache:/app/bootstrap/cache") {
-		t.Error("Result should inject the selected mount")
+		t.Error("Result should inject the selected cache mount")
+	}
+}
+
+func TestApplyEnvValues(t *testing.T) {
+	base := `APP_NAME=Laravel
+APP_KEY=
+# DB settings
+DB_HOST=127.0.0.1
+DB_PASSWORD=
+`
+	result := applyEnvValues(base, []string{"APP_KEY", "DB_HOST", "DB_PASSWORD", "REDIS_HOST"}, map[string]string{
+		"APP_KEY":     "base64:abc123",
+		"DB_HOST":     "shared-mysql",
+		"DB_PASSWORD": "s3cret",
+		"REDIS_HOST":  "redis",
+	})
+
+	for _, want := range []string{
+		"APP_KEY=base64:abc123\n",
+		"DB_HOST=shared-mysql\n",
+		"DB_PASSWORD=s3cret\n",
+		"REDIS_HOST=redis\n",
+		"APP_NAME=Laravel\n",
+		"# DB settings\n",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result missing %q:\n%s", want, result)
+		}
+	}
+	if strings.Contains(result, "DB_HOST=127.0.0.1") {
+		t.Errorf("old DB_HOST value should be replaced:\n%s", result)
+	}
+	if strings.Count(result, "DB_HOST=") != 1 {
+		t.Errorf("DB_HOST should appear exactly once:\n%s", result)
+	}
+}
+
+func TestApplyEnvValuesQuotesSpecialValues(t *testing.T) {
+	result := applyEnvValues("", []string{"APP_NAME"}, map[string]string{"APP_NAME": "My App #1"})
+	if !strings.Contains(result, `APP_NAME="My App #1"`) {
+		t.Errorf("value with spaces should be quoted, got:\n%s", result)
+	}
+}
+
+func TestGenerateSecretValue(t *testing.T) {
+	v, err := generateSecretValue(TemplateEnvSecret{Key: "APP_KEY", Prefix: "base64:", Encoding: "base64", Bytes: 32})
+	if err != nil {
+		t.Fatalf("generateSecretValue failed: %v", err)
+	}
+	if !strings.HasPrefix(v, "base64:") {
+		t.Errorf("expected base64: prefix, got %q", v)
+	}
+	if len(v) < len("base64:")+40 {
+		t.Errorf("expected ~44 chars of base64 after prefix, got %q", v)
+	}
+
+	hexVal, err := generateSecretValue(TemplateEnvSecret{Key: "TOKEN", Encoding: "hex", Bytes: 16})
+	if err != nil {
+		t.Fatalf("generateSecretValue hex failed: %v", err)
+	}
+	if len(hexVal) != 32 {
+		t.Errorf("expected 32 hex chars, got %d (%q)", len(hexVal), hexVal)
+	}
+}
+
+func TestBuildTemplateEnvContentSecretsAndOverrides(t *testing.T) {
+	base := "APP_NAME=${NAME}\nAPP_KEY=\nDB_HOST=localhost\n"
+	spec := TemplateEnv{Secrets: []TemplateEnvSecret{
+		{Key: "APP_KEY", Prefix: "base64:", Encoding: "base64"},
+		{Key: "PROVIDED_SECRET", Encoding: "hex"},
+	}}
+	envVars := []EnvVar{
+		{Key: "DB_HOST", Value: "shared-mysql"},
+		{Key: "PROVIDED_SECRET", Value: "user-supplied"},
+	}
+
+	result := buildTemplateEnvContent(base, "my-app", envVars, spec)
+
+	if !strings.Contains(result, "APP_NAME=my-app") {
+		t.Errorf("${NAME} should be substituted:\n%s", result)
+	}
+	if !strings.Contains(result, "APP_KEY=base64:") {
+		t.Errorf("APP_KEY should be generated:\n%s", result)
+	}
+	if !strings.Contains(result, "DB_HOST=shared-mysql") {
+		t.Errorf("DB_HOST should be overridden:\n%s", result)
+	}
+	if !strings.Contains(result, "PROVIDED_SECRET=user-supplied") {
+		t.Errorf("user-provided value must win over secret generation:\n%s", result)
+	}
+}
+
+func TestProcessTemplateEnvRequiresSpecFile(t *testing.T) {
+	cfg := &config.Config{DeploymentsPath: t.TempDir()}
+	s := &Server{config: cfg}
+
+	templateDir := cfg.DeploymentsPath + "/.flatrun/templates/anything"
+	if err := createDir(templateDir); err != nil {
+		t.Fatalf("failed to create template dir: %v", err)
+	}
+	// Secrets without a declared file: the template did not define env
+	// handling, so nothing may be written.
+	metadata := `name: Anything
+env:
+  secrets:
+    - key: APP_KEY
+`
+	if err := writeFile(templateDir+"/metadata.yml", metadata); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+	deploymentDir := cfg.DeploymentsPath + "/my-app"
+	if err := createDir(deploymentDir); err != nil {
+		t.Fatalf("failed to create deployment dir: %v", err)
+	}
+
+	s.processTemplateEnv("my-app", "anything", "services: {}", nil)
+
+	entries, err := os.ReadDir(deploymentDir)
+	if err != nil {
+		t.Fatalf("read deployment dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("no files should be written without env.file, found %d", len(entries))
+	}
+}
+
+func TestProcessTemplateEnvUsesSpecFallback(t *testing.T) {
+	cfg := &config.Config{
+		DeploymentsPath: t.TempDir(),
+		Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		},
+	}
+	s := &Server{config: cfg}
+
+	templateDir := cfg.DeploymentsPath + "/.flatrun/templates/laravel"
+	if err := createDir(templateDir); err != nil {
+		t.Fatalf("failed to create template dir: %v", err)
+	}
+	metadata := `name: Laravel
+env:
+  file: .env
+  example_path: /app/.env.example
+  template: |
+    APP_NAME=${NAME}
+    APP_KEY=
+    DB_HOST=
+  secrets:
+    - key: APP_KEY
+      prefix: "base64:"
+`
+	if err := writeFile(templateDir+"/metadata.yml", metadata); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+
+	deploymentDir := cfg.DeploymentsPath + "/my-laravel"
+	if err := createDir(deploymentDir); err != nil {
+		t.Fatalf("failed to create deployment dir: %v", err)
+	}
+
+	envVars := []EnvVar{{Key: "DB_HOST", Value: "shared-mysql"}}
+
+	// The compose resolves no image, so the spec's fallback content is the base.
+	s.processTemplateEnv("my-laravel", "laravel", "services: {}", envVars)
+
+	content, err := os.ReadFile(deploymentDir + "/.env")
+	if err != nil {
+		t.Fatalf("expected .env to be written: %v", err)
+	}
+	text := string(content)
+	if !strings.Contains(text, "APP_NAME=my-laravel") {
+		t.Errorf(".env should contain the deployment name:\n%s", text)
+	}
+	if !strings.Contains(text, "APP_KEY=base64:") {
+		t.Errorf(".env should contain a generated APP_KEY:\n%s", text)
+	}
+	if !strings.Contains(text, "DB_HOST=shared-mysql") {
+		t.Errorf(".env should contain the database host:\n%s", text)
+	}
+}
+
+func TestMainServiceImage(t *testing.T) {
+	compose := `services:
+  db:
+    image: mysql:8
+  app:
+    image: ghcr.io/me/app:1
+`
+	if got := mainServiceImage(compose); got != "ghcr.io/me/app:1" {
+		t.Errorf("mainServiceImage = %q, want app service image", got)
+	}
+
+	compose = `services:
+  web:
+    image: nginx:alpine
+`
+	if got := mainServiceImage(compose); got != "nginx:alpine" {
+		t.Errorf("mainServiceImage = %q, want nginx:alpine", got)
 	}
 }
 

@@ -32,10 +32,11 @@ mounts:
     container_path: /app
     description: Laravel application source code
     type: file
-    required: true
+    required: false
     user: "1000:1000"
   - id: env
     name: Environment Config
+    host_path: ./.env
     container_path: /app/.env
     description: Laravel environment configuration file
     type: file
@@ -46,31 +47,49 @@ mounts:
     container_path: /app/storage
     description: Logs, cache, and file uploads
     type: file
-    required: false
+    required: true
     user: "1000:1000"
     subdirectories:
+      - app/public
+      - app/private
       - framework/cache
       - framework/sessions
+      - framework/testing
       - framework/views
       - logs
-files:
-  - path: .env
-    content: |
-      APP_NAME=${NAME}
-      APP_ENV=production
-      APP_DEBUG=false
-      APP_URL=http://localhost
+  - id: bootstrap-cache
+    name: Bootstrap Cache
+    host_path: ./bootstrap/cache
+    container_path: /app/bootstrap/cache
+    description: Compiled framework files
+    type: file
+    required: true
+    user: "1000:1000"
+env:
+  file: .env
+  example_path: /app/.env.example
+  template: |
+    APP_NAME=${NAME}
+    APP_ENV=production
+    APP_KEY=
+    APP_DEBUG=false
+    APP_URL=http://localhost
 
-      DB_CONNECTION=mysql
-      DB_HOST=${DB_HOST}
-      DB_PORT=${DB_PORT}
-      DB_DATABASE=${DB_DATABASE}
-      DB_USERNAME=${DB_USERNAME}
-      DB_PASSWORD=${DB_PASSWORD}
+    DB_CONNECTION=mysql
+    DB_HOST=
+    DB_PORT=
+    DB_DATABASE=
+    DB_USERNAME=
+    DB_PASSWORD=
 
-      CACHE_DRIVER=file
-      SESSION_DRIVER=file
-      QUEUE_CONNECTION=sync
+    CACHE_DRIVER=file
+    SESSION_DRIVER=file
+    QUEUE_CONNECTION=sync
+  secrets:
+    - key: APP_KEY
+      prefix: "base64:"
+      encoding: base64
+      bytes: 32
 backup:
   container_paths:
     - service: app

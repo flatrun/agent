@@ -377,13 +377,35 @@ type MountOwnership struct {
 }
 
 // ApplyMountOwnership sets ownership and creates subdirectories for bind mounts.
-// When User is specified (UID:GID format), directories are chowned to that user.
-// When User is empty, directories are chmod'd to 0777 as a fallback for non-template deploys.
+// When User is specified (UID:GID format), the mount is chowned recursively to
+// that user so intermediate directories and pre-existing content end up owned
+// by the container too. When User is empty, directories are chmod'd to 0777 as
+// a fallback for non-template deploys. A host path that already exists as a
+// regular file (e.g. a generated .env) is only chowned, never turned into a
+// directory.
 func (d *Discovery) ApplyMountOwnership(deploymentPath string, mounts []MountOwnership) error {
 	for _, m := range mounts {
 		base := m.HostPath
 		if !filepath.IsAbs(base) {
 			base = filepath.Join(deploymentPath, base)
+		}
+
+		var uid, gid int
+		if m.User != "" {
+			var err error
+			uid, gid, err = parseUIDGID(m.User)
+			if err != nil {
+				return fmt.Errorf("parse user %q: %w", m.User, err)
+			}
+		}
+
+		if info, err := os.Stat(base); err == nil && !info.IsDir() {
+			if m.User != "" {
+				if err := os.Chown(base, uid, gid); err != nil {
+					return fmt.Errorf("chown %s: %w", base, err)
+				}
+			}
+			continue
 		}
 
 		if err := os.MkdirAll(base, 0755); err != nil {
@@ -400,14 +422,14 @@ func (d *Discovery) ApplyMountOwnership(deploymentPath string, mounts []MountOwn
 		}
 
 		if m.User != "" {
-			uid, gid, err := parseUIDGID(m.User)
-			if err != nil {
-				return fmt.Errorf("parse user %q: %w", m.User, err)
-			}
-			for _, dir := range dirs {
-				if err := os.Chown(dir, uid, gid); err != nil {
-					return fmt.Errorf("chown %s: %w", dir, err)
+			err := filepath.WalkDir(base, func(path string, _ os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
 				}
+				return os.Chown(path, uid, gid)
+			})
+			if err != nil {
+				return fmt.Errorf("chown %s: %w", base, err)
 			}
 		} else {
 			for _, dir := range dirs {
