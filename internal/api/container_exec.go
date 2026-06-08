@@ -109,7 +109,19 @@ func (s *Server) containerExec(c *gin.Context) {
 	cmd := exec.Command("docker", "exec", "-i", "-t", containerID, shell)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
-	// Start with PTY
+	guard := func(command string) (bool, *models.ProtectedCommandRule, error) {
+		return s.protectedContainerCommandBlocked(containerID, command)
+	}
+	streamPTY(conn, cmd, guard)
+}
+
+// terminalCommandGuard decides whether a submitted command line may run.
+type terminalCommandGuard func(command string) (bool, *models.ProtectedCommandRule, error)
+
+// streamPTY runs cmd under a PTY and pumps bytes between it and the
+// websocket: binary frames carry raw terminal bytes, JSON text frames carry
+// resizes, and each submitted line is checked against guard before it runs.
+func streamPTY(conn *websocket.Conn, cmd *exec.Cmd, guard terminalCommandGuard) {
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		sendError(conn, "Failed to start terminal: "+err.Error())
@@ -181,7 +193,7 @@ func (s *Server) containerExec(c *gin.Context) {
 					}
 				}
 
-				if blocked, err := s.handleTerminalInput(containerID, ptmx, conn, message, &commandBuffer); err != nil {
+				if blocked, err := handleTerminalInput(guard, ptmx, conn, message, &commandBuffer); err != nil {
 					log.Printf("PTY write error: %v", err)
 					return
 				} else if blocked {
@@ -205,7 +217,7 @@ func (s *Server) containerExec(c *gin.Context) {
 	wg.Wait()
 }
 
-func (s *Server) handleTerminalInput(containerID string, ptmx *os.File, conn *websocket.Conn, message []byte, commandBuffer *strings.Builder) (bool, error) {
+func handleTerminalInput(guard terminalCommandGuard, ptmx *os.File, conn *websocket.Conn, message []byte, commandBuffer *strings.Builder) (bool, error) {
 	for _, b := range message {
 		switch b {
 		case '\r', '\n':
@@ -214,7 +226,7 @@ func (s *Server) handleTerminalInput(containerID string, ptmx *os.File, conn *we
 			if command == "" {
 				continue
 			}
-			blocked, rule, err := s.protectedContainerCommandBlocked(containerID, command)
+			blocked, rule, err := guard(command)
 			if err != nil {
 				return false, err
 			}

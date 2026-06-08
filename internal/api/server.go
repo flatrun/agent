@@ -318,6 +318,7 @@ func (s *Server) setupRoutes() {
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
 		api.GET("/system/terminal", s.systemTerminal)
+		api.GET("/system/terminal/interactive", s.systemTerminalInteractive)
 
 		// Setup endpoints (public, gated by setup state)
 		setupGroup := api.Group("/setup")
