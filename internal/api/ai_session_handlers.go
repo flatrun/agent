@@ -136,6 +136,7 @@ func (s *Server) createAISession(c *gin.Context) {
 		AutoRun    bool   `json:"auto_run"`
 		Message    string `json:"message"`
 		Context    string `json:"context"`
+		Seed       bool   `json:"seed"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -161,7 +162,7 @@ func (s *Server) createAISession(c *gin.Context) {
 	prompt := ai.BuildSessionPrompt(req.Scope, req.Deployment, s.config.AI.DocsURL)
 	sess := ai.NewSession(req.Scope, req.Deployment, req.AutoRun, sessionActorFrom(c), prompt)
 	content, display := composeUserMessage(req.Message, req.Context)
-	sess.AddUserMessage(content, display)
+	sess.AddUserMessage(content, display, req.Seed)
 
 	if err := s.advanceSession(c, sess); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -224,7 +225,7 @@ func (s *Server) postAISessionMessage(c *gin.Context) {
 	}
 
 	content, display := composeUserMessage(req.Message, req.Context)
-	sess.AddUserMessage(content, display)
+	sess.AddUserMessage(content, display, false)
 	if err := s.advanceSession(c, sess); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
