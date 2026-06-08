@@ -399,9 +399,9 @@ func (d *Discovery) ApplyMountOwnership(deploymentPath string, mounts []MountOwn
 			}
 		}
 
-		if info, err := os.Stat(base); err == nil && !info.IsDir() {
+		if info, err := os.Lstat(base); err == nil && !info.IsDir() {
 			if m.User != "" {
-				if err := os.Chown(base, uid, gid); err != nil {
+				if err := os.Lchown(base, uid, gid); err != nil {
 					return fmt.Errorf("chown %s: %w", base, err)
 				}
 			}
@@ -426,7 +426,9 @@ func (d *Discovery) ApplyMountOwnership(deploymentPath string, mounts []MountOwn
 				if walkErr != nil {
 					return walkErr
 				}
-				return os.Chown(path, uid, gid)
+				// Runs as root over container-written content: following a
+				// planted symlink would chown an arbitrary host file.
+				return os.Lchown(path, uid, gid)
 			})
 			if err != nil {
 				return fmt.Errorf("chown %s: %w", base, err)

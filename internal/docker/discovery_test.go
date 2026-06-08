@@ -334,6 +334,35 @@ func TestApplyMountOwnership(t *testing.T) {
 		}
 	})
 
+	t.Run("does not follow symlinks while chowning", func(t *testing.T) {
+		// Chowning through the link to this root-owned target would fail
+		// as non-root; success proves the link itself was changed.
+		target := "/etc/hostname"
+		if _, err := os.Stat(target); err != nil {
+			t.Skipf("no stable root-owned target available: %v", err)
+		}
+
+		base := filepath.Join(deploymentPath, "linked")
+		if err := os.MkdirAll(base, 0755); err != nil {
+			t.Fatalf("Failed to create mount dir: %v", err)
+		}
+		if err := os.Symlink(target, filepath.Join(base, "escape")); err != nil {
+			t.Fatalf("Failed to create symlink: %v", err)
+		}
+
+		user := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+		mounts := []MountOwnership{
+			{
+				HostPath: "./linked",
+				User:     user,
+			},
+		}
+
+		if err := d.ApplyMountOwnership(deploymentPath, mounts); err != nil {
+			t.Fatalf("ApplyMountOwnership failed on a mount containing a symlink: %v", err)
+		}
+	})
+
 	t.Run("chowns recursively including pre-existing content", func(t *testing.T) {
 		base := filepath.Join(deploymentPath, "data")
 		nested := filepath.Join(base, "deep", "dir")
