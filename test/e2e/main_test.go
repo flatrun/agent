@@ -96,8 +96,13 @@ func TestMain(m *testing.M) {
 }
 
 func prepareDirectories() error {
-	_ = os.RemoveAll(deploymentsPath)
-	_ = os.RemoveAll(certsPath)
+	// The agent container runs as root and leaves root-owned state behind;
+	// starting on top of it makes unrelated tests fail in confusing ways.
+	for _, dir := range []string{deploymentsPath, certsPath} {
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("leftover state at %s cannot be removed (root-owned files from a previous run; remove the directory manually): %w", dir, err)
+		}
+	}
 
 	if err := os.MkdirAll(deploymentsPath+"/nginx/conf.d", 0755); err != nil {
 		return fmt.Errorf("failed to create deployments directory: %w", err)
