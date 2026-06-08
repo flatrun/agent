@@ -19,6 +19,10 @@ type Message struct {
 	// while showing the operator a short label. Never sent to the
 	// provider.
 	Display string `json:"display,omitempty"`
+	// Hidden marks a turn the UI must not show at all: prompts composed
+	// by the product (e.g. "analyze these logs") rather than typed by
+	// the operator. The model still sees Content.
+	Hidden bool `json:"hidden,omitempty"`
 	// ToolCalls is set on an assistant message that wants tools run.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// ToolCallID and Name identify a role:"tool" result message.

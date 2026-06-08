@@ -74,8 +74,8 @@ func (s *Session) touch() {
 // AddUserMessage records a user turn. When display differs from
 // content, the model sees content (e.g. message plus embedded logs)
 // while the UI shows display (e.g. a short label).
-func (s *Session) AddUserMessage(content, display string) {
-	s.Messages = append(s.Messages, Message{Role: "user", Content: content, Display: display})
+func (s *Session) AddUserMessage(content, display string, hidden bool) {
+	s.Messages = append(s.Messages, Message{Role: "user", Content: content, Display: display, Hidden: hidden})
 	s.touch()
 }
 
@@ -206,6 +206,9 @@ func (s *Session) DisplayMessages() []DisplayTurn {
 	for _, m := range s.Messages {
 		switch m.Role {
 		case "user":
+			if m.Hidden {
+				continue
+			}
 			shown := m.Content
 			if m.Display != "" {
 				shown = m.Display

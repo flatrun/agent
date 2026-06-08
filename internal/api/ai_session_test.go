@@ -131,6 +131,51 @@ func TestAISessionHidesBulkyContext(t *testing.T) {
 	}
 }
 
+func TestAISessionHidesSeededPrompt(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+
+	stub := &scriptedProvider{responses: []*ai.Response{{Content: "All healthy.", Model: "scripted"}}}
+	s.aiProvider = stub
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/sessions", map[string]interface{}{
+		"scope":      "deployment",
+		"deployment": "myapp",
+		"auto_run":   true,
+		"message":    "Analyze the recent logs for myapp.",
+		"context":    "```\nGET /health 200 OK\n```",
+		"seed":       true,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+
+	// A seeded prompt is composed by the product, not typed by the
+	// operator, so the transcript starts with the assistant's answer.
+	messages := parsed["messages"].([]interface{})
+	for _, m := range messages {
+		turn := m.(map[string]interface{})
+		if turn["role"] == "user" {
+			t.Errorf("seeded prompt leaked into the transcript: %v", turn["content"])
+		}
+	}
+	if len(messages) == 0 {
+		t.Fatal("expected the assistant turn in the transcript")
+	}
+
+	// The model must still receive the seeded prompt and its context.
+	var prompt strings.Builder
+	for _, m := range stub.lastRequestMessages() {
+		prompt.WriteString(m.Content)
+	}
+	if !strings.Contains(prompt.String(), "Analyze the recent logs for myapp.") {
+		t.Error("seeded prompt was not sent to the model")
+	}
+	if !strings.Contains(prompt.String(), "GET /health 200 OK") {
+		t.Error("seeded context was not sent to the model")
+	}
+}
+
 func TestAISessionApprovalGating(t *testing.T) {
 	s, tmpDir, ts := setupPlanTestServer(t)
 	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})

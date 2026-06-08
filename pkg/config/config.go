@@ -41,6 +41,12 @@ type Config struct {
 	Cleanup         CleanupConfig        `yaml:"cleanup"`
 	Plans           PlansConfig          `yaml:"plans"`
 	AI              AIConfig             `yaml:"ai"`
+	Files           FilesConfig          `yaml:"files"`
+}
+
+type FilesConfig struct {
+	// Pointer so an explicit false survives reloads; nil means "use default" (true).
+	ShowHidden *bool `yaml:"show_hidden" json:"show_hidden"`
 }
 
 type AIConfig struct {
@@ -425,6 +431,11 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Plans.RetentionDays == 0 {
 		cfg.Plans.RetentionDays = 30
+	}
+	// Files defaults
+	if cfg.Files.ShowHidden == nil {
+		showHidden := true
+		cfg.Files.ShowHidden = &showHidden
 	}
 	// Cluster defaults
 	if cfg.Cluster.ServerName == "" {

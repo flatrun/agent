@@ -2,10 +2,13 @@ package templates
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/netip"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 )
@@ -68,6 +71,27 @@ func listInfraTemplates() ([]string, error) {
 		}
 	}
 	return templates, nil
+}
+
+// Checksum identifies the embedded template set, so on-disk copies can
+// be detected as stale after an agent upgrade.
+func Checksum() string {
+	ids, err := List()
+	if err != nil {
+		return ""
+	}
+	sort.Strings(ids)
+	h := sha256.New()
+	for _, id := range ids {
+		h.Write([]byte(id))
+		if metadata, err := GetMetadata(id); err == nil {
+			h.Write(metadata)
+		}
+		if compose, err := GetCompose(id); err == nil {
+			h.Write(compose)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func GetMetadata(name string) ([]byte, error) {
