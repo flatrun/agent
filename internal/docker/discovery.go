@@ -582,7 +582,9 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 				if newMeta.Networking.Service != "" {
 					existing.Networking.Service = newMeta.Networking.Service
 				}
-				d.SaveMetadata(name, existing)
+				if err := d.SaveMetadata(name, existing); err != nil {
+					return fmt.Errorf("failed to sync service metadata: %w", err)
+				}
 			}
 		}
 	}
