@@ -156,6 +156,18 @@ func (o *Orchestrator) setupMultiDomainDeployment(deployment *models.Deployment,
 		result.NginxReloaded = true
 	}
 
+	for _, d := range domains {
+		port := d.ContainerPort
+		if port == 0 {
+			port = 80
+		}
+		if listening, checked := o.nginx.ProbeTarget(d.Service, port); checked && !listening {
+			warning := fmt.Sprintf("target %s:%d for %s is not reachable; the route may be dead", d.Service, port, d.Domain)
+			log.Printf("warning: %s", warning)
+			result.TargetWarnings = append(result.TargetWarnings, warning)
+		}
+	}
+
 	certResults, err := o.ssl.RequestCertificatesForDomains(domains)
 	if err != nil {
 		log.Printf("warning: failed to request certificates: %v", err)
@@ -376,6 +388,7 @@ type SetupResult struct {
 	CertificateResults   []*ssl.CertificateResult `json:"certificate_results,omitempty"`
 	SSLMessage           string                   `json:"ssl_message,omitempty"`
 	SSLError             string                   `json:"ssl_error,omitempty"`
+	TargetWarnings       []string                 `json:"target_warnings,omitempty"`
 }
 
 type ProxyStatus struct {

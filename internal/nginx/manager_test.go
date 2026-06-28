@@ -2057,6 +2057,45 @@ func TestGenerateMultiDomainConfig_ContainerPort(t *testing.T) {
 	})
 }
 
+func TestProbeTarget_UncheckedWithoutContainer(t *testing.T) {
+	m := NewManager(&config.NginxConfig{}, "/deployments", "")
+
+	if listening, checked := m.ProbeTarget("web", 80); checked || listening {
+		t.Errorf("probe must report unchecked when no nginx container is configured, got listening=%v checked=%v", listening, checked)
+	}
+	if _, checked := m.ProbeTarget("", 80); checked {
+		t.Error("probe must report unchecked for an empty service name")
+	}
+}
+
+func TestInterpretProbe(t *testing.T) {
+	tests := []struct {
+		name          string
+		output        string
+		exitCode      int
+		wantListening bool
+		wantChecked   bool
+	}{
+		{"open port", "", 0, true, true},
+		{"connection refused", "nc: connect failed: Connection refused", 1, false, true},
+		{"nc missing", "sh: nc: not found", 127, false, false},
+		{"container down", "Error response from daemon: Container abc is not running", 1, false, false},
+		{"no such container", "Error: No such container: nginx", 1, false, false},
+		{"exec failed", "OCI runtime exec failed: exec failed: ...", 126, false, false},
+		{"unknown nonzero", "something weird", 2, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listening, checked := interpretProbe(tt.output, tt.exitCode)
+			if listening != tt.wantListening || checked != tt.wantChecked {
+				t.Errorf("interpretProbe(%q, %d) = (%v, %v), want (%v, %v)",
+					tt.output, tt.exitCode, listening, checked, tt.wantListening, tt.wantChecked)
+			}
+		})
+	}
+}
+
 func TestCreateVirtualHost_WritesMapsConfig(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "nginx-maps-*")
 	if err != nil {

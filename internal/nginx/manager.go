@@ -325,6 +325,56 @@ func isNginxConfigValid(output string) bool {
 	return !hasError && hasSuccess
 }
 
+// ProbeTarget checks, from inside the nginx container, whether service:port
+// accepts a TCP connection, using the same name resolution the proxy itself
+// uses. The second return value is false when the check could not be performed
+// (no probe tool in the image, nginx container unavailable, unsupported flags),
+// so callers can stay silent instead of reporting a false dead route.
+func (m *Manager) ProbeTarget(service string, port int) (listening bool, checked bool) {
+	if m.config.ContainerName == "" || service == "" {
+		return false, false
+	}
+
+	probe := fmt.Sprintf("nc -z -w2 %s %d", service, port)
+	out, err := exec.Command("docker", "exec", m.config.ContainerName, "sh", "-c", probe).CombinedOutput()
+
+	exitCode := -1
+	if err == nil {
+		exitCode = 0
+	} else if exitErr, ok := err.(*exec.ExitError); ok {
+		exitCode = exitErr.ExitCode()
+	}
+	return interpretProbe(string(out), exitCode)
+}
+
+// interpretProbe classifies a probe's output and exit code. A missing or
+// unsupported probe tool, or a docker/daemon-level failure (container down,
+// exec failed), is not evidence the target is closed, so it is reported as
+// unchecked rather than a dead route. Only a clean exit-1 from the probe
+// itself counts as "not listening".
+func interpretProbe(output string, exitCode int) (listening bool, checked bool) {
+	if exitCode == 0 {
+		return true, true
+	}
+
+	lower := strings.ToLower(output)
+	uncheckable := []string{
+		"not found", "usage", "invalid", "unrecognized",
+		"error response from daemon", "is not running", "no such container",
+		"oci runtime", "exec failed",
+	}
+	for _, s := range uncheckable {
+		if strings.Contains(lower, s) {
+			return false, false
+		}
+	}
+
+	if exitCode == 1 {
+		return false, true
+	}
+	return false, false
+}
+
 func (m *Manager) waitForContainerReady(maxRetries int) error {
 	for i := 0; i < maxRetries; i++ {
 		cmd := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", m.config.ContainerName)
