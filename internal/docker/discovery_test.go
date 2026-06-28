@@ -498,6 +498,26 @@ func TestGenerateMetadataFromCompose_ServiceName(t *testing.T) {
 	}
 }
 
+func TestPickPrimaryService_PrefersAppOrWeb(t *testing.T) {
+	d := NewDiscovery(t.TempDir())
+
+	withPorts := composeService{Ports: []interface{}{"80:80"}}
+	services := map[string]composeService{
+		"queue": withPorts,
+		"app":   withPorts,
+		"redis": withPorts,
+	}
+
+	// Map iteration order is random, so a service with ports could be returned
+	// in any order. Repeat to confirm "app" is selected deterministically.
+	for i := 0; i < 100; i++ {
+		name, _ := d.pickPrimaryService(services)
+		if name != "app" {
+			t.Fatalf("pickPrimaryService = %q, want \"app\"", name)
+		}
+	}
+}
+
 func TestGenerateMetadataFromCompose_Expose(t *testing.T) {
 	tests := []struct {
 		name     string

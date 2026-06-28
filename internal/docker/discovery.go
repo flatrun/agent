@@ -667,10 +667,17 @@ func (d *Discovery) generateMetadataFromCompose(composePath, name string) *model
 
 // pickPrimaryService selects the service to use for networking metadata.
 // For single-service composes, returns that service. For multi-service,
-// returns the first service with exposed ports.
+// it prefers a service named "app" or "web" that exposes ports, then falls
+// back to the first service with exposed ports. The preference keeps the
+// selection deterministic, since Go map iteration order is random.
 func (d *Discovery) pickPrimaryService(services map[string]composeService) (string, composeService) {
 	if len(services) == 1 {
 		for name, svc := range services {
+			return name, svc
+		}
+	}
+	for name, svc := range services {
+		if (name == "app" || name == "web") && (len(svc.Ports) > 0 || len(svc.Expose) > 0) {
 			return name, svc
 		}
 	}
