@@ -1846,6 +1846,43 @@ func TestGenerateConfig_SSLToggle(t *testing.T) {
 	}
 }
 
+func TestGenerateMultiDomainConfig_StaplingGate(t *testing.T) {
+	deployment := &models.Deployment{
+		Name: "stapling-test",
+		Metadata: &models.ServiceMetadata{
+			Domains: []models.DomainConfig{
+				{ID: "d1", Service: "web", Domain: "app.example.com", SSL: models.SSLConfig{Enabled: true}},
+			},
+		},
+	}
+
+	t.Run("default enables stapling", func(t *testing.T) {
+		m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+		if !strings.Contains(config, "ssl_stapling on;") {
+			t.Errorf("stapling should be enabled by default, got:\n%s", config)
+		}
+	})
+
+	t.Run("checker without OCSP disables stapling", func(t *testing.T) {
+		m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+		m.SetStaplingChecker(func(string) bool { return false })
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+		if strings.Contains(config, "ssl_stapling on;") {
+			t.Errorf("stapling should be omitted when the cert has no OCSP responder, got:\n%s", config)
+		}
+		if !strings.Contains(config, "listen 443 ssl;") {
+			t.Errorf("SSL server block should still be generated, got:\n%s", config)
+		}
+	})
+}
+
 func TestGenerateMultiDomainConfig_SSLToggle(t *testing.T) {
 	cfg := &config.NginxConfig{
 		ContainerWebrootPath: "/var/www/html",
@@ -2016,6 +2053,138 @@ func TestGenerateMultiDomainConfig_ContainerPort(t *testing.T) {
 
 		if !strings.Contains(config, "web:80") {
 			t.Errorf("config should default to port 80 when ContainerPort is 0, got:\n%s", config)
+		}
+	})
+}
+
+func TestProbeTarget_UncheckedWithoutContainer(t *testing.T) {
+	m := NewManager(&config.NginxConfig{}, "/deployments", "")
+
+	if listening, checked := m.ProbeTarget("web", 80); checked || listening {
+		t.Errorf("probe must report unchecked when no nginx container is configured, got listening=%v checked=%v", listening, checked)
+	}
+	if _, checked := m.ProbeTarget("", 80); checked {
+		t.Error("probe must report unchecked for an empty service name")
+	}
+}
+
+func TestInterpretProbe(t *testing.T) {
+	tests := []struct {
+		name          string
+		output        string
+		exitCode      int
+		wantListening bool
+		wantChecked   bool
+	}{
+		{"open port", "", 0, true, true},
+		{"connection refused", "nc: connect failed: Connection refused", 1, false, true},
+		{"nc missing", "sh: nc: not found", 127, false, false},
+		{"container down", "Error response from daemon: Container abc is not running", 1, false, false},
+		{"no such container", "Error: No such container: nginx", 1, false, false},
+		{"exec failed", "OCI runtime exec failed: exec failed: ...", 126, false, false},
+		{"unknown nonzero", "something weird", 2, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listening, checked := interpretProbe(tt.output, tt.exitCode)
+			if listening != tt.wantListening || checked != tt.wantChecked {
+				t.Errorf("interpretProbe(%q, %d) = (%v, %v), want (%v, %v)",
+					tt.output, tt.exitCode, listening, checked, tt.wantListening, tt.wantChecked)
+			}
+		})
+	}
+}
+
+func TestCreateVirtualHost_WritesMapsConfig(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-maps-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, tmpDir, "")
+	deployment := &models.Deployment{
+		Name: "ws-app",
+		Metadata: &models.ServiceMetadata{
+			Domains: []models.DomainConfig{
+				{ID: "d1", Service: "web", Domain: "app.example.com"},
+			},
+		},
+	}
+
+	if err := m.CreateVirtualHost(deployment); err != nil {
+		t.Fatalf("CreateVirtualHost failed: %v", err)
+	}
+
+	confDir := filepath.Join(tmpDir, "nginx", "conf.d")
+	vhost, err := os.ReadFile(filepath.Join(confDir, "ws-app.conf"))
+	if err != nil {
+		t.Fatalf("failed to read vhost: %v", err)
+	}
+	if !strings.Contains(string(vhost), "proxy_set_header Connection $connection_upgrade;") {
+		t.Errorf("vhost should use the conditional upgrade variable, got:\n%s", vhost)
+	}
+
+	maps, err := os.ReadFile(filepath.Join(confDir, mapsConfigFile))
+	if err != nil {
+		t.Fatalf("maps config was not written: %v", err)
+	}
+	if !strings.Contains(string(maps), "map $http_upgrade $connection_upgrade") {
+		t.Errorf("maps config missing the upgrade map, got:\n%s", maps)
+	}
+
+	hosts, err := m.ListVirtualHosts()
+	if err != nil {
+		t.Fatalf("ListVirtualHosts failed: %v", err)
+	}
+	for _, h := range hosts {
+		if h.Name == strings.TrimSuffix(mapsConfigFile, ".conf") {
+			t.Errorf("ListVirtualHosts should skip the managed maps file, got %q", h.Name)
+		}
+	}
+}
+
+func TestGenerateMultiDomainConfig_ProxyTimeout(t *testing.T) {
+	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+
+	t.Run("uses configured proxy timeout", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "ws-test",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{ID: "d1", Service: "web", Domain: "app.example.com", ProxyTimeout: 3600},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if !strings.Contains(config, "proxy_read_timeout 3600s;") || !strings.Contains(config, "proxy_send_timeout 3600s;") {
+			t.Errorf("config should use the configured 3600s timeout, got:\n%s", config)
+		}
+	})
+
+	t.Run("defaults to 60s when unset", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "default-test",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{ID: "d1", Service: "web", Domain: "app.example.com"},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if !strings.Contains(config, "proxy_read_timeout 60s;") {
+			t.Errorf("config should default to 60s, got:\n%s", config)
 		}
 	})
 }

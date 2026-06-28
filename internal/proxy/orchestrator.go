@@ -16,13 +16,19 @@ type Orchestrator struct {
 }
 
 func NewOrchestrator(cfg *config.Config) *Orchestrator {
+	nginxMgr := nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath)
+	sslMgr := ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath, nil)
+	nginxMgr.SetStaplingChecker(sslMgr.HasOCSPResponder)
 	return &Orchestrator{
-		nginx: nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath),
-		ssl:   ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath, nil),
+		nginx: nginxMgr,
+		ssl:   sslMgr,
 	}
 }
 
 func NewOrchestratorWithManagers(nginxMgr *nginx.Manager, sslMgr *ssl.Manager) *Orchestrator {
+	if nginxMgr != nil && sslMgr != nil {
+		nginxMgr.SetStaplingChecker(sslMgr.HasOCSPResponder)
+	}
 	return &Orchestrator{
 		nginx: nginxMgr,
 		ssl:   sslMgr,
@@ -148,6 +154,18 @@ func (o *Orchestrator) setupMultiDomainDeployment(deployment *models.Deployment,
 		log.Printf("warning: failed to reload nginx: %v", err)
 	} else {
 		result.NginxReloaded = true
+	}
+
+	for _, d := range domains {
+		port := d.ContainerPort
+		if port == 0 {
+			port = 80
+		}
+		if listening, checked := o.nginx.ProbeTarget(d.Service, port); checked && !listening {
+			warning := fmt.Sprintf("target %s:%d for %s is not reachable; the route may be dead", d.Service, port, d.Domain)
+			log.Printf("warning: %s", warning)
+			result.TargetWarnings = append(result.TargetWarnings, warning)
+		}
 	}
 
 	certResults, err := o.ssl.RequestCertificatesForDomains(domains)
@@ -370,6 +388,7 @@ type SetupResult struct {
 	CertificateResults   []*ssl.CertificateResult `json:"certificate_results,omitempty"`
 	SSLMessage           string                   `json:"ssl_message,omitempty"`
 	SSLError             string                   `json:"ssl_error,omitempty"`
+	TargetWarnings       []string                 `json:"target_warnings,omitempty"`
 }
 
 type ProxyStatus struct {

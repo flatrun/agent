@@ -300,6 +300,30 @@ func (m *Manager) ListCertificates() ([]models.Certificate, error) {
 	return certificates, nil
 }
 
+// HasOCSPResponder reports whether the domain's certificate advertises an OCSP
+// responder URL. It returns false when the certificate is missing or cannot be
+// parsed. Used to decide whether enabling ssl_stapling is worthwhile, since
+// stapling on a cert with no responder only produces nginx warnings.
+func (m *Manager) HasOCSPResponder(domain string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	certPath := filepath.Join(m.certsPath, domain, "cert.pem")
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	return len(cert.OCSPServer) > 0
+}
+
 func (m *Manager) CertificateExists(domain string) bool {
 	certPath := filepath.Join(m.certsPath, domain, "cert.pem")
 	_, err := os.Stat(certPath)

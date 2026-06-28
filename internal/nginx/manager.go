@@ -23,7 +23,27 @@ type Manager struct {
 	configPath           string
 	webrootPath          string
 	containerWebrootPath string
+	staplingChecker      func(sslDomain string) bool
 	mu                   sync.RWMutex
+}
+
+// mapsConfigFile is a managed http-context snippet (not a vhost) included
+// ahead of the generated vhosts. It defines $connection_upgrade so the
+// Connection header is only sent when a client requests a WebSocket upgrade.
+const mapsConfigFile = "00-flatrun-maps.conf"
+
+const mapsConfigContent = `# Managed by FlatRun. Do not edit.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+`
+
+// infraConfigFiles are conf.d files the agent manages that are not deployment
+// virtual hosts and must be skipped when enumerating vhosts.
+var infraConfigFiles = map[string]bool{
+	mapsConfigFile:     true,
+	"rate_limits.conf": true,
 }
 
 func NewManager(cfg *config.NginxConfig, deploymentsPath string, webrootPath string) *Manager {
@@ -52,6 +72,21 @@ func NewManager(cfg *config.NginxConfig, deploymentsPath string, webrootPath str
 
 func (m *Manager) ConfigPath() string {
 	return m.configPath
+}
+
+// SetStaplingChecker injects a predicate that reports whether ssl_stapling
+// should be enabled for an SSL domain (true when its certificate advertises an
+// OCSP responder). When left unset, stapling stays enabled, preserving prior
+// behaviour.
+func (m *Manager) SetStaplingChecker(fn func(sslDomain string) bool) {
+	m.staplingChecker = fn
+}
+
+func (m *Manager) shouldStaple(sslDomain string) bool {
+	if m.staplingChecker == nil {
+		return true
+	}
+	return m.staplingChecker(sslDomain)
 }
 
 func (m *Manager) UpdateConfig(cfg *config.NginxConfig, deploymentsPath string, webrootPath string) {
@@ -125,8 +160,26 @@ func (m *Manager) WriteVirtualHost(deploymentName string, content string) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if err := m.ensureMapsConfig(); err != nil {
+		return err
+	}
+
 	configFile := filepath.Join(m.configPath, deploymentName+".conf")
 	return os.WriteFile(configFile, []byte(content), 0644)
+}
+
+// ensureMapsConfig writes the managed http-context map snippet that generated
+// vhosts depend on for conditional WebSocket upgrades. It is idempotent.
+// Callers must hold m.mu.
+func (m *Manager) ensureMapsConfig() error {
+	if err := os.MkdirAll(m.configPath, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+	path := filepath.Join(m.configPath, mapsConfigFile)
+	if err := os.WriteFile(path, []byte(mapsConfigContent), 0644); err != nil {
+		return fmt.Errorf("failed to write maps config: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) UpdateVirtualHost(deployment *models.Deployment) error {
@@ -169,6 +222,9 @@ func (m *Manager) ListVirtualHosts() ([]VirtualHostInfo, error) {
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".conf") {
+			continue
+		}
+		if infraConfigFiles[entry.Name()] {
 			continue
 		}
 
@@ -269,6 +325,56 @@ func isNginxConfigValid(output string) bool {
 	return !hasError && hasSuccess
 }
 
+// ProbeTarget checks, from inside the nginx container, whether service:port
+// accepts a TCP connection, using the same name resolution the proxy itself
+// uses. The second return value is false when the check could not be performed
+// (no probe tool in the image, nginx container unavailable, unsupported flags),
+// so callers can stay silent instead of reporting a false dead route.
+func (m *Manager) ProbeTarget(service string, port int) (listening bool, checked bool) {
+	if m.config.ContainerName == "" || service == "" {
+		return false, false
+	}
+
+	probe := fmt.Sprintf("nc -z -w2 %s %d", service, port)
+	out, err := exec.Command("docker", "exec", m.config.ContainerName, "sh", "-c", probe).CombinedOutput()
+
+	exitCode := -1
+	if err == nil {
+		exitCode = 0
+	} else if exitErr, ok := err.(*exec.ExitError); ok {
+		exitCode = exitErr.ExitCode()
+	}
+	return interpretProbe(string(out), exitCode)
+}
+
+// interpretProbe classifies a probe's output and exit code. A missing or
+// unsupported probe tool, or a docker/daemon-level failure (container down,
+// exec failed), is not evidence the target is closed, so it is reported as
+// unchecked rather than a dead route. Only a clean exit-1 from the probe
+// itself counts as "not listening".
+func interpretProbe(output string, exitCode int) (listening bool, checked bool) {
+	if exitCode == 0 {
+		return true, true
+	}
+
+	lower := strings.ToLower(output)
+	uncheckable := []string{
+		"not found", "usage", "invalid", "unrecognized",
+		"error response from daemon", "is not running", "no such container",
+		"oci runtime", "exec failed",
+	}
+	for _, s := range uncheckable {
+		if strings.Contains(lower, s) {
+			return false, false
+		}
+	}
+
+	if exitCode == 1 {
+		return false, true
+	}
+	return false, false
+}
+
 func (m *Manager) waitForContainerReady(maxRetries int) error {
 	for i := 0; i < maxRetries; i++ {
 		cmd := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", m.config.ContainerName)
@@ -354,6 +460,12 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 	}
 	if data.ProxyType == "" {
 		data.ProxyType = "http"
+	}
+	if data.ProxyTimeout == 0 {
+		data.ProxyTimeout = defaultProxyTimeout
+	}
+	if data.SSLEnabled {
+		data.EnableStapling = m.shouldStaple(data.Domain)
 	}
 
 	var tmpl *template.Template
@@ -495,6 +607,11 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				port = 80
 			}
 
+			timeout := d.ProxyTimeout
+			if timeout == 0 {
+				timeout = defaultProxyTimeout
+			}
+
 			locations = append(locations, locationData{
 				Path:          path,
 				Service:       service,
@@ -502,6 +619,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				Protocol:      "http",
 				StripPrefix:   d.StripPrefix,
 				OriginalPath:  d.PathPrefix,
+				ProxyTimeout:  timeout,
 			})
 
 			if d.SSL.Enabled {
@@ -516,12 +634,13 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 		}
 
 		servers = append(servers, serverData{
-			Domain:        host,
-			SSLEnabled:    hasSSL,
-			HasSSL:        hasSSL,
-			SSLDomain:     sslDomain,
-			Locations:     locations,
-			ServerAliases: serverAliases,
+			Domain:         host,
+			SSLEnabled:     hasSSL,
+			HasSSL:         hasSSL,
+			SSLDomain:      sslDomain,
+			Locations:      locations,
+			ServerAliases:  serverAliases,
+			EnableStapling: hasSSL && m.shouldStaple(sslDomain),
 		})
 	}
 
@@ -545,8 +664,8 @@ func (m *Manager) CreateMultiDomainVirtualHost(deployment *models.Deployment) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if err := os.MkdirAll(m.configPath, 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
+	if err := m.ensureMapsConfig(); err != nil {
+		return err
 	}
 
 	configContent, err := m.generateMultiDomainConfig(deployment)
@@ -574,6 +693,10 @@ type VirtualHostInfo struct {
 	ModifiedAt int64  `json:"modified_at"`
 }
 
+// defaultProxyTimeout is the proxy read/send timeout in seconds applied when a
+// domain does not set one explicitly.
+const defaultProxyTimeout = 60
+
 type templateData struct {
 	DeploymentName       string
 	Domain               string
@@ -586,6 +709,8 @@ type templateData struct {
 	SecurityEnabled      bool
 	BlockedIPs           []string
 	RateLimits           []rateLimitData
+	ProxyTimeout         int
+	EnableStapling       bool
 }
 
 type multiRouteTemplateData struct {
@@ -598,12 +723,13 @@ type multiRouteTemplateData struct {
 }
 
 type serverData struct {
-	Domain       string
-	SSLEnabled   bool
-	Locations    []locationData
-	HasSSL       bool
-	SSLDomain    string
-	ServerAliases []string
+	Domain         string
+	SSLEnabled     bool
+	Locations      []locationData
+	HasSSL         bool
+	SSLDomain      string
+	ServerAliases  []string
+	EnableStapling bool
 }
 
 type locationData struct {
@@ -613,6 +739,7 @@ type locationData struct {
 	Protocol      string
 	StripPrefix   bool
 	OriginalPath  string
+	ProxyTimeout  int
 }
 
 type rateLimitData struct {
@@ -636,14 +763,14 @@ const httpTemplate = `server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if .SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -675,6 +802,8 @@ const httpTemplate = `server {
 {{- end}}
     location /.well-known/acme-challenge/ {
         root {{.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 }
 `
@@ -685,6 +814,8 @@ const sslTemplate = `server {
 
     location /.well-known/acme-challenge/ {
         root {{.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 
     location / {
@@ -705,8 +836,10 @@ server {
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:50m;
+{{- if .EnableStapling}}
     ssl_stapling on;
     ssl_stapling_verify on;
+{{- end}}
 
     add_header Strict-Transport-Security "max-age=63072000" always;
 
@@ -720,14 +853,14 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if .SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -779,14 +912,14 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -814,6 +947,8 @@ server {
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 }
 {{end}}`
@@ -825,6 +960,8 @@ server {
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 
     location / {
@@ -845,8 +982,10 @@ server {
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:50m;
+{{- if .EnableStapling}}
     ssl_stapling on;
     ssl_stapling_verify on;
+{{- end}}
 
     add_header Strict-Transport-Security "max-age=63072000" always;
 
@@ -864,14 +1003,14 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -907,6 +1046,8 @@ server {
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 
     location / {
@@ -927,8 +1068,10 @@ server {
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:50m;
+{{- if .EnableStapling}}
     ssl_stapling on;
     ssl_stapling_verify on;
+{{- end}}
 
     add_header Strict-Transport-Security "max-age=63072000" always;
 
@@ -946,14 +1089,14 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -998,14 +1141,14 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -1033,6 +1176,8 @@ server {
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 }
 {{- end}}

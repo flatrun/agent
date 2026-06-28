@@ -49,6 +49,10 @@ type DomainConfig struct {
 	StripPrefix   bool      `yaml:"strip_prefix,omitempty" json:"strip_prefix,omitempty"`
 	SSL           SSLConfig `yaml:"ssl" json:"ssl"`
 	Aliases       []string  `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+	// ProxyTimeout is the proxy read/send timeout in seconds. Defaults to 60
+	// when unset; raise it for domains that proxy long-lived WebSocket
+	// connections so idle sockets are not closed mid-connection.
+	ProxyTimeout int `yaml:"proxy_timeout,omitempty" json:"proxy_timeout,omitempty"`
 }
 
 type DatabaseConfig struct {

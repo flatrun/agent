@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,42 +17,112 @@ import (
 	"github.com/flatrun/agent/pkg/updater"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/moby/moby/client"
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "update":
-			handleUpdate(os.Args[2:])
-			return
-		case "setup":
-			handleSetup(os.Args[2:])
-			return
-		case "version":
-			printVersion()
-			return
+	root := newRootCmd()
+	root.SetArgs(normalizeLegacyFlags(os.Args[1:]))
+	if err := root.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// normalizeLegacyFlags keeps the single-dash long forms the previous flag-based
+// CLI accepted (-config, -version) working under pflag, which otherwise reads a
+// single dash as a cluster of shorthand flags. This preserves existing launch
+// commands such as `flatrun-agent -config /etc/flatrun/config.yml`.
+func normalizeLegacyFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "-config" || a == "-version" ||
+			strings.HasPrefix(a, "-config=") || strings.HasPrefix(a, "-version=") {
+			a = "-" + a
 		}
+		out = append(out, a)
+	}
+	return out
+}
+
+func newRootCmd() *cobra.Command {
+	var configPath string
+	var showVersion bool
+
+	root := &cobra.Command{
+		Use:          "flatrun-agent",
+		Short:        "Flatrun Agent - flat-file container orchestration",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if showVersion {
+				printVersion()
+				return nil
+			}
+			// A bare invocation is most likely someone looking for guidance,
+			// not an attempt to start the daemon: the service is always launched
+			// with --config. Show help rather than failing on a missing default
+			// config. Pass --config (or use `serve`) to actually start.
+			if !cmd.Flags().Changed("config") {
+				return cmd.Help()
+			}
+			return runServer(configPath)
+		},
+	}
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.PersistentFlags().StringVar(&configPath, "config", "", "Path to configuration file")
+	root.Flags().BoolVar(&showVersion, "version", false, "Print version information")
+
+	serve := &cobra.Command{
+		Use:          "serve",
+		Short:        "Start the agent server",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServer(configPath)
+		},
 	}
 
-	configPath := flag.String("config", "", "Path to configuration file")
-	showVersion := flag.Bool("version", false, "Print version information")
-	flag.Parse()
-
-	if *showVersion {
-		printVersion()
-		return
+	setup := &cobra.Command{
+		Use:                "setup <target> <service> [options]",
+		Short:              "Deploy an infrastructure service from embedded templates",
+		DisableFlagParsing: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			handleSetup(args)
+		},
 	}
 
-	resolvedConfigPath := config.FindConfigPath(*configPath)
+	update := &cobra.Command{
+		Use:                "update [options]",
+		Short:              "Update the agent to the latest version",
+		DisableFlagParsing: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			handleUpdate(args)
+		},
+	}
+
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			printVersion()
+		},
+	}
+
+	root.AddCommand(serve, setup, update, versionCmd)
+	return root
+}
+
+func runServer(configPath string) error {
+	resolvedConfigPath := config.FindConfigPath(configPath)
 	cfg, err := config.Load(resolvedConfigPath)
 	if err != nil {
-		log.Fatalf("Failed to load config from %s: %v", resolvedConfigPath, err)
+		return fmt.Errorf("failed to load config from %s: %w", resolvedConfigPath, err)
 	}
 
-	ensureDockerReachable(cfg.DockerSocket)
+	if err := ensureDockerReachable(cfg.DockerSocket); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(cfg.DeploymentsPath, 0755); err != nil {
-		log.Fatalf("Failed to create deployments directory '%s': %v", cfg.DeploymentsPath, err)
+		return fmt.Errorf("failed to create deployments directory %q: %w", cfg.DeploymentsPath, err)
 	}
 
 	log.Printf("Starting Flatrun Agent v%s", version.Version)
@@ -61,7 +132,7 @@ func main() {
 
 	fileWatcher, err := watcher.New(cfg.DeploymentsPath)
 	if err != nil {
-		log.Fatalf("Failed to create file watcher: %v", err)
+		return fmt.Errorf("failed to create file watcher: %w", err)
 	}
 	defer fileWatcher.Close()
 
@@ -80,9 +151,10 @@ func main() {
 
 	log.Println("Shutting down Flatrun Agent...")
 	_ = apiServer.Stop()
+	return nil
 }
 
-func ensureDockerReachable(dockerHost string) {
+func ensureDockerReachable(dockerHost string) error {
 	log.Println("Checking if Docker is reachable...")
 
 	opts := []client.Opt{client.FromEnv}
@@ -92,7 +164,7 @@ func ensureDockerReachable(dockerHost string) {
 
 	cli, err := client.New(opts...)
 	if err != nil {
-		log.Fatalf("Failed to create Docker client: %v", err)
+		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
 	defer cli.Close()
 
@@ -100,11 +172,10 @@ func ensureDockerReachable(dockerHost string) {
 	defer cancel()
 
 	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
-		log.Fatalf("Docker is not reachable: %v. "+
-			"Ensure the Docker daemon is running and the socket "+
-			"in config is correct.", err)
+		return fmt.Errorf("docker is not reachable: %w. Ensure the Docker daemon is running and the socket in config is correct", err)
 	}
 	log.Println("Docker is reachable")
+	return nil
 }
 
 func printVersion() {
