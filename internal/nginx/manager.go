@@ -355,6 +355,9 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 	if data.ProxyType == "" {
 		data.ProxyType = "http"
 	}
+	if data.ProxyTimeout == 0 {
+		data.ProxyTimeout = defaultProxyTimeout
+	}
 
 	var tmpl *template.Template
 	var err error
@@ -495,6 +498,11 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				port = 80
 			}
 
+			timeout := d.ProxyTimeout
+			if timeout == 0 {
+				timeout = defaultProxyTimeout
+			}
+
 			locations = append(locations, locationData{
 				Path:          path,
 				Service:       service,
@@ -502,6 +510,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				Protocol:      "http",
 				StripPrefix:   d.StripPrefix,
 				OriginalPath:  d.PathPrefix,
+				ProxyTimeout:  timeout,
 			})
 
 			if d.SSL.Enabled {
@@ -574,6 +583,10 @@ type VirtualHostInfo struct {
 	ModifiedAt int64  `json:"modified_at"`
 }
 
+// defaultProxyTimeout is the proxy read/send timeout in seconds applied when a
+// domain does not set one explicitly.
+const defaultProxyTimeout = 60
+
 type templateData struct {
 	DeploymentName       string
 	Domain               string
@@ -586,6 +599,7 @@ type templateData struct {
 	SecurityEnabled      bool
 	BlockedIPs           []string
 	RateLimits           []rateLimitData
+	ProxyTimeout         int
 }
 
 type multiRouteTemplateData struct {
@@ -613,6 +627,7 @@ type locationData struct {
 	Protocol      string
 	StripPrefix   bool
 	OriginalPath  string
+	ProxyTimeout  int
 }
 
 type rateLimitData struct {
@@ -642,8 +657,8 @@ const httpTemplate = `server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if .SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -730,8 +745,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if .SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -789,8 +804,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -878,8 +893,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -962,8 +977,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -1014,8 +1029,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout {{.ProxyTimeout}}s;
+        proxy_read_timeout {{.ProxyTimeout}}s;
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()

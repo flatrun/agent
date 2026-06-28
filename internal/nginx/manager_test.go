@@ -2020,6 +2020,50 @@ func TestGenerateMultiDomainConfig_ContainerPort(t *testing.T) {
 	})
 }
 
+func TestGenerateMultiDomainConfig_ProxyTimeout(t *testing.T) {
+	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+
+	t.Run("uses configured proxy timeout", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "ws-test",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{ID: "d1", Service: "web", Domain: "app.example.com", ProxyTimeout: 3600},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if !strings.Contains(config, "proxy_read_timeout 3600s;") || !strings.Contains(config, "proxy_send_timeout 3600s;") {
+			t.Errorf("config should use the configured 3600s timeout, got:\n%s", config)
+		}
+	})
+
+	t.Run("defaults to 60s when unset", func(t *testing.T) {
+		deployment := &models.Deployment{
+			Name: "default-test",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{ID: "d1", Service: "web", Domain: "app.example.com"},
+				},
+			},
+		}
+
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+
+		if !strings.Contains(config, "proxy_read_timeout 60s;") {
+			t.Errorf("config should default to 60s, got:\n%s", config)
+		}
+	})
+}
+
 func TestGroupDomainsByHost_DeduplicatesLocations(t *testing.T) {
 	m := NewManager(&config.NginxConfig{}, "/deployments", "")
 
