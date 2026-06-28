@@ -16,13 +16,19 @@ type Orchestrator struct {
 }
 
 func NewOrchestrator(cfg *config.Config) *Orchestrator {
+	nginxMgr := nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath)
+	sslMgr := ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath, nil)
+	nginxMgr.SetStaplingChecker(sslMgr.HasOCSPResponder)
 	return &Orchestrator{
-		nginx: nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath),
-		ssl:   ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath, nil),
+		nginx: nginxMgr,
+		ssl:   sslMgr,
 	}
 }
 
 func NewOrchestratorWithManagers(nginxMgr *nginx.Manager, sslMgr *ssl.Manager) *Orchestrator {
+	if nginxMgr != nil && sslMgr != nil {
+		nginxMgr.SetStaplingChecker(sslMgr.HasOCSPResponder)
+	}
 	return &Orchestrator{
 		nginx: nginxMgr,
 		ssl:   sslMgr,

@@ -23,6 +23,7 @@ type Manager struct {
 	configPath           string
 	webrootPath          string
 	containerWebrootPath string
+	staplingChecker      func(sslDomain string) bool
 	mu                   sync.RWMutex
 }
 
@@ -71,6 +72,21 @@ func NewManager(cfg *config.NginxConfig, deploymentsPath string, webrootPath str
 
 func (m *Manager) ConfigPath() string {
 	return m.configPath
+}
+
+// SetStaplingChecker injects a predicate that reports whether ssl_stapling
+// should be enabled for an SSL domain (true when its certificate advertises an
+// OCSP responder). When left unset, stapling stays enabled, preserving prior
+// behaviour.
+func (m *Manager) SetStaplingChecker(fn func(sslDomain string) bool) {
+	m.staplingChecker = fn
+}
+
+func (m *Manager) shouldStaple(sslDomain string) bool {
+	if m.staplingChecker == nil {
+		return true
+	}
+	return m.staplingChecker(sslDomain)
 }
 
 func (m *Manager) UpdateConfig(cfg *config.NginxConfig, deploymentsPath string, webrootPath string) {
@@ -398,6 +414,9 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 	if data.ProxyTimeout == 0 {
 		data.ProxyTimeout = defaultProxyTimeout
 	}
+	if data.SSLEnabled {
+		data.EnableStapling = m.shouldStaple(data.Domain)
+	}
 
 	var tmpl *template.Template
 	var err error
@@ -565,12 +584,13 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 		}
 
 		servers = append(servers, serverData{
-			Domain:        host,
-			SSLEnabled:    hasSSL,
-			HasSSL:        hasSSL,
-			SSLDomain:     sslDomain,
-			Locations:     locations,
-			ServerAliases: serverAliases,
+			Domain:         host,
+			SSLEnabled:     hasSSL,
+			HasSSL:         hasSSL,
+			SSLDomain:      sslDomain,
+			Locations:      locations,
+			ServerAliases:  serverAliases,
+			EnableStapling: hasSSL && m.shouldStaple(sslDomain),
 		})
 	}
 
@@ -640,6 +660,7 @@ type templateData struct {
 	BlockedIPs           []string
 	RateLimits           []rateLimitData
 	ProxyTimeout         int
+	EnableStapling       bool
 }
 
 type multiRouteTemplateData struct {
@@ -652,12 +673,13 @@ type multiRouteTemplateData struct {
 }
 
 type serverData struct {
-	Domain       string
-	SSLEnabled   bool
-	Locations    []locationData
-	HasSSL       bool
-	SSLDomain    string
-	ServerAliases []string
+	Domain         string
+	SSLEnabled     bool
+	Locations      []locationData
+	HasSSL         bool
+	SSLDomain      string
+	ServerAliases  []string
+	EnableStapling bool
 }
 
 type locationData struct {
@@ -764,8 +786,10 @@ server {
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:50m;
+{{- if .EnableStapling}}
     ssl_stapling on;
     ssl_stapling_verify on;
+{{- end}}
 
     add_header Strict-Transport-Security "max-age=63072000" always;
 
@@ -908,8 +932,10 @@ server {
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:50m;
+{{- if .EnableStapling}}
     ssl_stapling on;
     ssl_stapling_verify on;
+{{- end}}
 
     add_header Strict-Transport-Security "max-age=63072000" always;
 
@@ -992,8 +1018,10 @@ server {
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:50m;
+{{- if .EnableStapling}}
     ssl_stapling on;
     ssl_stapling_verify on;
+{{- end}}
 
     add_header Strict-Transport-Security "max-age=63072000" always;
 

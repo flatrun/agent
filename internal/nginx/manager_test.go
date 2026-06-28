@@ -1846,6 +1846,43 @@ func TestGenerateConfig_SSLToggle(t *testing.T) {
 	}
 }
 
+func TestGenerateMultiDomainConfig_StaplingGate(t *testing.T) {
+	deployment := &models.Deployment{
+		Name: "stapling-test",
+		Metadata: &models.ServiceMetadata{
+			Domains: []models.DomainConfig{
+				{ID: "d1", Service: "web", Domain: "app.example.com", SSL: models.SSLConfig{Enabled: true}},
+			},
+		},
+	}
+
+	t.Run("default enables stapling", func(t *testing.T) {
+		m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+		if !strings.Contains(config, "ssl_stapling on;") {
+			t.Errorf("stapling should be enabled by default, got:\n%s", config)
+		}
+	})
+
+	t.Run("checker without OCSP disables stapling", func(t *testing.T) {
+		m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+		m.SetStaplingChecker(func(string) bool { return false })
+		config, err := m.generateMultiDomainConfig(deployment)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+		if strings.Contains(config, "ssl_stapling on;") {
+			t.Errorf("stapling should be omitted when the cert has no OCSP responder, got:\n%s", config)
+		}
+		if !strings.Contains(config, "listen 443 ssl;") {
+			t.Errorf("SSL server block should still be generated, got:\n%s", config)
+		}
+	})
+}
+
 func TestGenerateMultiDomainConfig_SSLToggle(t *testing.T) {
 	cfg := &config.NginxConfig{
 		ContainerWebrootPath: "/var/www/html",
