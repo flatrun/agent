@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/flatrun/agent/pkg/models"
 )
@@ -50,19 +51,36 @@ func (m *Manager) ListNetworks() ([]models.Network, error) {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
 
-	var networks []models.Network
-	ids := strings.Split(strings.TrimSpace(string(output)), "\n")
-
-	for _, id := range ids {
-		if id == "" {
-			continue
+	var ids []string
+	for _, id := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if id != "" {
+			ids = append(ids, id)
 		}
+	}
 
-		network, err := m.inspectNetwork(id)
-		if err != nil {
-			continue
+	// Inspect networks concurrently: a serial loop pays one docker call per
+	// network. Order is preserved; networks that fail to inspect are dropped.
+	results := make([]*models.Network, len(ids))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 12)
+	for i, id := range ids {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if network, err := m.inspectNetwork(id); err == nil {
+				results[i] = network
+			}
+		}(i, id)
+	}
+	wg.Wait()
+
+	networks := make([]models.Network, 0, len(ids))
+	for _, network := range results {
+		if network != nil {
+			networks = append(networks, *network)
 		}
-		networks = append(networks, *network)
 	}
 
 	return networks, nil
