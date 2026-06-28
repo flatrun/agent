@@ -2020,6 +2020,55 @@ func TestGenerateMultiDomainConfig_ContainerPort(t *testing.T) {
 	})
 }
 
+func TestCreateVirtualHost_WritesMapsConfig(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nginx-maps-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, tmpDir, "")
+	deployment := &models.Deployment{
+		Name: "ws-app",
+		Metadata: &models.ServiceMetadata{
+			Domains: []models.DomainConfig{
+				{ID: "d1", Service: "web", Domain: "app.example.com"},
+			},
+		},
+	}
+
+	if err := m.CreateVirtualHost(deployment); err != nil {
+		t.Fatalf("CreateVirtualHost failed: %v", err)
+	}
+
+	confDir := filepath.Join(tmpDir, "nginx", "conf.d")
+	vhost, err := os.ReadFile(filepath.Join(confDir, "ws-app.conf"))
+	if err != nil {
+		t.Fatalf("failed to read vhost: %v", err)
+	}
+	if !strings.Contains(string(vhost), "proxy_set_header Connection $connection_upgrade;") {
+		t.Errorf("vhost should use the conditional upgrade variable, got:\n%s", vhost)
+	}
+
+	maps, err := os.ReadFile(filepath.Join(confDir, mapsConfigFile))
+	if err != nil {
+		t.Fatalf("maps config was not written: %v", err)
+	}
+	if !strings.Contains(string(maps), "map $http_upgrade $connection_upgrade") {
+		t.Errorf("maps config missing the upgrade map, got:\n%s", maps)
+	}
+
+	hosts, err := m.ListVirtualHosts()
+	if err != nil {
+		t.Fatalf("ListVirtualHosts failed: %v", err)
+	}
+	for _, h := range hosts {
+		if h.Name == strings.TrimSuffix(mapsConfigFile, ".conf") {
+			t.Errorf("ListVirtualHosts should skip the managed maps file, got %q", h.Name)
+		}
+	}
+}
+
 func TestGenerateMultiDomainConfig_ProxyTimeout(t *testing.T) {
 	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
 

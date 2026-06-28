@@ -26,6 +26,25 @@ type Manager struct {
 	mu                   sync.RWMutex
 }
 
+// mapsConfigFile is a managed http-context snippet (not a vhost) included
+// ahead of the generated vhosts. It defines $connection_upgrade so the
+// Connection header is only sent when a client requests a WebSocket upgrade.
+const mapsConfigFile = "00-flatrun-maps.conf"
+
+const mapsConfigContent = `# Managed by FlatRun. Do not edit.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+`
+
+// infraConfigFiles are conf.d files the agent manages that are not deployment
+// virtual hosts and must be skipped when enumerating vhosts.
+var infraConfigFiles = map[string]bool{
+	mapsConfigFile:     true,
+	"rate_limits.conf": true,
+}
+
 func NewManager(cfg *config.NginxConfig, deploymentsPath string, webrootPath string) *Manager {
 	configPath := cfg.ConfigPath
 	if configPath == "" {
@@ -125,8 +144,26 @@ func (m *Manager) WriteVirtualHost(deploymentName string, content string) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if err := m.ensureMapsConfig(); err != nil {
+		return err
+	}
+
 	configFile := filepath.Join(m.configPath, deploymentName+".conf")
 	return os.WriteFile(configFile, []byte(content), 0644)
+}
+
+// ensureMapsConfig writes the managed http-context map snippet that generated
+// vhosts depend on for conditional WebSocket upgrades. It is idempotent.
+// Callers must hold m.mu.
+func (m *Manager) ensureMapsConfig() error {
+	if err := os.MkdirAll(m.configPath, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+	path := filepath.Join(m.configPath, mapsConfigFile)
+	if err := os.WriteFile(path, []byte(mapsConfigContent), 0644); err != nil {
+		return fmt.Errorf("failed to write maps config: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) UpdateVirtualHost(deployment *models.Deployment) error {
@@ -169,6 +206,9 @@ func (m *Manager) ListVirtualHosts() ([]VirtualHostInfo, error) {
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".conf") {
+			continue
+		}
+		if infraConfigFiles[entry.Name()] {
 			continue
 		}
 
@@ -554,8 +594,8 @@ func (m *Manager) CreateMultiDomainVirtualHost(deployment *models.Deployment) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if err := os.MkdirAll(m.configPath, 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
+	if err := m.ensureMapsConfig(); err != nil {
+		return err
 	}
 
 	configContent, err := m.generateMultiDomainConfig(deployment)
@@ -651,7 +691,7 @@ const httpTemplate = `server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -739,7 +779,7 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -798,7 +838,7 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -887,7 +927,7 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -971,7 +1011,7 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1023,7 +1063,7 @@ server {
         proxy_pass {{.Protocol}}://$upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
