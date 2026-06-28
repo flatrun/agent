@@ -4936,10 +4936,74 @@ func (s *Server) getSystemStats(c *gin.Context) {
 	}
 	s.statsMu.RUnlock()
 
-	deployments, err := s.manager.ListDeployments()
-	if err != nil {
+	var (
+		wg                 sync.WaitGroup
+		deployments        []models.Deployment
+		depErr             error
+		containerStats     map[string]int
+		imageStats         map[string]int
+		volumeStats        map[string]int
+		systemStats        *system.SystemStats
+		networkCount       int
+		portCount          int
+		systemPortCount    int
+		systemServiceCount int
+		infraCount         int
+		certCount          int
+	)
+
+	// Each of these shells out to docker or the OS and is independent of the
+	// others, so run them concurrently instead of paying the sum of their
+	// latencies. Every closure writes only its own variable.
+	run := func(f func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
+	}
+	run(func() { deployments, depErr = s.manager.ListDeployments() })
+	run(func() { containerStats, _ = s.networksManager.GetContainerStats() })
+	run(func() { imageStats, _ = s.networksManager.GetImageStats() })
+	run(func() { volumeStats, _ = s.networksManager.GetVolumeStats() })
+	run(func() { systemStats, _ = system.GetSystemStats() })
+	run(func() {
+		if networks, err := s.networksManager.ListNetworks(); err == nil {
+			networkCount = len(networks)
+		}
+	})
+	run(func() {
+		if containers, err := s.networksManager.ListContainers(); err == nil {
+			for _, container := range containers {
+				portCount += len(container.Ports)
+			}
+		}
+	})
+	run(func() {
+		if ports, err := s.networksManager.ListPorts(); err == nil {
+			systemPortCount = len(ports)
+		}
+	})
+	run(func() {
+		if services, err := s.servicesManager.ListServices(); err == nil {
+			systemServiceCount = len(services)
+		}
+	})
+	run(func() {
+		if services, err := s.infraManager.ListServices(); err == nil {
+			infraCount = len(services)
+		}
+	})
+	run(func() {
+		if certs, err := s.proxyOrchestrator.ListCertificates(); err == nil {
+			certCount = len(certs)
+		}
+	})
+	wg.Wait()
+
+	if depErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error": depErr.Error(),
 		})
 		return
 	}
@@ -4973,42 +5037,6 @@ func (s *Server) getSystemStats(c *gin.Context) {
 		default:
 			depStats["unknown"] = depStats["unknown"].(int) + 1
 		}
-	}
-
-	containerStats, _ := s.networksManager.GetContainerStats()
-	imageStats, _ := s.networksManager.GetImageStats()
-	volumeStats, _ := s.networksManager.GetVolumeStats()
-
-	var networkCount, portCount int
-	if networks, err := s.networksManager.ListNetworks(); err == nil {
-		networkCount = len(networks)
-	}
-	if containers, err := s.networksManager.ListContainers(); err == nil {
-		for _, container := range containers {
-			portCount += len(container.Ports)
-		}
-	}
-
-	systemStats, _ := system.GetSystemStats()
-
-	var systemPortCount int
-	if ports, err := s.networksManager.ListPorts(); err == nil {
-		systemPortCount = len(ports)
-	}
-
-	var systemServiceCount int
-	if services, err := s.servicesManager.ListServices(); err == nil {
-		systemServiceCount = len(services)
-	}
-
-	var infraCount int
-	if services, err := s.infraManager.ListServices(); err == nil {
-		infraCount = len(services)
-	}
-
-	var certCount int
-	if certs, err := s.proxyOrchestrator.ListCertificates(); err == nil {
-		certCount = len(certs)
 	}
 
 	appCount := len(s.pluginRegistry.List())

@@ -69,10 +69,22 @@ func (m *Manager) ListDeployments() ([]models.Deployment, error) {
 		return nil, err
 	}
 
+	// Each status check shells out to docker compose, so a serial loop makes
+	// list latency grow with the deployment count. Fetch them concurrently with
+	// a bounded worker pool; each goroutine writes only its own index.
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 12)
 	for i := range deployments {
-		status, _ := m.executor.GetStatus(deployments[i].Path)
-		deployments[i].Status = status
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			status, _ := m.executor.GetStatus(deployments[i].Path)
+			deployments[i].Status = status
+		}(i)
 	}
+	wg.Wait()
 
 	return deployments, nil
 }
