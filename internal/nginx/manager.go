@@ -675,6 +675,8 @@ const httpTemplate = `server {
 {{- end}}
     location /.well-known/acme-challenge/ {
         root {{.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 }
 `
@@ -685,6 +687,8 @@ const sslTemplate = `server {
 
     location /.well-known/acme-challenge/ {
         root {{.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 
     location / {
@@ -814,6 +818,8 @@ server {
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 }
 {{end}}`
@@ -825,6 +831,8 @@ server {
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 
     location / {
@@ -907,6 +915,8 @@ server {
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 
     location / {
@@ -1033,6 +1043,8 @@ server {
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
+        access_log off;
+        log_not_found off;
     }
 }
 {{- end}}
