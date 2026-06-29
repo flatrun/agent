@@ -8,11 +8,34 @@
     "framework": "app"
   },
   "sidebar": [
-    { "title": "Overview", "path": "docs/overview.md" },
-    { "title": "Installation", "path": "docs/installation.md" },
-    { "title": "Configuration", "path": "docs/configuration.md" },
-    { "title": "API Reference", "path": "docs/api-reference.md" },
-    { "title": "Plugin Architecture", "path": "docs/PLUGIN_ARCHITECTURE.md" },
-    { "title": "Security", "path": "docs/security.md" }
-  ]
+    {
+      "title": "Overview",
+      "path": "docs/overview.md"
+    },
+    {
+      "title": "Installation",
+      "path": "docs/installation.md"
+    },
+    {
+      "title": "Configuration",
+      "path": "docs/configuration.md"
+    },
+    {
+      "title": "API Reference",
+      "path": "docs/api-reference.md"
+    },
+    {
+      "title": "OpenAPI Spec",
+      "path": "docs/flatrun-agent-openapi.yaml"
+    },
+    {
+      "title": "Plugin Architecture",
+      "path": "docs/PLUGIN_ARCHITECTURE.md"
+    },
+    {
+      "title": "Security",
+      "path": "docs/security.md"
+    }
+  ],
+  "openapi": "docs/flatrun-agent-openapi.yaml"
 }
