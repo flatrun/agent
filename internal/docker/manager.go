@@ -358,7 +358,7 @@ func (m *Manager) restoreBindMounts(deploymentPath, snapshotDir string) {
 	})
 }
 
-func (m *Manager) StopDeployment(name string) (string, error) {
+func (m *Manager) StopDeployment(name string, opts ...RunOption) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
 	m.mu.RUnlock()
@@ -367,7 +367,7 @@ func (m *Manager) StopDeployment(name string) (string, error) {
 		return "", err
 	}
 
-	return m.executor.Stop(deployment.Path)
+	return m.executor.Stop(deployment.Path, opts...)
 }
 
 func (m *Manager) RestartDeployment(name string, opts ...RunOption) (string, error) {

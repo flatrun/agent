@@ -279,33 +279,67 @@ func (c *APIClient) RefreshTemplates() error {
 }
 
 func (c *APIClient) StartDeployment(name string) error {
-	resp, err := c.Post("/deployments/"+name+"/start", nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to start deployment: %s - %s", resp.Status, string(body))
-	}
-
-	return nil
+	return c.runDeploymentJob(name, "start")
 }
 
 func (c *APIClient) StopDeployment(name string) error {
-	resp, err := c.Post("/deployments/"+name+"/stop", nil)
+	return c.runDeploymentJob(name, "stop")
+}
+
+type actionJobResponse struct {
+	JobID  string `json:"job_id"`
+	Status string `json:"status"`
+}
+
+type jobStatusResponse struct {
+	Status string `json:"status"`
+	Output string `json:"output"`
+	Error  string `json:"error"`
+}
+
+// runDeploymentJob enqueues a deployment action and waits for the background
+// job to finish, so callers observe the same synchronous behaviour as before.
+func (c *APIClient) runDeploymentJob(name, action string) error {
+	resp, err := c.Post("/deployments/"+name+"/"+action, nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to stop deployment: %s - %s", resp.Status, string(body))
+		return fmt.Errorf("failed to %s deployment: %s - %s", action, resp.Status, string(body))
 	}
 
-	return nil
+	var enqueued actionJobResponse
+	if err := json.NewDecoder(resp.Body).Decode(&enqueued); err != nil {
+		return fmt.Errorf("failed to decode %s job response: %w", action, err)
+	}
+
+	deadline := time.Now().Add(5 * time.Minute)
+	for time.Now().Before(deadline) {
+		statusResp, err := c.Get("/deployments/" + name + "/jobs/" + enqueued.JobID)
+		if err != nil {
+			return err
+		}
+		var job jobStatusResponse
+		decodeErr := json.NewDecoder(statusResp.Body).Decode(&job)
+		statusResp.Body.Close()
+		if decodeErr != nil {
+			return decodeErr
+		}
+
+		switch job.Status {
+		case "succeeded":
+			return nil
+		case "failed":
+			return fmt.Errorf("%s deployment failed: %s - %s", action, job.Error, job.Output)
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("%s deployment timed out", action)
 }
 
 func WaitForHTTP(url string, timeout time.Duration) error {

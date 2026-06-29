@@ -1,12 +1,15 @@
 package docker
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,6 +26,7 @@ type RunOption func(*runOpts)
 
 type runOpts struct {
 	extraEnv []string
+	lineSink func(string)
 }
 
 func WithDockerConfig(dir string) RunOption {
@@ -30,6 +34,14 @@ func WithDockerConfig(dir string) RunOption {
 		if dir != "" {
 			o.extraEnv = append(o.extraEnv, "DOCKER_CONFIG="+dir)
 		}
+	}
+}
+
+// WithLineSink streams the compose command's combined output to sink one line
+// at a time as it is produced, instead of returning it only on completion.
+func WithLineSink(sink func(string)) RunOption {
+	return func(o *runOpts) {
+		o.lineSink = sink
 	}
 }
 
@@ -310,6 +322,10 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, ar
 		cmd.Env = append(os.Environ(), ro.extraEnv...)
 	}
 
+	if ro.lineSink != nil {
+		return runComposeStreaming(cmd, ro.lineSink)
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -320,6 +336,49 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, ar
 	}
 
 	return stdout.String(), nil
+}
+
+func runComposeStreaming(cmd *exec.Cmd, sink func(string)) (string, error) {
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
+	var mu sync.Mutex
+	var combined bytes.Buffer
+	var wg sync.WaitGroup
+	scan := func(r io.Reader) {
+		defer wg.Done()
+		sc := bufio.NewScanner(r)
+		// Image pull/build progress lines can be long; raise the per-line cap.
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for sc.Scan() {
+			line := sc.Text()
+			sink(line)
+			mu.Lock()
+			combined.WriteString(line)
+			combined.WriteByte('\n')
+			mu.Unlock()
+		}
+	}
+	wg.Add(2)
+	go scan(stdoutPipe)
+	go scan(stderrPipe)
+	wg.Wait()
+
+	err = cmd.Wait()
+	out := combined.String()
+	if err != nil {
+		return out, fmt.Errorf("%w: %s", err, out)
+	}
+	return out, nil
 }
 
 func (c *ComposeExecutor) findComposeCommand() string {

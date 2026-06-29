@@ -90,6 +90,13 @@ type Server struct {
 	aiProvider         ai.Provider
 	aiSessions         *ai.SessionStore
 
+	jobs *jobRegistry
+	// runDeploymentAction runs a deployment action and streams each output
+	// line to emit. Overridable in tests so they need not shell out to docker.
+	runDeploymentAction func(action, name string, emit func(line string)) error
+	// runServiceAction runs an action on a single service, streaming output.
+	runServiceAction func(action, name, service string, emit func(line string)) error
+
 	statsMu    sync.RWMutex
 	statsCache gin.H
 	statsAt    time.Time
@@ -282,7 +289,10 @@ func New(cfg *config.Config, configPath string) *Server {
 		setupHandlers:      setup.NewHandlers(setupManager, authManager),
 		planStore:          plan.NewStore(cfg.DeploymentsPath),
 		aiSessions:         ai.NewSessionStore(cfg.DeploymentsPath),
+		jobs:               newJobRegistry(),
 	}
+	s.runDeploymentAction = s.defaultRunDeploymentAction
+	s.runServiceAction = s.defaultRunServiceAction
 
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
 
@@ -320,6 +330,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/containers/:id/exec", s.containerExec)
 		api.GET("/system/terminal", s.systemTerminal)
 		api.GET("/system/terminal/interactive", s.systemTerminalInteractive)
+		api.GET("/deployments/:name/jobs/:jobId/stream", s.streamDeploymentJob)
 
 		// Setup endpoints (public, gated by setup state)
 		setupGroup := api.Group("/setup")
@@ -359,6 +370,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/deploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deployDeployment)
 			protected.POST("/deployments/:name/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.pullDeploymentImage)
 			protected.GET("/deployments/:name/images", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentImages)
+			protected.GET("/deployments/:name/jobs/active", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getActiveDeploymentJob)
+			protected.GET("/deployments/:name/jobs/:jobId", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentJob)
 			protected.POST("/deployments/:name/actions/:actionId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.executeQuickAction)
 			protected.GET("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogs)
 			protected.GET("/deployments/:name/compose", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentCompose)
@@ -416,6 +429,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/services/:service/start", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("start"))
 			protected.POST("/deployments/:name/services/:service/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("stop"))
 			protected.POST("/deployments/:name/services/:service/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("restart"))
+			protected.POST("/deployments/:name/services/:service/job", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.enqueueServiceJob)
 			protected.POST("/deployments/:name/services/:service/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("rebuild"))
 			protected.POST("/deployments/:name/services/:service/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("pull"))
 
@@ -1785,66 +1799,15 @@ func (s *Server) deleteDeployment(c *gin.Context) {
 }
 
 func (s *Server) startDeployment(c *gin.Context) {
-	name := c.Param("name")
-
-	auth, opts := s.deploymentAuthOptions(name)
-	defer auth.Close()
-
-	output, err := s.manager.StartDeployment(name, opts...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":  err.Error(),
-			"output": output,
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Deployment started",
-		"name":    name,
-		"output":  output,
-	})
+	s.enqueueDeploymentAction(c, "start")
 }
 
 func (s *Server) stopDeployment(c *gin.Context) {
-	name := c.Param("name")
-
-	output, err := s.manager.StopDeployment(name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":  err.Error(),
-			"output": output,
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Deployment stopped",
-		"name":    name,
-		"output":  output,
-	})
+	s.enqueueDeploymentAction(c, "stop")
 }
 
 func (s *Server) restartDeployment(c *gin.Context) {
-	name := c.Param("name")
-
-	auth, opts := s.deploymentAuthOptions(name)
-	defer auth.Close()
-
-	output, err := s.manager.RestartDeployment(name, opts...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":  err.Error(),
-			"output": output,
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Deployment restarted",
-		"name":    name,
-		"output":  output,
-	})
+	s.enqueueDeploymentAction(c, "restart")
 }
 
 func (s *Server) rebuildDeployment(c *gin.Context) {
@@ -1852,24 +1815,160 @@ func (s *Server) rebuildDeployment(c *gin.Context) {
 	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionRebuild) {
 		return
 	}
+	s.enqueueDeploymentAction(c, "rebuild")
+}
 
-	auth, opts := s.deploymentAuthOptions(name)
-	defer auth.Close()
+// enqueueDeploymentAction starts a deployment action as a background job and
+// returns its id immediately. A second action while one is in flight for the
+// same deployment is rejected with the active job's id.
+func (s *Server) enqueueDeploymentAction(c *gin.Context, action string) {
+	name := c.Param("name")
 
-	output, err := s.manager.RebuildDeployment(name, opts...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":  err.Error(),
-			"output": output,
+	job, created := s.jobs.create(name, action)
+	if !created {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":         "An action is already running for this deployment",
+			"active_job_id": job.ID(),
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Deployment rebuilt",
-		"name":    name,
-		"output":  output,
+	go s.runActionJob(job)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"job_id":     job.ID(),
+		"deployment": name,
+		"action":     action,
+		"status":     string(JobPending),
 	})
+}
+
+func (s *Server) runActionJob(job *ActionJob) {
+	job.setRunning()
+	err := s.runDeploymentAction(job.action, job.deployment, job.appendLine)
+	if err != nil {
+		s.jobs.finish(job, JobFailed, err.Error())
+		return
+	}
+	s.jobs.finish(job, JobSucceeded, "")
+}
+
+func (s *Server) defaultRunDeploymentAction(action, name string, emit func(line string)) error {
+	authCfg, opts := s.deploymentAuthOptions(name)
+	defer authCfg.Close()
+
+	opts = append(opts, docker.WithLineSink(emit))
+
+	var err error
+	switch action {
+	case "start":
+		_, err = s.manager.StartDeployment(name, opts...)
+	case "stop":
+		_, err = s.manager.StopDeployment(name, opts...)
+	case "restart":
+		_, err = s.manager.RestartDeployment(name, opts...)
+	case "rebuild":
+		_, err = s.manager.RebuildDeployment(name, opts...)
+	default:
+		err = fmt.Errorf("unsupported deployment action: %s", action)
+	}
+	return err
+}
+
+var streamableServiceActions = map[string]bool{
+	"start": true, "stop": true, "restart": true, "rebuild": true, "pull": true,
+}
+
+// enqueueServiceJob runs a single service's action as a streamed background job
+// so the UI can show live progress instead of only a spinner. The action is
+// taken from the body so one route covers every action.
+func (s *Server) enqueueServiceJob(c *gin.Context) {
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+	if !streamableServiceActions[req.Action] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported service action: " + req.Action})
+		return
+	}
+
+	name := c.Param("name")
+	service := c.Param("service")
+
+	job, created := s.jobs.createScoped(name, service, req.Action)
+	if !created {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":         "An action is already running for this service",
+			"active_job_id": job.ID(),
+		})
+		return
+	}
+
+	go s.runServiceActionJob(job)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"job_id":     job.ID(),
+		"deployment": name,
+		"service":    service,
+		"action":     req.Action,
+		"status":     string(JobPending),
+	})
+}
+
+func (s *Server) runServiceActionJob(job *ActionJob) {
+	job.setRunning()
+	err := s.runServiceAction(job.action, job.deployment, job.service, job.appendLine)
+	if err != nil {
+		s.jobs.finish(job, JobFailed, err.Error())
+		return
+	}
+	s.jobs.finish(job, JobSucceeded, "")
+}
+
+func (s *Server) defaultRunServiceAction(action, name, service string, emit func(line string)) error {
+	authCfg, opts := s.deploymentAuthOptions(name)
+	defer authCfg.Close()
+
+	opts = append(opts, docker.WithLineSink(emit))
+
+	var err error
+	switch action {
+	case "start":
+		_, err = s.manager.StartService(name, service, opts...)
+	case "stop":
+		_, err = s.manager.StopService(name, service, opts...)
+	case "restart":
+		_, err = s.manager.RestartService(name, service, opts...)
+	case "rebuild":
+		_, err = s.manager.RebuildService(name, service, opts...)
+	case "pull":
+		_, err = s.manager.PullService(name, service, opts...)
+	default:
+		err = fmt.Errorf("unsupported service action: %s", action)
+	}
+	return err
+}
+
+func (s *Server) getDeploymentJob(c *gin.Context) {
+	name := c.Param("name")
+	job := s.jobs.get(c.Param("jobId"))
+	if job == nil || job.Deployment() != name {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		return
+	}
+	c.JSON(http.StatusOK, job.snapshot())
+}
+
+func (s *Server) getActiveDeploymentJob(c *gin.Context) {
+	job := s.jobs.activeFor(c.Param("name"))
+	if job == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No active job for this deployment"})
+		return
+	}
+	c.JSON(http.StatusOK, job.snapshot())
 }
 
 func (s *Server) deployDeployment(c *gin.Context) {
