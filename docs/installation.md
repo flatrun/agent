@@ -48,6 +48,15 @@ sudo mv flatrun-agent /usr/local/bin/
 sudo chmod +x /usr/local/bin/flatrun-agent
 ```
 
+Prepare the working directory and a dedicated user:
+
+```bash
+sudo mkdir -p /opt/flatrun
+sudo useradd -r -s /usr/sbin/nologin -G docker flatrun
+sudo chown flatrun:flatrun /opt/flatrun
+sudo cp config.yml /opt/flatrun/config.yml
+```
+
 Create `/etc/systemd/system/flatrun-agent.service`:
 
 ```ini
@@ -58,9 +67,11 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User=root
+User=flatrun
+Group=docker
 WorkingDirectory=/opt/flatrun
 ExecStart=/usr/local/bin/flatrun-agent --config /opt/flatrun/config.yml
+# Make sure config.yml is copied to /opt/flatrun/ first
 Restart=always
 RestartSec=10
 StandardOutput=journal
