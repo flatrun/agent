@@ -24,7 +24,7 @@ auth:
   enabled: true
   api_keys:
     - "your-secure-api-key-here"
-  jwt_secret: "generate-a-secure-random-string-here"
+  jwt_secret: "REPLACE_WITH_SECURE_RANDOM_STRING"  # generate via: openssl rand -base64 32
 
 nginx:
   container_name: nginx
