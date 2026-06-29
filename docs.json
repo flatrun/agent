@@ -30,7 +30,7 @@
     },
     {
       "title": "Plugin Architecture",
-      "path": "docs/PLUGIN_ARCHITECTURE.md"
+      "path": "docs/plugin-architecture.md"
     },
     {
       "title": "Security",
