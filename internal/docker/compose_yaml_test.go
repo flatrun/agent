@@ -649,6 +649,8 @@ services:
 		{"missing compose treats app as primary", "", "shop", "app", "shop"},
 		{"empty deployment returns bare service", multi, "", "app", "app"},
 		{"no explicit name uses primary rule", "name: x\nservices:\n  app:\n    image: nginx\n  api:\n    image: go\n", "x", "api", "x-api"},
+		{"service already equals deployment name is not doubled", "", "shop", "shop", "shop"},
+		{"already-scoped name is returned as-is", "", "shop", "shop-worker", "shop-worker"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

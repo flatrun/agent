@@ -167,6 +167,11 @@ func ContainerNameForService(content, deploymentName, service string) string {
 	if deploymentName == "" || service == "" {
 		return service
 	}
+	// Already the primary container name (= deploymentName) or an already-scoped container
+	// name; return as-is so resolution is idempotent and never doubles the name.
+	if service == deploymentName || strings.HasPrefix(service, deploymentName+"-") {
+		return service
+	}
 	scoped := fmt.Sprintf("%s-%s", deploymentName, service)
 
 	compose, err := ParseComposeYAML(content)
