@@ -586,6 +586,45 @@ func (m *Manager) getNginxDir() string {
 	return filepath.Dir(configPath)
 }
 
+// EnsureBaseNginxConfig refreshes an already-managed base nginx.conf from the current
+// template so an upgraded agent picks up template changes (such as the server_names_hash
+// settings) without a security toggle. It preserves the on-disk variant (lua or plain) and
+// is a no-op when no managed config exists or the content already matches.
+func (m *Manager) EnsureBaseNginxConfig() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	nginxDir := m.getNginxDir()
+	if nginxDir == "" {
+		return nil
+	}
+	confPath := filepath.Join(nginxDir, "nginx.conf")
+	existing, err := os.ReadFile(confPath)
+	if err != nil {
+		// No managed base config on disk; do not introduce one.
+		return nil
+	}
+
+	luaEnabled := strings.Contains(string(existing), "lua_package_path")
+	nginxConf, err := templates.GetNginxConfigWithData(luaEnabled, templates.NginxConfigData{
+		RejectUnknownDomains: m.config.Nginx.RejectUnknownDomains,
+	})
+	if err != nil {
+		return err
+	}
+	if string(nginxConf) == string(existing) {
+		return nil
+	}
+
+	if err := os.WriteFile(confPath, nginxConf, 0644); err != nil {
+		return err
+	}
+	// Best-effort reload: the rewritten config also takes effect on the next nginx
+	// restart, so a reload failure here (e.g. container not yet ready) is not fatal.
+	_ = m.reloadNginx()
+	return nil
+}
+
 // SecurityHealthCheck represents the result of a security setup health check
 type SecurityHealthCheck struct {
 	Status          string                 `json:"status"`

@@ -143,6 +143,25 @@ func TestServiceMetadata_HasMultipleDatabases(t *testing.T) {
 	}
 }
 
+func TestServiceMetadata_EffectivePrimaryService(t *testing.T) {
+	tests := []struct {
+		name string
+		meta ServiceMetadata
+		want string
+	}{
+		{"user pin wins", ServiceMetadata{PrimaryService: "api", Networking: NetworkingConfig{Service: "web"}}, "api"},
+		{"falls back to networking service", ServiceMetadata{Networking: NetworkingConfig{Service: "web"}}, "web"},
+		{"empty when neither set", ServiceMetadata{}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.meta.EffectivePrimaryService(); got != tt.want {
+				t.Errorf("EffectivePrimaryService() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestServiceMetadata_GetDomains(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -174,6 +193,21 @@ func TestServiceMetadata_GetDomains(t *testing.T) {
 			},
 			want:        1,
 			wantService: "web",
+		},
+		{
+			name: "user-pinned primary service overrides the networking service",
+			metadata: ServiceMetadata{
+				Name:           "myapp",
+				PrimaryService: "api",
+				Networking: NetworkingConfig{
+					Expose:        true,
+					Domain:        "myapp.example.com",
+					Service:       "web",
+					ContainerPort: 8080,
+				},
+			},
+			want:        1,
+			wantService: "api",
 		},
 		{
 			name: "falls back to metadata name when service is empty",

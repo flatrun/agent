@@ -30,6 +30,7 @@ type ActionJob struct {
 	deployment string
 	service    string
 	action     string
+	opts       actionOptions
 	activeKey  string
 
 	mu          sync.Mutex
@@ -163,14 +164,14 @@ func newJobRegistry() *jobRegistry {
 // create registers a new pending job for the deployment. If an action is
 // already in flight for that deployment it returns the existing job and false,
 // so the caller can reject the request and point the client at the live job.
-func (r *jobRegistry) create(deployment, action string) (*ActionJob, bool) {
-	return r.createScoped(deployment, "", action)
+func (r *jobRegistry) create(deployment, action string, opts actionOptions) (*ActionJob, bool) {
+	return r.createScoped(deployment, "", action, opts)
 }
 
 // createScoped registers a job serialized on the deployment, or on a single
 // service within it when service is set, so two different services can act
 // concurrently while the same service cannot.
-func (r *jobRegistry) createScoped(deployment, service, action string) (*ActionJob, bool) {
+func (r *jobRegistry) createScoped(deployment, service, action string, opts actionOptions) (*ActionJob, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -193,6 +194,7 @@ func (r *jobRegistry) createScoped(deployment, service, action string) (*ActionJ
 		deployment:  deployment,
 		service:     service,
 		action:      action,
+		opts:        opts,
 		activeKey:   key,
 		status:      JobPending,
 		startedAt:   time.Now(),

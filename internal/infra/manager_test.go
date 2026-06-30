@@ -211,3 +211,48 @@ func TestGetNginxDir(t *testing.T) {
 		})
 	}
 }
+
+// An upgraded agent must refresh an existing managed nginx.conf so it gains the
+// server_names_hash sizing without a security toggle, and must not create one where
+// none exists.
+func TestEnsureBaseNginxConfig(t *testing.T) {
+	t.Run("refreshes an existing managed config", func(t *testing.T) {
+		nginxDir := t.TempDir()
+		confPath := filepath.Join(nginxDir, "nginx.conf")
+		// An older managed (lua) config that predates the server_names_hash settings.
+		old := "http {\n    lua_package_path \"/etc/nginx/lua/?.lua;;\";\n    types_hash_max_size 2048;\n}\n"
+		if err := os.WriteFile(confPath, []byte(old), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := &config.Config{
+			DeploymentsPath: nginxDir,
+			Nginx:           config.NginxConfig{ConfigPath: filepath.Join(nginxDir, "conf.d")},
+		}
+		if err := NewManager(cfg).EnsureBaseNginxConfig(); err != nil {
+			t.Fatalf("EnsureBaseNginxConfig() = %v", err)
+		}
+
+		content, err := os.ReadFile(confPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), "server_names_hash_bucket_size") {
+			t.Errorf("refreshed config should contain server_names_hash_bucket_size, got:\n%s", content)
+		}
+	})
+
+	t.Run("does not create a config where none exists", func(t *testing.T) {
+		nginxDir := t.TempDir()
+		cfg := &config.Config{
+			DeploymentsPath: nginxDir,
+			Nginx:           config.NginxConfig{ConfigPath: filepath.Join(nginxDir, "conf.d")},
+		}
+		if err := NewManager(cfg).EnsureBaseNginxConfig(); err != nil {
+			t.Fatalf("EnsureBaseNginxConfig() = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(nginxDir, "nginx.conf")); !os.IsNotExist(err) {
+			t.Errorf("EnsureBaseNginxConfig must not create a managed config where none existed")
+		}
+	})
+}

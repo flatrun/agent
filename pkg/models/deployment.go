@@ -20,12 +20,17 @@ type Service struct {
 	Health      string    `json:"health,omitempty"`
 	Ports       []string  `json:"ports,omitempty"`
 	Networks    []string  `json:"networks,omitempty"`
+	IsPrimary   bool      `json:"is_primary"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
 type ServiceMetadata struct {
-	Name               string                    `yaml:"name" json:"name"`
-	Type               string                    `yaml:"type" json:"type"`
+	Name string `yaml:"name" json:"name"`
+	Type string `yaml:"type" json:"type"`
+	// PrimaryService is the user-pinned primary service. When set it overrides
+	// auto-detection for the default-domain upstream and is preserved across
+	// compose updates and re-discovery.
+	PrimaryService     string                    `yaml:"primary_service,omitempty" json:"primary_service,omitempty"`
 	Networking         NetworkingConfig          `yaml:"networking" json:"networking"`
 	SSL                SSLConfig                 `yaml:"ssl" json:"ssl"`
 	HealthCheck        HealthCheckConfig         `yaml:"healthcheck" json:"healthcheck"`
@@ -70,6 +75,15 @@ type DatabaseConfig struct {
 	IsShared     bool   `yaml:"is_shared,omitempty" json:"is_shared,omitempty"`
 }
 
+// EffectivePrimaryService returns the service treated as the deployment's primary:
+// the user-pinned PrimaryService when set, otherwise the auto-detected routing service.
+func (m *ServiceMetadata) EffectivePrimaryService() string {
+	if m.PrimaryService != "" {
+		return m.PrimaryService
+	}
+	return m.Networking.Service
+}
+
 func (m *ServiceMetadata) GetDomains() []DomainConfig {
 	if len(m.Domains) > 0 {
 		return m.Domains
@@ -78,6 +92,9 @@ func (m *ServiceMetadata) GetDomains() []DomainConfig {
 		return nil
 	}
 	service := m.Networking.Service
+	if m.PrimaryService != "" {
+		service = m.PrimaryService
+	}
 	if service == "" {
 		service = m.Name
 	}

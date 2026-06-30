@@ -78,6 +78,33 @@ func TestMergeMetadata_PartialUpdatePreservesOtherFields(t *testing.T) {
 	}
 }
 
+// Pinning a primary service records the pin and syncs the default-domain upstream even
+// when the networking block is not part of the same update.
+func TestMergeMetadata_PrimaryServiceSyncsRoutingService(t *testing.T) {
+	existing := &models.ServiceMetadata{
+		Name: "shop",
+		Networking: models.NetworkingConfig{
+			Expose:        true,
+			Domain:        "shop.example.com",
+			Service:       "web",
+			ContainerPort: 80,
+		},
+	}
+
+	sentFields, incoming := parseTestJSON(t, `{"primary_service": "api"}`)
+	merged := mergeMetadata(existing, &incoming, sentFields)
+
+	if merged.PrimaryService != "api" {
+		t.Errorf("PrimaryService = %q, want %q", merged.PrimaryService, "api")
+	}
+	if merged.Networking.Service != "api" {
+		t.Errorf("default-domain Service should follow the pin: got %q, want %q", merged.Networking.Service, "api")
+	}
+	if merged.Networking.Domain != "shop.example.com" {
+		t.Error("unsent networking fields should be preserved")
+	}
+}
+
 func TestMergeMetadata_SentFieldOverwritesExisting(t *testing.T) {
 	existing := &models.ServiceMetadata{
 		Name:         "old-name",

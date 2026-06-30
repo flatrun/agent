@@ -80,16 +80,41 @@ type ResourceRequirements struct {
 	RecommendedCPU    string `json:"recommended_cpu" yaml:"recommended_cpu"`
 }
 
+// Plugin is the core interface every plugin implements: its identity and metadata.
+// Everything beyond identity is opt-in through the capability interfaces below, so a plugin
+// implements only what it needs. A firewall, for example, has no services to start or stop,
+// so it does not implement LifecyclePlugin.
 type Plugin interface {
 	Info() PluginInfo
+}
+
+// ConfigurablePlugin accepts runtime configuration at startup.
+type ConfigurablePlugin interface {
 	Initialize(config map[string]interface{}) error
+}
+
+// LifecyclePlugin manages long-running state and is started and stopped with the agent.
+type LifecyclePlugin interface {
 	Start() error
 	Stop() error
-	GetCapabilities() []Capability
+}
+
+// RoutablePlugin serves its own HTTP endpoints; the host gives it the route group to mount on.
+type RoutablePlugin interface {
 	RegisterRoutes(router *gin.RouterGroup) error
+}
+
+// WidgetPlugin contributes dashboard widget data for a deployment.
+type WidgetPlugin interface {
 	GetWidgetData(deploymentName string) (interface{}, error)
 }
 
+// CapablePlugin declares the capabilities it provides.
+type CapablePlugin interface {
+	GetCapabilities() []Capability
+}
+
+// DeploymentPlugin creates and manages deployments from the plugin.
 type DeploymentPlugin interface {
 	Plugin
 	CreateDeployment(name string, config map[string]interface{}) (*DeploymentResult, error)

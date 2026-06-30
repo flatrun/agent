@@ -25,8 +25,48 @@ func NewComposeExecutor(basePath string) *ComposeExecutor {
 type RunOption func(*runOpts)
 
 type runOpts struct {
-	extraEnv []string
-	lineSink func(string)
+	extraEnv      []string
+	lineSink      func(string)
+	forceRecreate bool
+	noCache       bool
+	freshPull     bool
+}
+
+// WithForceRecreate recreates containers even when their config and image are
+// unchanged, so updated environment variables take effect.
+func WithForceRecreate() RunOption {
+	return func(o *runOpts) { o.forceRecreate = true }
+}
+
+// WithNoCache rebuilds images without using the build cache before bringing the
+// deployment up.
+func WithNoCache() RunOption {
+	return func(o *runOpts) { o.noCache = true }
+}
+
+// WithFreshPull forces images to be pulled rather than served from the local
+// cache during an up.
+func WithFreshPull() RunOption {
+	return func(o *runOpts) { o.freshPull = true }
+}
+
+func resolveRunOpts(opts []RunOption) runOpts {
+	var ro runOpts
+	for _, opt := range opts {
+		opt(&ro)
+	}
+	return ro
+}
+
+// applyUpFlags appends the effective-apply flags supported by `compose up`.
+func applyUpFlags(args []string, ro runOpts) []string {
+	if ro.forceRecreate {
+		args = append(args, "--force-recreate")
+	}
+	if ro.freshPull {
+		args = append(args, "--pull", "always")
+	}
+	return args
 }
 
 func WithDockerConfig(dir string) RunOption {
@@ -46,7 +86,14 @@ func WithLineSink(sink func(string)) RunOption {
 }
 
 func (c *ComposeExecutor) Up(deploymentPath string, opts ...RunOption) (string, error) {
-	return c.runCompose(deploymentPath, opts, "up", "-d", "--remove-orphans")
+	ro := resolveRunOpts(opts)
+	if ro.noCache {
+		if out, err := c.runCompose(deploymentPath, opts, "build", "--no-cache"); err != nil {
+			return out, err
+		}
+	}
+	args := applyUpFlags([]string{"up", "-d", "--remove-orphans"}, ro)
+	return c.runCompose(deploymentPath, opts, args...)
 }
 
 func (c *ComposeExecutor) Down(deploymentPath string, opts ...RunOption) (string, error) {
@@ -66,16 +113,43 @@ func (c *ComposeExecutor) Stop(deploymentPath string, opts ...RunOption) (string
 }
 
 func (c *ComposeExecutor) Restart(deploymentPath string, opts ...RunOption) (string, error) {
+	ro := resolveRunOpts(opts)
 	_, _ = c.runCompose(deploymentPath, opts, "down", "--remove-orphans")
-	return c.runCompose(deploymentPath, opts, "up", "-d", "--remove-orphans")
+	if ro.noCache {
+		if out, err := c.runCompose(deploymentPath, opts, "build", "--no-cache"); err != nil {
+			return out, err
+		}
+	}
+	args := applyUpFlags([]string{"up", "-d", "--remove-orphans"}, ro)
+	return c.runCompose(deploymentPath, opts, args...)
 }
 
 func (c *ComposeExecutor) Rebuild(deploymentPath string, opts ...RunOption) (string, error) {
+	ro := resolveRunOpts(opts)
 	_, _ = c.runCompose(deploymentPath, opts, "down", "--remove-orphans")
-	return c.runCompose(deploymentPath, opts, "up", "-d", "--build", "--remove-orphans")
+	if ro.noCache {
+		if out, err := c.runCompose(deploymentPath, opts, "build", "--no-cache"); err != nil {
+			return out, err
+		}
+	}
+	args := applyUpFlags([]string{"up", "-d", "--build", "--remove-orphans"}, ro)
+	return c.runCompose(deploymentPath, opts, args...)
 }
 
 func (c *ComposeExecutor) StartService(deploymentPath, service string, opts ...RunOption) (string, error) {
+	ro := resolveRunOpts(opts)
+	// When an effective-apply option is set, go straight to `up` so the flags take effect;
+	// a plain `start` cannot recreate, rebuild, or pull.
+	if ro.forceRecreate || ro.freshPull || ro.noCache {
+		if ro.noCache {
+			if out, err := c.runCompose(deploymentPath, opts, "build", "--no-cache", service); err != nil {
+				return out, err
+			}
+		}
+		args := applyUpFlags([]string{"up", "-d", "--no-deps"}, ro)
+		args = append(args, service)
+		return c.runCompose(deploymentPath, opts, args...)
+	}
 	output, err := c.runCompose(deploymentPath, opts, "start", service)
 	if err != nil {
 		return c.runCompose(deploymentPath, opts, "up", "-d", "--no-deps", service)
@@ -92,7 +166,18 @@ func (c *ComposeExecutor) RestartService(deploymentPath, service string, opts ..
 }
 
 func (c *ComposeExecutor) RebuildService(deploymentPath, service string, opts ...RunOption) (string, error) {
-	return c.runCompose(deploymentPath, opts, "up", "-d", "--no-deps", "--build", "--force-recreate", service)
+	ro := resolveRunOpts(opts)
+	if ro.noCache {
+		if out, err := c.runCompose(deploymentPath, opts, "build", "--no-cache", service); err != nil {
+			return out, err
+		}
+	}
+	args := []string{"up", "-d", "--no-deps", "--build", "--force-recreate"}
+	if ro.freshPull {
+		args = append(args, "--pull", "always")
+	}
+	args = append(args, service)
+	return c.runCompose(deploymentPath, opts, args...)
 }
 
 func (c *ComposeExecutor) PullService(deploymentPath, service string, opts ...RunOption) (string, error) {
