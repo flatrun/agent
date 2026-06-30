@@ -1,11 +1,6 @@
-// Package firewall is a built-in FlatRun app (plugin) that models a host-wide firewall:
-// default inbound/outbound stance plus allow/deny rules for traffic to and from the whole
-// server. It operates at a different layer than the security module, which controls HTTP
-// ingress at the proxy.
-//
-// This is a scaffold: rules are persisted, validated, and previewable, but Apply is a no-op.
-// Enforcement will translate rules to nftables/iptables; until then nothing touches the host
-// firewall, which avoids the obvious foot-gun of locking the operator out over SSH.
+// Package firewall is a built-in app modelling a host-wide inbound/outbound firewall.
+// Scaffold only: rules are persisted and validated, Apply is a no-op (enforcement via
+// nftables/iptables is not wired yet).
 package firewall
 
 import (
