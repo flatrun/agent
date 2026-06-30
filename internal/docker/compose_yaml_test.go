@@ -625,3 +625,36 @@ func TestEnsureContainerNames_NoServices(t *testing.T) {
 		t.Errorf("no services should return unchanged content")
 	}
 }
+
+func TestContainerNameForService(t *testing.T) {
+	const multi = `name: shop
+services:
+  app:
+    image: nginx
+    container_name: shop
+  worker:
+    image: redis
+    container_name: shop-worker
+`
+	tests := []struct {
+		name       string
+		content    string
+		deployment string
+		service    string
+		want       string
+	}{
+		{"explicit container_name for primary", multi, "shop", "app", "shop"},
+		{"explicit container_name for non-primary", multi, "shop", "worker", "shop-worker"},
+		{"missing compose falls back to scoped name", "", "shop", "worker", "shop-worker"},
+		{"missing compose treats app as primary", "", "shop", "app", "shop"},
+		{"empty deployment returns bare service", multi, "", "app", "app"},
+		{"no explicit name uses primary rule", "name: x\nservices:\n  app:\n    image: nginx\n  api:\n    image: go\n", "x", "api", "x-api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ContainerNameForService(tt.content, tt.deployment, tt.service); got != tt.want {
+				t.Errorf("ContainerNameForService(%q, %q) = %q, want %q", tt.deployment, tt.service, got, tt.want)
+			}
+		})
+	}
+}

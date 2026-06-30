@@ -13,6 +13,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 )
@@ -523,7 +524,7 @@ func (m *Manager) generateMultiDomainConfig(deployment *models.Deployment) (stri
 		}
 	}
 
-	servers := m.groupDomainsByHost(domains, deployment.Name)
+	servers := m.groupDomainsByHost(domains, deployment.Name, m.deploymentComposeContent(deployment))
 
 	data := multiRouteTemplateData{
 		DeploymentName:       deployment.Name,
@@ -566,7 +567,26 @@ func (m *Manager) generateMultiDomainConfig(deployment *models.Deployment) (stri
 	return buf.String(), nil
 }
 
-func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentName string) []serverData {
+// deploymentComposeContent reads the deployment's compose file so the upstream for an
+// additional domain can be resolved to the service's unique container name. Returns "" when
+// the compose cannot be read; ContainerNameForService then falls back to a scoped name.
+func (m *Manager) deploymentComposeContent(deployment *models.Deployment) string {
+	dir := deployment.Path
+	if dir == "" {
+		dir = filepath.Join(m.basePath, deployment.Name)
+	}
+	path := docker.FindComposeFile(dir)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentName, composeContent string) []serverData {
 	hostDomains := make(map[string][]models.DomainConfig)
 	for _, d := range domains {
 		hostDomains[d.Domain] = append(hostDomains[d.Domain], d)
@@ -596,10 +616,15 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			}
 			seenPaths[path] = true
 
+			// Route to the service's unique container name, not the bare Compose service
+			// name (which is not unique across deployments sharing the proxy network and
+			// resolves via embedded DNS to an arbitrary deployment's container).
 			service := d.Service
 			if service == "" {
 				log.Printf("[proxy] warning: domain %q has no service set for deployment %q, falling back to deployment name", d.Domain, deploymentName)
 				service = deploymentName
+			} else {
+				service = docker.ContainerNameForService(composeContent, deploymentName, service)
 			}
 
 			port := d.ContainerPort

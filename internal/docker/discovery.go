@@ -140,6 +140,12 @@ func (d *Discovery) GetDeployment(name string) (*models.Deployment, error) {
 }
 
 func (d *Discovery) findComposeFile(dirPath string) string {
+	return FindComposeFile(dirPath)
+}
+
+// FindComposeFile returns the path to the compose file in dirPath, preferring the
+// standard filenames and falling back to a *compose*.yml/yaml glob. Returns "" when none.
+func FindComposeFile(dirPath string) string {
 	// First check exact standard names (preferred)
 	standardNames := []string{
 		"docker-compose.yml",
@@ -579,7 +585,11 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 			existing, err := d.loadMetadata(metadataPath)
 			if err == nil {
 				existing.Networking.ContainerPort = newMeta.Networking.ContainerPort
-				if newMeta.Networking.Service != "" {
+				// Respect a user-pinned primary service; only let auto-detection set the
+				// routing service when the user has not explicitly chosen one.
+				if existing.PrimaryService != "" {
+					existing.Networking.Service = existing.PrimaryService
+				} else if newMeta.Networking.Service != "" {
 					existing.Networking.Service = newMeta.Networking.Service
 				}
 				if err := d.SaveMetadata(name, existing); err != nil {

@@ -20,17 +20,23 @@ type Service struct {
 	Health      string    `json:"health,omitempty"`
 	Ports       []string  `json:"ports,omitempty"`
 	Networks    []string  `json:"networks,omitempty"`
+	IsPrimary   bool      `json:"is_primary"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
 type ServiceMetadata struct {
-	Name               string                    `yaml:"name" json:"name"`
-	Type               string                    `yaml:"type" json:"type"`
+	Name string `yaml:"name" json:"name"`
+	Type string `yaml:"type" json:"type"`
+	// PrimaryService is the user-pinned primary service. When set it overrides
+	// auto-detection for the default-domain upstream and is preserved across
+	// compose updates and re-discovery.
+	PrimaryService     string                    `yaml:"primary_service,omitempty" json:"primary_service,omitempty"`
 	Networking         NetworkingConfig          `yaml:"networking" json:"networking"`
 	SSL                SSLConfig                 `yaml:"ssl" json:"ssl"`
 	HealthCheck        HealthCheckConfig         `yaml:"healthcheck" json:"healthcheck"`
 	QuickActions       []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
 	Security           *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
+	AccessGroups       *AccessGroupsConfig       `yaml:"access_groups,omitempty" json:"access_groups,omitempty"`
 	Backup             *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
 	ProtectedMode      *ProtectedModeConfig      `yaml:"protected_mode,omitempty" json:"protected_mode,omitempty"`
 	RequirePlan        bool                      `yaml:"require_plan,omitempty" json:"require_plan,omitempty"`
@@ -70,6 +76,15 @@ type DatabaseConfig struct {
 	IsShared     bool   `yaml:"is_shared,omitempty" json:"is_shared,omitempty"`
 }
 
+// EffectivePrimaryService returns the service treated as the deployment's primary:
+// the user-pinned PrimaryService when set, otherwise the auto-detected routing service.
+func (m *ServiceMetadata) EffectivePrimaryService() string {
+	if m.PrimaryService != "" {
+		return m.PrimaryService
+	}
+	return m.Networking.Service
+}
+
 func (m *ServiceMetadata) GetDomains() []DomainConfig {
 	if len(m.Domains) > 0 {
 		return m.Domains
@@ -78,6 +93,9 @@ func (m *ServiceMetadata) GetDomains() []DomainConfig {
 		return nil
 	}
 	service := m.Networking.Service
+	if m.PrimaryService != "" {
+		service = m.PrimaryService
+	}
 	if service == "" {
 		service = m.Name
 	}
@@ -229,6 +247,31 @@ type DeploymentSecurityConfig struct {
 type ProtectedPath struct {
 	Pattern string `yaml:"pattern" json:"pattern"`
 	Enabled bool   `yaml:"enabled" json:"enabled"`
+}
+
+// AccessGroupsConfig is a per-deployment east-west / egress access policy (AWS
+// security-group style: allow flows to peer deployments or external CIDRs, with a default
+// egress stance). This is a scaffold: rules are persisted and surfaced in the UI, but
+// enforcement is not yet wired (see pkg/plugins/accessgroups). It deliberately does not
+// overlap the security module, which owns HTTP/ingress IP blocking and rate limiting.
+type AccessGroupsConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Egress is the default outbound stance: "allow-all" (default) or "deny-all".
+	Egress string `yaml:"egress,omitempty" json:"egress,omitempty"`
+	// Allow lists permitted flows: east-west grants to a peer deployment, or external
+	// egress to a CIDR, evaluated when Egress is deny-all.
+	Allow []AccessRule `yaml:"allow,omitempty" json:"allow,omitempty"`
+}
+
+type AccessRule struct {
+	ID string `yaml:"id,omitempty" json:"id,omitempty"`
+	// To is the peer deployment name for an east-west rule; CIDR is the target for
+	// external egress. Exactly one is expected per rule.
+	To          string `yaml:"to,omitempty" json:"to,omitempty"`
+	CIDR        string `yaml:"cidr,omitempty" json:"cidr,omitempty"`
+	Port        int    `yaml:"port,omitempty" json:"port,omitempty"`
+	Protocol    string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 type DeploymentRateLimit struct {

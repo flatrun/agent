@@ -16,12 +16,16 @@ import (
 // fakeRunner stands in for the docker-backed action runner so tests exercise
 // the job lifecycle over HTTP without shelling out to compose.
 type fakeRunner struct {
-	lines []string
-	err   error
-	gate  chan struct{}
+	lines  []string
+	err    error
+	gate   chan struct{}
+	optsCh chan actionOptions
 }
 
-func (f *fakeRunner) run(_, _ string, emit func(string)) error {
+func (f *fakeRunner) run(_, _ string, opts actionOptions, emit func(string)) error {
+	if f.optsCh != nil {
+		f.optsCh <- opts
+	}
 	for _, l := range f.lines {
 		emit(l)
 	}
@@ -35,8 +39,8 @@ func newJobTestServer(runner *fakeRunner) *Server {
 	gin.SetMode(gin.TestMode)
 	s := &Server{jobs: newJobRegistry()}
 	s.runDeploymentAction = runner.run
-	s.runServiceAction = func(action, name, service string, emit func(string)) error {
-		return runner.run(action, name, emit)
+	s.runServiceAction = func(action, name, service string, opts actionOptions, emit func(string)) error {
+		return runner.run(action, name, opts, emit)
 	}
 	return s
 }
@@ -215,6 +219,37 @@ func TestServiceRestartJobIsScopedPerService(t *testing.T) {
 	}
 }
 
+// Effective-apply flags in the request body must reach the runner so updated env vars
+// and images take effect.
+func TestServiceJobThreadsEffectiveApplyOptions(t *testing.T) {
+	optsCh := make(chan actionOptions, 1)
+	s := newJobTestServer(&fakeRunner{lines: []string{"ok"}, optsCh: optsCh})
+	srv := newSkippableHTTPServer(t, newJobRouter(s))
+	defer srv.Close()
+
+	resp, err := http.Post(
+		srv.URL+"/api/deployments/app/services/web/job",
+		"application/json",
+		strings.NewReader(`{"action":"rebuild","force_recreate":true,"no_cache":true,"fresh_pull":true}`),
+	)
+	if err != nil {
+		t.Fatalf("service job request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", resp.StatusCode)
+	}
+
+	select {
+	case got := <-optsCh:
+		if !got.ForceRecreate || !got.NoCache || !got.FreshPull {
+			t.Fatalf("runner received opts %+v, want all flags set", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner was not invoked with options")
+	}
+}
+
 func TestDeploymentJobStreamReplaysAndCompletes(t *testing.T) {
 	s := &Server{
 		jobs:           newJobRegistry(),
@@ -222,7 +257,7 @@ func TestDeploymentJobStreamReplaysAndCompletes(t *testing.T) {
 	}
 
 	// Pre-populate a finished job so the stream must replay buffered output.
-	job, _ := s.jobs.create("myapp", "start")
+	job, _ := s.jobs.create("myapp", "start", actionOptions{})
 	job.appendLine("Pulling nginx")
 	job.appendLine("Started")
 	s.jobs.finish(job, JobSucceeded, "")

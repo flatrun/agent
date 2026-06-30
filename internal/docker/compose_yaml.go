@@ -157,6 +157,55 @@ func ParseComposeYAML(content string) (map[string]interface{}, error) {
 	return compose, nil
 }
 
+// ContainerNameForService returns the DNS-resolvable container name for a service in
+// a deployment, matching what EnsureContainerNames assigns. An explicit container_name in
+// the compose wins; otherwise the EnsureContainerNames rule applies (primary service ->
+// deploymentName, all others -> "{deploymentName}-{service}"). When the compose cannot be
+// parsed it falls back to the deployment-scoped name so the upstream is never the bare,
+// collision-prone service name shared across deployments.
+func ContainerNameForService(content, deploymentName, service string) string {
+	if deploymentName == "" || service == "" {
+		return service
+	}
+	scoped := fmt.Sprintf("%s-%s", deploymentName, service)
+
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		if service == "app" {
+			return deploymentName
+		}
+		return scoped
+	}
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok || len(services) == 0 {
+		if service == "app" {
+			return deploymentName
+		}
+		return scoped
+	}
+
+	if svc, ok := services[service].(map[string]interface{}); ok {
+		if cn, ok := svc["container_name"].(string); ok && cn != "" {
+			return cn
+		}
+	}
+
+	var primaryService string
+	for name := range services {
+		if name == "app" {
+			primaryService = "app"
+			break
+		}
+		if primaryService == "" {
+			primaryService = name
+		}
+	}
+	if service == primaryService {
+		return deploymentName
+	}
+	return scoped
+}
+
 // EnsureContainerNames ensures all services have explicit container_name set.
 // The primary service (preferring "app") gets deploymentName as its container name.
 // All other services get "{deploymentName}-{serviceName}".

@@ -2027,8 +2027,8 @@ func TestGenerateMultiDomainConfig_ContainerPort(t *testing.T) {
 			t.Fatalf("generateMultiDomainConfig failed: %v", err)
 		}
 
-		if !strings.Contains(config, "web:9090") {
-			t.Errorf("config should proxy to port 9090, got:\n%s", config)
+		if !strings.Contains(config, "port-test-web:9090") {
+			t.Errorf("config should proxy to the service's unique container name on port 9090, got:\n%s", config)
 		}
 	})
 
@@ -2051,7 +2051,7 @@ func TestGenerateMultiDomainConfig_ContainerPort(t *testing.T) {
 			t.Fatalf("generateMultiDomainConfig failed: %v", err)
 		}
 
-		if !strings.Contains(config, "web:80") {
+		if !strings.Contains(config, "port-default-test-web:80") {
 			t.Errorf("config should default to port 80 when ContainerPort is 0, got:\n%s", config)
 		}
 	})
@@ -2198,7 +2198,7 @@ func TestGroupDomainsByHost_DeduplicatesLocations(t *testing.T) {
 		{ID: "3", Domain: "example.com", PathPrefix: "/api", ContainerPort: 3000, Service: "backend"},
 	}
 
-	servers := m.groupDomainsByHost(domains, "test-app")
+	servers := m.groupDomainsByHost(domains, "test-app", "")
 
 	if len(servers) != 1 {
 		t.Fatalf("expected 1 server, got %d", len(servers))
@@ -2215,5 +2215,47 @@ func TestGroupDomainsByHost_DeduplicatesLocations(t *testing.T) {
 
 	if pathCounts["/"] != 1 {
 		t.Errorf("expected exactly 1 location for '/', got %d", pathCounts["/"])
+	}
+}
+
+// An additional domain must proxy to the service's unique container name (read from the
+// deployment's compose), never the bare service name that collides across deployments
+// sharing the proxy network.
+func TestGenerateMultiDomainConfig_UsesUniqueContainerName(t *testing.T) {
+	dir := t.TempDir()
+	compose := `name: tenant-a
+services:
+  app:
+    image: nginx
+    container_name: tenant-a
+  api:
+    image: go
+    container_name: tenant-a-api
+`
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(compose), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+	deployment := &models.Deployment{
+		Name: "tenant-a",
+		Path: dir,
+		Metadata: &models.ServiceMetadata{
+			Domains: []models.DomainConfig{
+				{ID: "d1", Service: "api", ContainerPort: 8080, Domain: "api.example.com"},
+			},
+		},
+	}
+
+	config, err := m.generateMultiDomainConfig(deployment)
+	if err != nil {
+		t.Fatalf("generateMultiDomainConfig failed: %v", err)
+	}
+
+	if !strings.Contains(config, "tenant-a-api:8080") {
+		t.Errorf("upstream should target the unique container name tenant-a-api, got:\n%s", config)
+	}
+	if strings.Contains(config, "set $upstream api:8080") {
+		t.Errorf("upstream must not use the bare service name 'api', got:\n%s", config)
 	}
 }

@@ -78,6 +78,52 @@ func TestMergeMetadata_PartialUpdatePreservesOtherFields(t *testing.T) {
 	}
 }
 
+// Pinning a primary service records the pin and syncs the default-domain upstream even
+// when the networking block is not part of the same update.
+func TestMergeMetadata_PrimaryServiceSyncsRoutingService(t *testing.T) {
+	existing := &models.ServiceMetadata{
+		Name: "shop",
+		Networking: models.NetworkingConfig{
+			Expose:        true,
+			Domain:        "shop.example.com",
+			Service:       "web",
+			ContainerPort: 80,
+		},
+	}
+
+	sentFields, incoming := parseTestJSON(t, `{"primary_service": "api"}`)
+	merged := mergeMetadata(existing, &incoming, sentFields)
+
+	if merged.PrimaryService != "api" {
+		t.Errorf("PrimaryService = %q, want %q", merged.PrimaryService, "api")
+	}
+	if merged.Networking.Service != "api" {
+		t.Errorf("default-domain Service should follow the pin: got %q, want %q", merged.Networking.Service, "api")
+	}
+	if merged.Networking.Domain != "shop.example.com" {
+		t.Error("unsent networking fields should be preserved")
+	}
+}
+
+// An access_groups update is persisted through the metadata merge, while unsent fields
+// are preserved.
+func TestMergeMetadata_AccessGroups(t *testing.T) {
+	existing := &models.ServiceMetadata{Name: "shop", Type: "laravel"}
+
+	sentFields, incoming := parseTestJSON(t, `{"access_groups": {"enabled": true, "egress": "deny-all", "allow": [{"to": "db", "port": 5432}]}}`)
+	merged := mergeMetadata(existing, &incoming, sentFields)
+
+	if merged.AccessGroups == nil || !merged.AccessGroups.Enabled {
+		t.Fatalf("access_groups should be set and enabled, got %+v", merged.AccessGroups)
+	}
+	if merged.AccessGroups.Egress != "deny-all" || len(merged.AccessGroups.Allow) != 1 || merged.AccessGroups.Allow[0].To != "db" {
+		t.Errorf("access_groups not merged correctly: %+v", merged.AccessGroups)
+	}
+	if merged.Type != "laravel" {
+		t.Error("unsent field Type should be preserved")
+	}
+}
+
 func TestMergeMetadata_SentFieldOverwritesExisting(t *testing.T) {
 	existing := &models.ServiceMetadata{
 		Name:         "old-name",

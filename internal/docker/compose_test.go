@@ -3,8 +3,33 @@ package docker
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestApplyUpFlags(t *testing.T) {
+	base := []string{"up", "-d", "--remove-orphans"}
+
+	if got := applyUpFlags(base, runOpts{}); strings.Join(got, " ") != "up -d --remove-orphans" {
+		t.Errorf("no options should not add flags, got %v", got)
+	}
+
+	got := applyUpFlags(base, runOpts{forceRecreate: true, freshPull: true})
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "--force-recreate") {
+		t.Errorf("forceRecreate should add --force-recreate, got %v", got)
+	}
+	if !strings.Contains(joined, "--pull always") {
+		t.Errorf("freshPull should add --pull always, got %v", got)
+	}
+}
+
+func TestResolveRunOpts(t *testing.T) {
+	ro := resolveRunOpts([]RunOption{WithForceRecreate(), WithNoCache(), WithFreshPull()})
+	if !ro.forceRecreate || !ro.noCache || !ro.freshPull {
+		t.Errorf("resolveRunOpts did not set all flags: %+v", ro)
+	}
+}
 
 func TestComposeExecutorPull(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "compose-pull-test-*")

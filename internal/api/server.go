@@ -47,6 +47,7 @@ import (
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/plugins"
+	"github.com/flatrun/agent/pkg/plugins/accessgroups"
 	dnsPlugins "github.com/flatrun/agent/pkg/plugins/dns"
 	"github.com/flatrun/agent/pkg/subdomain"
 	"github.com/flatrun/agent/pkg/version"
@@ -66,6 +67,7 @@ type Server struct {
 	certsDiscovery     *certs.Discovery
 	networksManager    *networks.Manager
 	pluginRegistry     *plugins.Registry
+	accessGroups       *accessgroups.Plugin
 	authMiddleware     *auth.Middleware
 	authManager        *auth.Manager
 	proxyOrchestrator  *proxy.Orchestrator
@@ -93,9 +95,9 @@ type Server struct {
 	jobs *jobRegistry
 	// runDeploymentAction runs a deployment action and streams each output
 	// line to emit. Overridable in tests so they need not shell out to docker.
-	runDeploymentAction func(action, name string, emit func(line string)) error
+	runDeploymentAction func(action, name string, opts actionOptions, emit func(line string)) error
 	// runServiceAction runs an action on a single service, streaming output.
-	runServiceAction func(action, name, service string, emit func(line string)) error
+	runServiceAction func(action, name, service string, opts actionOptions, emit func(line string)) error
 
 	statsMu    sync.RWMutex
 	statsCache gin.H
@@ -155,6 +157,20 @@ func New(cfg *config.Config, configPath string) *Server {
 	pluginsDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins")
 	pluginRegistry := plugins.NewRegistry(pluginsDir)
 	_ = pluginRegistry.LoadFromDisk()
+
+	// Access Groups is a built-in app: register it so it lists as an installed plugin and
+	// can serve its routes. Its plan endpoint reads the deployment's stored policy.
+	accessGroupsPlugin := accessgroups.New(func(name string) (*models.AccessGroupsConfig, error) {
+		dep, err := manager.GetDeployment(name)
+		if err != nil {
+			return nil, err
+		}
+		if dep.Metadata == nil {
+			return nil, nil
+		}
+		return dep.Metadata.AccessGroups, nil
+	})
+	_ = pluginRegistry.Register(accessGroupsPlugin)
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
 
 	setupManager := setup.NewManager(cfg, configPath)
@@ -269,6 +285,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		certsDiscovery:     certsDiscovery,
 		networksManager:    networksManager,
 		pluginRegistry:     pluginRegistry,
+		accessGroups:       accessGroupsPlugin,
 		authMiddleware:     authMiddleware,
 		authManager:        authManager,
 		proxyOrchestrator:  proxyOrchestrator,
@@ -686,6 +703,9 @@ func (s *Server) setupRoutes() {
 				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(protected)
 			}
 
+			// Access Groups built-in app routes (read-only plan; enforcement not wired yet)
+			_ = s.accessGroups.RegisterRoutes(protected)
+
 			// Cluster endpoints
 			clusterGroup := protected.Group("/cluster")
 			clusterGroup.Use(s.authMiddleware.RequirePermission(auth.PermClusterRead))
@@ -721,6 +741,15 @@ func (s *Server) Start() error {
 		Addr:    addr,
 		Handler: s.router,
 	}
+
+	// Refresh a managed base nginx config so an upgraded agent picks up template changes
+	// (e.g. server_names_hash sizing) without waiting on a security toggle. Best-effort and
+	// off the startup path since it may reload nginx once the container is ready.
+	go func() {
+		if err := s.infraManager.EnsureBaseNginxConfig(); err != nil {
+			log.Printf("[infra] failed to refresh base nginx config on startup: %v", err)
+		}
+	}()
 
 	if s.config.Certbot.Enabled && s.config.Certbot.AutoRenewalEnabled {
 		s.certRenewer = ssl.NewRenewer(
@@ -1692,6 +1721,14 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	if _, ok := sentFields["credential_id"]; ok {
 		merged.CredentialID = incoming.CredentialID
 	}
+	if _, ok := sentFields["primary_service"]; ok {
+		merged.PrimaryService = incoming.PrimaryService
+		// Keep the default-domain upstream in sync so routing follows the pin even
+		// when the networking block is not part of this update.
+		if incoming.PrimaryService != "" {
+			merged.Networking.Service = incoming.PrimaryService
+		}
+	}
 	if _, ok := sentFields["networking"]; ok {
 		merged.Networking = incoming.Networking
 	}
@@ -1706,6 +1743,9 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	}
 	if _, ok := sentFields["security"]; ok {
 		merged.Security = incoming.Security
+	}
+	if _, ok := sentFields["access_groups"]; ok {
+		merged.AccessGroups = incoming.AccessGroups
 	}
 	if _, ok := sentFields["backup"]; ok {
 		merged.Backup = incoming.Backup
@@ -1824,7 +1864,11 @@ func (s *Server) rebuildDeployment(c *gin.Context) {
 func (s *Server) enqueueDeploymentAction(c *gin.Context, action string) {
 	name := c.Param("name")
 
-	job, created := s.jobs.create(name, action)
+	// The options body is optional; an empty or non-JSON body simply means no flags.
+	var opts actionOptions
+	_ = c.ShouldBindJSON(&opts)
+
+	job, created := s.jobs.create(name, action, opts)
 	if !created {
 		c.JSON(http.StatusConflict, gin.H{
 			"error":         "An action is already running for this deployment",
@@ -1845,7 +1889,7 @@ func (s *Server) enqueueDeploymentAction(c *gin.Context, action string) {
 
 func (s *Server) runActionJob(job *ActionJob) {
 	job.setRunning()
-	err := s.runDeploymentAction(job.action, job.deployment, job.appendLine)
+	err := s.runDeploymentAction(job.action, job.deployment, job.opts, job.appendLine)
 	if err != nil {
 		s.jobs.finish(job, JobFailed, err.Error())
 		return
@@ -1853,11 +1897,35 @@ func (s *Server) runActionJob(job *ActionJob) {
 	s.jobs.finish(job, JobSucceeded, "")
 }
 
-func (s *Server) defaultRunDeploymentAction(action, name string, emit func(line string)) error {
+// actionOptions carries the optional effective-apply flags for a deployment or service
+// action, so updated environment variables and images actually take effect instead of a
+// plain start/restart reusing cached config and images.
+type actionOptions struct {
+	ForceRecreate bool `json:"force_recreate"`
+	NoCache       bool `json:"no_cache"`
+	FreshPull     bool `json:"fresh_pull"`
+}
+
+func (o actionOptions) runOptions() []docker.RunOption {
+	var opts []docker.RunOption
+	if o.ForceRecreate {
+		opts = append(opts, docker.WithForceRecreate())
+	}
+	if o.NoCache {
+		opts = append(opts, docker.WithNoCache())
+	}
+	if o.FreshPull {
+		opts = append(opts, docker.WithFreshPull())
+	}
+	return opts
+}
+
+func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionOptions, emit func(line string)) error {
 	authCfg, opts := s.deploymentAuthOptions(name)
 	defer authCfg.Close()
 
 	opts = append(opts, docker.WithLineSink(emit))
+	opts = append(opts, actOpts.runOptions()...)
 
 	var err error
 	switch action {
@@ -1884,7 +1952,10 @@ var streamableServiceActions = map[string]bool{
 // taken from the body so one route covers every action.
 func (s *Server) enqueueServiceJob(c *gin.Context) {
 	var req struct {
-		Action string `json:"action"`
+		Action        string `json:"action"`
+		ForceRecreate bool   `json:"force_recreate"`
+		NoCache       bool   `json:"no_cache"`
+		FreshPull     bool   `json:"fresh_pull"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
@@ -1898,7 +1969,8 @@ func (s *Server) enqueueServiceJob(c *gin.Context) {
 	name := c.Param("name")
 	service := c.Param("service")
 
-	job, created := s.jobs.createScoped(name, service, req.Action)
+	opts := actionOptions{ForceRecreate: req.ForceRecreate, NoCache: req.NoCache, FreshPull: req.FreshPull}
+	job, created := s.jobs.createScoped(name, service, req.Action, opts)
 	if !created {
 		c.JSON(http.StatusConflict, gin.H{
 			"error":         "An action is already running for this service",
@@ -1920,7 +1992,7 @@ func (s *Server) enqueueServiceJob(c *gin.Context) {
 
 func (s *Server) runServiceActionJob(job *ActionJob) {
 	job.setRunning()
-	err := s.runServiceAction(job.action, job.deployment, job.service, job.appendLine)
+	err := s.runServiceAction(job.action, job.deployment, job.service, job.opts, job.appendLine)
 	if err != nil {
 		s.jobs.finish(job, JobFailed, err.Error())
 		return
@@ -1928,11 +2000,12 @@ func (s *Server) runServiceActionJob(job *ActionJob) {
 	s.jobs.finish(job, JobSucceeded, "")
 }
 
-func (s *Server) defaultRunServiceAction(action, name, service string, emit func(line string)) error {
+func (s *Server) defaultRunServiceAction(action, name, service string, actOpts actionOptions, emit func(line string)) error {
 	authCfg, opts := s.deploymentAuthOptions(name)
 	defer authCfg.Close()
 
 	opts = append(opts, docker.WithLineSink(emit))
+	opts = append(opts, actOpts.runOptions()...)
 
 	var err error
 	switch action {
@@ -3763,7 +3836,7 @@ func (s *Server) inferRegistryHostFromCompose(content string) string {
 	return ""
 }
 
-func (s *Server) validateComposeContent(content, _ string) error {
+func (s *Server) validateComposeContent(content, name string) error {
 	var compose composeFile
 	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
 		return fmt.Errorf("invalid YAML syntax: %w", err)
@@ -3801,24 +3874,42 @@ func (s *Server) validateComposeContent(content, _ string) error {
 		}
 	}
 
-	if err := validateComposeWithComposeGo(content); err != nil {
+	if err := validateComposeWithComposeGo(content, s.composeValidationDir(name)); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func validateComposeWithComposeGo(content string) error {
+// composeValidationDir returns the directory that relative compose paths (such as
+// a relative env_file) should resolve against during validation. For an existing
+// deployment that is the deployment directory; when it does not yet exist (the
+// create path) it falls back to the agent's working directory so create keeps working.
+func (s *Server) composeValidationDir(name string) string {
+	if name == "" || s.manager == nil {
+		return "."
+	}
+	dir := filepath.Join(s.manager.BasePath(), name)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return "."
+	}
+	return dir
+}
+
+func validateComposeWithComposeGo(content, workingDir string) error {
 	configDetails := composetypes.ConfigDetails{
 		ConfigFiles: []composetypes.ConfigFile{{
 			Filename: "compose.yml",
 			Content:  []byte(content),
 		}},
-		WorkingDir:  ".",
+		WorkingDir:  workingDir,
 		Environment: map[string]string{},
 	}
 	_, err := loader.LoadWithContext(context.Background(), configDetails, func(o *loader.Options) {
-		o.ResolvePaths = false
+		// Resolve relative paths (notably a relative env_file) against WorkingDir so an
+		// existing deployment's ./.env is found in the deployment directory rather than
+		// being read relative to the agent's own working directory.
+		o.ResolvePaths = true
 		o.SkipConsistencyCheck = true
 	})
 	if err != nil {
@@ -4842,6 +4933,13 @@ func (s *Server) listDeploymentServices(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
 		return
+	}
+
+	if deployment, err := s.manager.GetDeployment(name); err == nil && deployment.Metadata != nil {
+		primary := deployment.Metadata.EffectivePrimaryService()
+		for i := range services {
+			services[i].IsPrimary = primary != "" && services[i].Name == primary
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"services": services})
