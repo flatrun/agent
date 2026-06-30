@@ -10,6 +10,8 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -37,6 +39,7 @@ import (
 	"github.com/flatrun/agent/internal/infra"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/plan"
+	"github.com/flatrun/agent/internal/pluginhost"
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
@@ -47,8 +50,8 @@ import (
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/plugins"
-	"github.com/flatrun/agent/pkg/plugins/accessgroups"
 	dnsPlugins "github.com/flatrun/agent/pkg/plugins/dns"
+	"github.com/flatrun/agent/pkg/plugins/firewall"
 	"github.com/flatrun/agent/pkg/subdomain"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/flatrun/agent/templates"
@@ -67,7 +70,9 @@ type Server struct {
 	certsDiscovery     *certs.Discovery
 	networksManager    *networks.Manager
 	pluginRegistry     *plugins.Registry
-	accessGroups       *accessgroups.Plugin
+	firewall           *firewall.Plugin
+	builtinDNS         []plugins.Plugin
+	pluginHost         *pluginhost.Host
 	authMiddleware     *auth.Middleware
 	authManager        *auth.Manager
 	proxyOrchestrator  *proxy.Orchestrator
@@ -158,19 +163,26 @@ func New(cfg *config.Config, configPath string) *Server {
 	pluginRegistry := plugins.NewRegistry(pluginsDir)
 	_ = pluginRegistry.LoadFromDisk()
 
-	// Access Groups is a built-in app: register it so it lists as an installed plugin and
-	// can serve its routes. Its plan endpoint reads the deployment's stored policy.
-	accessGroupsPlugin := accessgroups.New(func(name string) (*models.AccessGroupsConfig, error) {
-		dep, err := manager.GetDeployment(name)
-		if err != nil {
-			return nil, err
-		}
-		if dep.Metadata == nil {
-			return nil, nil
-		}
-		return dep.Metadata.AccessGroups, nil
-	})
-	_ = pluginRegistry.Register(accessGroupsPlugin)
+	firewallPlugin := firewall.New(firewall.NewStore(cfg.DeploymentsPath))
+	_ = pluginRegistry.Register(firewallPlugin)
+
+	builtinDNS := []plugins.Plugin{
+		dnsPlugins.NewCloudflarePlugin(),
+		dnsPlugins.NewRoute53Plugin(),
+		dnsPlugins.NewDigitalOceanPlugin(),
+		dnsPlugins.NewHetznerPlugin(),
+	}
+	for _, p := range builtinDNS {
+		_ = pluginRegistry.Register(p)
+	}
+
+	agentURL := fmt.Sprintf("http://127.0.0.1:%d/api", cfg.API.Port)
+	pluginHost := pluginhost.New(
+		filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins"),
+		filepath.Join(cfg.DeploymentsPath, ".flatrun", "run"),
+		agentURL,
+		"",
+	)
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
 
 	setupManager := setup.NewManager(cfg, configPath)
@@ -285,7 +297,9 @@ func New(cfg *config.Config, configPath string) *Server {
 		certsDiscovery:     certsDiscovery,
 		networksManager:    networksManager,
 		pluginRegistry:     pluginRegistry,
-		accessGroups:       accessGroupsPlugin,
+		firewall:           firewallPlugin,
+		builtinDNS:         builtinDNS,
+		pluginHost:         pluginHost,
 		authMiddleware:     authMiddleware,
 		authManager:        authManager,
 		proxyOrchestrator:  proxyOrchestrator,
@@ -475,6 +489,9 @@ func (s *Server) setupRoutes() {
 			protected.GET("/plugins", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.listPlugins)
 			protected.GET("/plugins/:name", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getPlugin)
 			protected.POST("/plugins/:name/deployments", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.createPluginDeployment)
+
+			protected.Any("/plugin/:name/*proxyPath", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.proxyToPlugin)
+			protected.Any("/marketplace/*path", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.proxyMarketplace)
 			protected.GET("/templates", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.listTemplates)
 			protected.GET("/templates/categories", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getTemplateCategories)
 			protected.POST("/templates/refresh", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.refreshTemplates)
@@ -693,18 +710,18 @@ func (s *Server) setupRoutes() {
 			{
 				dnsGroup.GET("/providers", s.listDNSProviders)
 
-				// Register DNS plugin routes
-				_ = dnsPlugins.NewCloudflarePlugin().RegisterRoutes(dnsGroup)
-				_ = dnsPlugins.NewRoute53Plugin().RegisterRoutes(dnsGroup)
-				_ = dnsPlugins.NewDigitalOceanPlugin().RegisterRoutes(dnsGroup)
-				_ = dnsPlugins.NewHetznerPlugin().RegisterRoutes(dnsGroup)
+				for _, p := range s.builtinDNS {
+					if rp, ok := p.(plugins.RoutablePlugin); ok {
+						_ = rp.RegisterRoutes(dnsGroup)
+					}
+				}
 
 				// PowerDNS routes
 				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(protected)
 			}
 
-			// Access Groups built-in app routes (read-only plan; enforcement not wired yet)
-			_ = s.accessGroups.RegisterRoutes(protected)
+			// Firewall built-in app routes (config + plan; enforcement not wired yet)
+			_ = s.firewall.RegisterRoutes(protected)
 
 			// Cluster endpoints
 			clusterGroup := protected.Group("/cluster")
@@ -742,12 +759,15 @@ func (s *Server) Start() error {
 		Handler: s.router,
 	}
 
-	// Refresh a managed base nginx config so an upgraded agent picks up template changes
-	// (e.g. server_names_hash sizing) without waiting on a security toggle. Best-effort and
-	// off the startup path since it may reload nginx once the container is ready.
 	go func() {
 		if err := s.infraManager.EnsureBaseNginxConfig(); err != nil {
 			log.Printf("[infra] failed to refresh base nginx config on startup: %v", err)
+		}
+	}()
+
+	go func() {
+		if err := s.pluginHost.Start(); err != nil {
+			log.Printf("[pluginhost] failed to start plugins: %v", err)
 		}
 	}()
 
@@ -770,6 +790,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	if s.pluginHost != nil {
+		s.pluginHost.Stop()
+	}
 	if s.certRenewer != nil {
 		s.certRenewer.Stop()
 	}
@@ -1743,9 +1766,6 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	}
 	if _, ok := sentFields["security"]; ok {
 		merged.Security = incoming.Security
-	}
-	if _, ok := sentFields["access_groups"]; ok {
-		merged.AccessGroups = incoming.AccessGroups
 	}
 	if _, ok := sentFields["backup"]; ok {
 		merged.Backup = incoming.Backup
@@ -2928,9 +2948,78 @@ func (s *Server) generateSubdomain(c *gin.Context) {
 func (s *Server) listPlugins(c *gin.Context) {
 	pluginList := s.pluginRegistry.List()
 
+	for _, info := range s.pluginHost.Infos() {
+		pluginList = append(pluginList, plugins.PluginInfo{
+			Name:         info.Name,
+			Version:      info.Version,
+			DisplayName:  info.DisplayName,
+			Description:  info.Description,
+			Capabilities: info.Capabilities,
+			Type:         plugins.TypeIntegration,
+			Enabled:      true,
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"plugins": pluginList,
 	})
+}
+
+func marketplaceAPIBase() string {
+	if v := os.Getenv("FLATRUN_MARKETPLACE_API"); v != "" {
+		return v
+	}
+	return "https://api.flatrun.dev/api/v1"
+}
+
+func (s *Server) proxyMarketplace(c *gin.Context) {
+	upstream, err := url.Parse(marketplaceAPIBase())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid marketplace upstream"})
+		return
+	}
+	rel := c.Param("path")
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = upstream.Scheme
+			req.URL.Host = upstream.Host
+			req.URL.Path = strings.TrimRight(upstream.Path, "/") + rel
+			req.Host = upstream.Host
+			req.Header.Del("Authorization")
+			req.Header.Del("Cookie")
+			req.Header.Del("X-Api-Key")
+		},
+		// Drop the upstream's CORS headers; the agent sets its own, and two
+		// Access-Control-Allow-Origin headers make the browser reject the response.
+		ModifyResponse: func(resp *http.Response) error {
+			for _, h := range []string{
+				"Access-Control-Allow-Origin",
+				"Access-Control-Allow-Credentials",
+				"Access-Control-Allow-Methods",
+				"Access-Control-Allow-Headers",
+				"Access-Control-Expose-Headers",
+				"Access-Control-Max-Age",
+			} {
+				resp.Header.Del(h)
+			}
+			return nil
+		},
+	}
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func (s *Server) proxyToPlugin(c *gin.Context) {
+	name := c.Param("name")
+	proxy, ok := s.pluginHost.Proxy(name)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not running"})
+		return
+	}
+	c.Request.URL.Path = c.Param("proxyPath")
+	if c.Request.URL.Path == "" {
+		c.Request.URL.Path = "/"
+	}
+	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
 func (s *Server) getPlugin(c *gin.Context) {

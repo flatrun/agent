@@ -36,7 +36,6 @@ type ServiceMetadata struct {
 	HealthCheck        HealthCheckConfig         `yaml:"healthcheck" json:"healthcheck"`
 	QuickActions       []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
 	Security           *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
-	AccessGroups       *AccessGroupsConfig       `yaml:"access_groups,omitempty" json:"access_groups,omitempty"`
 	Backup             *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
 	ProtectedMode      *ProtectedModeConfig      `yaml:"protected_mode,omitempty" json:"protected_mode,omitempty"`
 	RequirePlan        bool                      `yaml:"require_plan,omitempty" json:"require_plan,omitempty"`
@@ -247,31 +246,6 @@ type DeploymentSecurityConfig struct {
 type ProtectedPath struct {
 	Pattern string `yaml:"pattern" json:"pattern"`
 	Enabled bool   `yaml:"enabled" json:"enabled"`
-}
-
-// AccessGroupsConfig is a per-deployment east-west / egress access policy (AWS
-// security-group style: allow flows to peer deployments or external CIDRs, with a default
-// egress stance). This is a scaffold: rules are persisted and surfaced in the UI, but
-// enforcement is not yet wired (see pkg/plugins/accessgroups). It deliberately does not
-// overlap the security module, which owns HTTP/ingress IP blocking and rate limiting.
-type AccessGroupsConfig struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
-	// Egress is the default outbound stance: "allow-all" (default) or "deny-all".
-	Egress string `yaml:"egress,omitempty" json:"egress,omitempty"`
-	// Allow lists permitted flows: east-west grants to a peer deployment, or external
-	// egress to a CIDR, evaluated when Egress is deny-all.
-	Allow []AccessRule `yaml:"allow,omitempty" json:"allow,omitempty"`
-}
-
-type AccessRule struct {
-	ID string `yaml:"id,omitempty" json:"id,omitempty"`
-	// To is the peer deployment name for an east-west rule; CIDR is the target for
-	// external egress. Exactly one is expected per rule.
-	To          string `yaml:"to,omitempty" json:"to,omitempty"`
-	CIDR        string `yaml:"cidr,omitempty" json:"cidr,omitempty"`
-	Port        int    `yaml:"port,omitempty" json:"port,omitempty"`
-	Protocol    string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 type DeploymentRateLimit struct {

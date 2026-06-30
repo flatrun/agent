@@ -105,25 +105,6 @@ func TestMergeMetadata_PrimaryServiceSyncsRoutingService(t *testing.T) {
 	}
 }
 
-// An access_groups update is persisted through the metadata merge, while unsent fields
-// are preserved.
-func TestMergeMetadata_AccessGroups(t *testing.T) {
-	existing := &models.ServiceMetadata{Name: "shop", Type: "laravel"}
-
-	sentFields, incoming := parseTestJSON(t, `{"access_groups": {"enabled": true, "egress": "deny-all", "allow": [{"to": "db", "port": 5432}]}}`)
-	merged := mergeMetadata(existing, &incoming, sentFields)
-
-	if merged.AccessGroups == nil || !merged.AccessGroups.Enabled {
-		t.Fatalf("access_groups should be set and enabled, got %+v", merged.AccessGroups)
-	}
-	if merged.AccessGroups.Egress != "deny-all" || len(merged.AccessGroups.Allow) != 1 || merged.AccessGroups.Allow[0].To != "db" {
-		t.Errorf("access_groups not merged correctly: %+v", merged.AccessGroups)
-	}
-	if merged.Type != "laravel" {
-		t.Error("unsent field Type should be preserved")
-	}
-}
-
 func TestMergeMetadata_SentFieldOverwritesExisting(t *testing.T) {
 	existing := &models.ServiceMetadata{
 		Name:         "old-name",
