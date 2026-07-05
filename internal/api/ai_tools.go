@@ -14,6 +14,7 @@ import (
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/setup"
+	"github.com/flatrun/agent/pkg/pluginapi"
 	"github.com/gin-gonic/gin"
 )
 
@@ -348,6 +349,24 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 
 // aiToolSpecs returns the tool schemas to advertise to the model, in a
 // stable order.
+// pluginToolPrefix namespaces plugin-provided tools so they never collide with built-ins and
+// can be routed back to the owning plugin on dispatch: plugin__<plugin>__<tool>.
+const pluginToolPrefix = "plugin__"
+
+func pluginToolName(plugin, tool string) string {
+	return pluginToolPrefix + plugin + "__" + tool
+}
+
+// parsePluginToolName splits a namespaced tool name back into plugin and tool.
+func parsePluginToolName(name string) (plugin, tool string, ok bool) {
+	rest, found := strings.CutPrefix(name, pluginToolPrefix)
+	if !found {
+		return "", "", false
+	}
+	plugin, tool, found = strings.Cut(rest, "__")
+	return plugin, tool, found
+}
+
 func (s *Server) aiToolSpecs() []ai.Tool {
 	registry := s.aiToolRegistry()
 	names := make([]string, 0, len(registry))
@@ -359,26 +378,98 @@ func (s *Server) aiToolSpecs() []ai.Tool {
 	for _, name := range names {
 		specs = append(specs, registry[name].Spec)
 	}
+
+	// Append tools contributed by running plugins.
+	for _, info := range s.pluginInfos() {
+		for _, t := range info.Tools {
+			specs = append(specs, ai.Tool{
+				Name:        pluginToolName(info.Name, t.Name),
+				Description: t.Description,
+				Parameters:  t.Parameters,
+			})
+		}
+	}
 	return specs
+}
+
+// pluginInfos returns running plugin infos, tolerating a nil host (as in unit tests).
+func (s *Server) pluginInfos() []pluginapi.Info {
+	if s.pluginHost == nil {
+		return nil
+	}
+	return s.pluginHost.Infos()
+}
+
+// pluginToolMutates reports whether a namespaced plugin tool changes state, so the caller
+// applies the write-access gate.
+func (s *Server) pluginToolMutates(plugin, tool string) bool {
+	for _, info := range s.pluginInfos() {
+		if info.Name != plugin {
+			continue
+		}
+		for _, t := range info.Tools {
+			if t.Name == tool {
+				return t.Mutates
+			}
+		}
+	}
+	return false
 }
 
 // runAITool executes one tool call, returning the textual result the
 // model reads. Errors are returned as content (prefixed) so the model
 // can recover rather than the loop aborting.
 func (s *Server) runAITool(c *gin.Context, boundDeployment string, call ai.ToolCall) string {
-	tool, ok := s.aiToolRegistry()[call.Name]
-	if !ok {
-		return "Error: unknown tool " + call.Name
-	}
 	var args map[string]interface{}
 	if strings.TrimSpace(call.Arguments) != "" {
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
 			return "Error: could not parse tool arguments: " + err.Error()
 		}
 	}
+
+	// Plugin-provided tools are dispatched to the owning plugin over its socket.
+	if plugin, tool, ok := parsePluginToolName(call.Name); ok {
+		if s.pluginToolMutates(plugin, tool) {
+			// A state-changing tool requires write access to a deployment, and the plugin is
+			// told which one so it can scope the mutation to that deployment rather than act
+			// on an arbitrary resource the caller named.
+			dep, err := s.toolAllowedDeploymentWrite(c, boundDeployment, args)
+			if err != nil {
+				return "Error: " + err.Error()
+			}
+			if args == nil {
+				args = map[string]interface{}{}
+			}
+			args["_deployment"] = dep
+		}
+		result, err := s.pluginHost.ExecTool(plugin, tool, args)
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		return truncateToolOutput(result)
+	}
+
+	tool, ok := s.aiToolRegistry()[call.Name]
+	if !ok {
+		return "Error: unknown tool " + call.Name
+	}
 	result, err := tool.Run(s, c, boundDeployment, args)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
 	return result
+}
+
+// toolAllowedDeploymentWrite resolves the target deployment and verifies the actor may write
+// to it, gating a mutating plugin tool.
+func (s *Server) toolAllowedDeploymentWrite(c *gin.Context, boundDeployment string, args map[string]interface{}) (string, error) {
+	name := toolDeployment(boundDeployment, args)
+	if name == "" {
+		return "", fmt.Errorf("no deployment specified")
+	}
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin && !actor.CanAccessDeployment(name, auth.AccessLevelWrite) {
+		return "", fmt.Errorf("you do not have write access to deployment %q", name)
+	}
+	return name, nil
 }

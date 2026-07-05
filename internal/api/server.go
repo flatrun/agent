@@ -38,6 +38,7 @@ import (
 	"github.com/flatrun/agent/internal/files"
 	"github.com/flatrun/agent/internal/infra"
 	"github.com/flatrun/agent/internal/networks"
+	"github.com/flatrun/agent/internal/notify"
 	"github.com/flatrun/agent/internal/plan"
 	"github.com/flatrun/agent/internal/pluginhost"
 	"github.com/flatrun/agent/internal/proxy"
@@ -73,6 +74,8 @@ type Server struct {
 	firewall           *firewall.Plugin
 	builtinDNS         []plugins.Plugin
 	pluginHost         *pluginhost.Host
+	notify             *notify.Service
+	pluginToken        string
 	authMiddleware     *auth.Middleware
 	authManager        *auth.Manager
 	proxyOrchestrator  *proxy.Orchestrator
@@ -177,12 +180,21 @@ func New(cfg *config.Config, configPath string) *Server {
 	}
 
 	agentURL := fmt.Sprintf("http://127.0.0.1:%d/api", cfg.API.Port)
+	// A per-run secret handed to plugins so they can call the internal emit endpoint (e.g. to
+	// raise a notification) without the full user auth flow.
+	pluginToken := randomToken()
+	notifyService := notify.NewService(cfg.DeploymentsPath)
 	pluginHost := pluginhost.New(
 		filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins"),
 		filepath.Join(cfg.DeploymentsPath, ".flatrun", "run"),
 		agentURL,
-		"",
+		pluginToken,
 	)
+	// Built-in apps ship inside the agent and run by re-execing it with a subcommand, so
+	// there is one binary to deploy and no per-arch plugin artifact.
+	if self, err := os.Executable(); err == nil {
+		pluginHost.Builtin("observability", self, "observ-plugin")
+	}
 	authMiddleware := auth.NewMiddleware(&cfg.Auth)
 
 	setupManager := setup.NewManager(cfg, configPath)
@@ -300,6 +312,8 @@ func New(cfg *config.Config, configPath string) *Server {
 		firewall:           firewallPlugin,
 		builtinDNS:         builtinDNS,
 		pluginHost:         pluginHost,
+		notify:             notifyService,
+		pluginToken:        pluginToken,
 		authMiddleware:     authMiddleware,
 		authManager:        authManager,
 		proxyOrchestrator:  proxyOrchestrator,
@@ -446,6 +460,9 @@ func (s *Server) setupRoutes() {
 			protected.GET("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getSettings)
 			protected.PUT("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSettings)
 			protected.PUT("/settings/security", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSecuritySettings)
+			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getNotificationTargets)
+			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationTargets)
+			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.testNotification)
 			protected.GET("/config", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listConfig)
 			protected.GET("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.getConfigKey)
 			protected.PUT("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigWrite), s.updateConfigKey)
@@ -740,6 +757,9 @@ func (s *Server) setupRoutes() {
 
 		// Cluster exchange endpoint (no auth - uses invite token)
 		api.POST("/cluster/exchange", s.clusterExchange)
+
+		// Plugin-emitted notifications (authenticated by the per-run plugin token).
+		api.POST("/internal/notify/emit", s.emitNotification)
 
 		// Ingest endpoints (no auth - called by nginx Lua)
 		api.POST("/security/events/ingest", s.ingestSecurityEvent)
@@ -2949,12 +2969,18 @@ func (s *Server) listPlugins(c *gin.Context) {
 	pluginList := s.pluginRegistry.List()
 
 	for _, info := range s.pluginHost.Infos() {
+		exts := make([]plugins.UIExtension, len(info.UIExtensions))
+		for i, e := range info.UIExtensions {
+			exts[i] = plugins.UIExtension{Slot: e.Slot, Kind: e.Kind, Title: e.Title, Icon: e.Icon, Endpoint: e.Endpoint}
+		}
 		pluginList = append(pluginList, plugins.PluginInfo{
 			Name:         info.Name,
 			Version:      info.Version,
 			DisplayName:  info.DisplayName,
 			Description:  info.Description,
 			Capabilities: info.Capabilities,
+			UIExtensions: exts,
+			ConfigSchema: info.ConfigSchema,
 			Type:         plugins.TypeIntegration,
 			Enabled:      true,
 		})
@@ -2963,6 +2989,67 @@ func (s *Server) listPlugins(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"plugins": pluginList,
 	})
+}
+
+func randomToken() string {
+	buf := make([]byte, 24)
+	if _, err := cryptoRand.Read(buf); err != nil {
+		// A predictable fallback would be a known plugin-auth secret; fail loudly at startup
+		// instead, since a system without a working CSPRNG cannot be secured anyway.
+		panic("randomToken: crypto/rand unavailable: " + err.Error())
+	}
+	return hex.EncodeToString(buf)
+}
+
+func (s *Server) getNotificationTargets(c *gin.Context) {
+	c.JSON(http.StatusOK, s.notify.Load())
+}
+
+func (s *Server) updateNotificationTargets(c *gin.Context) {
+	var cfg notify.Config
+	if err := c.ShouldBindJSON(&cfg); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		return
+	}
+	if err := s.notify.Save(cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, s.notify.Load())
+}
+
+func (s *Server) testNotification(c *gin.Context) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if err := s.notify.Test(req.URL); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "delivery failed: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "test notification sent"})
+}
+
+// emitNotification is called by out-of-process plugins (authenticated by the per-run plugin
+// token) to raise a notification, which the core routes to the configured targets.
+func (s *Server) emitNotification(c *gin.Context) {
+	if s.pluginToken == "" || c.GetHeader("X-Plugin-Token") != s.pluginToken {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req struct {
+		Title   string `json:"title"`
+		Message string `json:"message"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	_ = s.notify.Notify(req.Title, req.Message)
+	c.JSON(http.StatusAccepted, gin.H{"status": "queued"})
 }
 
 func marketplaceAPIBase() string {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/api"
+	"github.com/flatrun/agent/internal/observ"
 	"github.com/flatrun/agent/internal/watcher"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/updater"
@@ -106,7 +107,17 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 
-	root.AddCommand(serve, setup, update, versionCmd)
+	observPlugin := &cobra.Command{
+		Use:          "observ-plugin",
+		Short:        "Run the built-in observability plugin (launched by the agent)",
+		Hidden:       true,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return observ.RunPlugin()
+		},
+	}
+
+	root.AddCommand(serve, setup, update, versionCmd, observPlugin)
 	return root
 }
 

@@ -16,21 +16,57 @@ import (
 	"github.com/flatrun/agent/pkg/pluginapi"
 )
 
-// Serve runs the plugin until the host stops it. handler serves the plugin's own routes;
-// pass nil if the plugin only reports info. It returns an error if the process was not
-// launched by the host (the socket env var is unset) or the socket cannot be served.
-func Serve(info pluginapi.Info, handler http.Handler) error {
+// Tool is a plugin capability the AI assistant can invoke. Run receives the parsed args and
+// returns the textual result the model reads.
+type Tool struct {
+	Spec pluginapi.ToolSpec
+	Run  func(args map[string]any) (string, error)
+}
+
+// Serve runs the plugin until the host stops it. handler serves the plugin's own routes (nil
+// if the plugin only reports info); tools are advertised to the assistant and dispatched over
+// the tool-exec endpoint. It returns an error if the process was not launched by the host
+// (the socket env var is unset) or the socket cannot be served.
+func Serve(info pluginapi.Info, handler http.Handler, tools ...Tool) error {
 	socket := os.Getenv(pluginapi.EnvSocket)
 	if socket == "" {
 		return fmt.Errorf("not launched by the flatrun plugin host: %s is unset", pluginapi.EnvSocket)
 	}
 	handshake := os.Getenv(pluginapi.EnvHandshake)
 
+	byName := make(map[string]Tool, len(tools))
+	for _, t := range tools {
+		byName[t.Spec.Name] = t
+		info.Tools = append(info.Tools, t.Spec)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc(pluginapi.InfoPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(pluginapi.HandshakeHeader, handshake)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(info)
+	})
+	mux.HandleFunc(pluginapi.ToolExecPath, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name string         `json:"name"`
+			Args map[string]any `json:"args"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		tool, ok := byName[req.Name]
+		if !ok {
+			http.Error(w, "unknown tool", http.StatusNotFound)
+			return
+		}
+		result, err := tool.Run(req.Args)
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"result": result})
 	})
 	if handler != nil {
 		mux.Handle("/", handler)

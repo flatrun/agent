@@ -20,10 +20,25 @@ func main() {
 		_, _ = w.Write([]byte(`{"message":"hello from the flatrun plugin"}`))
 	})
 
+	echo := pluginsdk.Tool{
+		Spec: pluginapi.ToolSpec{
+			Name:        "echo",
+			Description: "Echo back the given text.",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"text": map[string]any{"type": "string"}},
+			},
+		},
+		Run: func(args map[string]any) (string, error) {
+			text, _ := args["text"].(string)
+			return "echo: " + text, nil
+		},
+	}
+
 	_ = pluginsdk.Serve(pluginapi.Info{
 		Name:        "hello",
 		Version:     "0.1.0",
 		DisplayName: "Hello Plugin",
 		Description: "A sample out-of-process plugin.",
-	}, mux)
+	}, mux, echo)
 }
