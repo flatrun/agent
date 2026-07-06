@@ -12,6 +12,9 @@ const (
 	// EnvAgentURL and EnvToken let a plugin call back into the agent API.
 	EnvAgentURL = "FLATRUN_AGENT_URL"
 	EnvToken    = "FLATRUN_PLUGIN_TOKEN"
+	// EnvDataDir is the deployments base directory, so a plugin can read/write flat state
+	// (e.g. its config under .flatrun/).
+	EnvDataDir = "FLATRUN_DATA_DIR"
 
 	// InfoPath is the well-known endpoint every plugin serves.
 	InfoPath = "/_plugin/info"
@@ -19,11 +22,39 @@ const (
 	HandshakeHeader = "X-Flatrun-Plugin-Handshake"
 )
 
-// Info is a plugin's self-reported identity and the capabilities it requests from the host.
+// Info is a plugin's self-reported identity, the capabilities it requests from the host, and
+// how it contributes UI: which native slots it fills and any configuration it accepts.
 type Info struct {
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	DisplayName  string   `json:"display_name"`
-	Description  string   `json:"description"`
-	Capabilities []string `json:"capabilities,omitempty"`
+	Name         string         `json:"name"`
+	Version      string         `json:"version"`
+	DisplayName  string         `json:"display_name"`
+	Description  string         `json:"description"`
+	Capabilities []string       `json:"capabilities,omitempty"`
+	UIExtensions []UIExtension  `json:"ui_extensions,omitempty"`
+	ConfigSchema map[string]any `json:"config_schema,omitempty"`
+	Tools        []ToolSpec     `json:"tools,omitempty"`
+}
+
+// ToolSpec declares a tool the plugin exposes to the AI assistant. The host advertises it to
+// the model and dispatches calls back to the plugin's /_plugin/tools/exec endpoint. Mutates
+// marks a tool that changes state, so the host can gate it on write access.
+type ToolSpec struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+	Mutates     bool           `json:"mutates,omitempty"`
+}
+
+// ToolExecPath is where the host POSTs {name, args} to invoke a plugin tool.
+const ToolExecPath = "/_plugin/tools/exec"
+
+// UIExtension declares that a plugin contributes UI into a named slot. The host renders a
+// native component for Kind (plugins never ship UI code) and feeds it from Endpoint, a path
+// on the plugin's own API.
+type UIExtension struct {
+	Slot     string `json:"slot"` // "deployment.detail" | "settings" | "overview"
+	Kind     string `json:"kind"` // "metrics-panel" | "form" | "timeline"
+	Title    string `json:"title,omitempty"`
+	Icon     string `json:"icon,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
 }

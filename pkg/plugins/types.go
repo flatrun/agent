@@ -44,6 +44,7 @@ type PluginInfo struct {
 	Requires            []string               `json:"requires,omitempty" yaml:"requires,omitempty"`
 	Resources           *ResourceRequirements  `json:"resources,omitempty" yaml:"resources,omitempty"`
 	DashboardExtensions []DashboardExtension   `json:"dashboard_extensions,omitempty" yaml:"dashboard_extensions,omitempty"`
+	UIExtensions        []UIExtension          `json:"ui_extensions,omitempty" yaml:"ui_extensions,omitempty"`
 	APIEndpoints        []APIEndpoint          `json:"api,omitempty" yaml:"api,omitempty"`
 	Hooks               map[string]string      `json:"hooks,omitempty" yaml:"hooks,omitempty"`
 }
@@ -51,6 +52,16 @@ type PluginInfo struct {
 type DashboardExtension struct {
 	Location  string `json:"location" yaml:"location"`
 	Component string `json:"component" yaml:"component"`
+}
+
+// UIExtension declares a plugin's contribution to a named UI slot, rendered by a native
+// component of the given Kind and fed from the plugin's own API Endpoint.
+type UIExtension struct {
+	Slot     string `json:"slot" yaml:"slot"`
+	Kind     string `json:"kind" yaml:"kind"`
+	Title    string `json:"title,omitempty" yaml:"title,omitempty"`
+	Icon     string `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 }
 
 type APIEndpoint struct {

@@ -3,6 +3,7 @@
 package pluginhost
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -29,35 +30,61 @@ type managed struct {
 	proxy  *httputil.ReverseProxy
 }
 
+type builtin struct {
+	name string
+	path string
+	args []string
+}
+
 type Host struct {
 	pluginsDir string
 	runtimeDir string
 	agentURL   string
 	token      string
+	dataDir    string
 	handshake  string
+	builtins   []builtin
 
 	mu      sync.RWMutex
 	running map[string]*managed
 }
 
 func New(pluginsDir, runtimeDir, agentURL, token string) *Host {
+	// pluginsDir is <base>/.flatrun/plugins, so the deployments base is two levels up.
+	dataDir := ""
+	if pluginsDir != "" {
+		dataDir = filepath.Dir(filepath.Dir(pluginsDir))
+	}
 	return &Host{
 		pluginsDir: pluginsDir,
 		runtimeDir: runtimeDir,
 		agentURL:   agentURL,
 		token:      token,
+		dataDir:    dataDir,
 		handshake:  randomCookie(),
 		running:    make(map[string]*managed),
 	}
 }
 
-// Start launches every plugin binary; a plugin that fails to launch is logged and skipped.
+// Builtin registers a plugin shipped inside the agent, launched by running the given command
+// (typically the agent re-execing itself with a subcommand). Call before Start.
+func (h *Host) Builtin(name, path string, args ...string) {
+	h.builtins = append(h.builtins, builtin{name: name, path: path, args: args})
+}
+
+// Start launches the built-in plugins and every external plugin binary; a plugin that fails
+// to launch is logged and skipped.
 func (h *Host) Start() error {
-	if h.pluginsDir == "" {
-		return nil
-	}
 	if err := os.MkdirAll(h.runtimeDir, 0755); err != nil {
 		return err
+	}
+	for _, b := range h.builtins {
+		if err := h.launch(b.name, exec.Command(b.path, b.args...)); err != nil {
+			log.Printf("[pluginhost] built-in %s failed to start: %v", b.name, err)
+		}
+	}
+	if h.pluginsDir == "" {
+		return nil
 	}
 	entries, err := os.ReadDir(h.pluginsDir)
 	if err != nil {
@@ -74,23 +101,23 @@ func (h *Host) Start() error {
 		if !isExecutable(bin) {
 			continue
 		}
-		if err := h.launch(entry.Name(), bin); err != nil {
+		if err := h.launch(entry.Name(), exec.Command(bin)); err != nil {
 			log.Printf("[pluginhost] %s failed to start: %v", entry.Name(), err)
 		}
 	}
 	return nil
 }
 
-func (h *Host) launch(name, bin string) error {
+func (h *Host) launch(name string, cmd *exec.Cmd) error {
 	socket := filepath.Join(h.runtimeDir, name+".sock")
 	_ = os.Remove(socket)
 
-	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
 		pluginapi.EnvSocket+"="+socket,
 		pluginapi.EnvHandshake+"="+h.handshake,
 		pluginapi.EnvAgentURL+"="+h.agentURL,
 		pluginapi.EnvToken+"="+h.token,
+		pluginapi.EnvDataDir+"="+h.dataDir,
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -155,6 +182,36 @@ func (h *Host) Proxy(name string) (*httputil.ReverseProxy, bool) {
 		return nil, false
 	}
 	return m.proxy, true
+}
+
+// ExecTool invokes a tool on a running plugin over its socket and returns the textual result.
+func (h *Host) ExecTool(plugin, tool string, args map[string]any) (string, error) {
+	h.mu.RLock()
+	m, ok := h.running[plugin]
+	h.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("plugin %q not running", plugin)
+	}
+
+	body, _ := json.Marshal(map[string]any{"name": tool, "args": args})
+	client := &http.Client{Transport: unixTransport(m.socket), Timeout: 30 * time.Second}
+	resp, err := client.Post("http://plugin"+pluginapi.ToolExecPath, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var out struct {
+		Result string `json:"result"`
+		Error  string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.Error != "" {
+		return "", fmt.Errorf("%s", out.Error)
+	}
+	return out.Result, nil
 }
 
 func (h *Host) Infos() []pluginapi.Info {

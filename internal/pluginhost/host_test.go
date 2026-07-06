@@ -88,3 +88,84 @@ func TestHostLaunchesAndProxiesBinaryPlugin(t *testing.T) {
 		t.Error("plugin should be gone after Stop")
 	}
 }
+
+// A plugin's declared tools are advertised in its Info and invokable via ExecTool.
+func TestHostExecToolInvokesPluginTool(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping subprocess build in short mode")
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not available")
+	}
+
+	base := t.TempDir()
+	helloDir := filepath.Join(base, "plugins", "hello")
+	if err := os.MkdirAll(helloDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command(goBin, "build", "-o", filepath.Join(helloDir, "plugin"), "github.com/flatrun/agent/examples/plugins/hello")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building sample plugin: %v\n%s", err, out)
+	}
+
+	h := New(filepath.Join(base, "plugins"), filepath.Join(base, "run"), "", "")
+	if err := h.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer h.Stop()
+
+	infos := h.Infos()
+	if len(infos) != 1 || len(infos[0].Tools) != 1 || infos[0].Tools[0].Name != "echo" {
+		t.Fatalf("expected the echo tool advertised, got %+v", infos)
+	}
+
+	out, err := h.ExecTool("hello", "echo", map[string]any{"text": "hi"})
+	if err != nil {
+		t.Fatalf("ExecTool = %v", err)
+	}
+	if out != "echo: hi" {
+		t.Errorf("ExecTool result = %q, want %q", out, "echo: hi")
+	}
+
+	if _, err := h.ExecTool("hello", "missing", nil); err == nil {
+		t.Error("expected error for unknown tool")
+	}
+}
+
+// A built-in plugin launches from an explicit command (the agent re-execing itself),
+// not from a scanned plugins directory.
+func TestHostLaunchesBuiltinPlugin(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping subprocess build in short mode")
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not available")
+	}
+
+	base := t.TempDir()
+	bin := filepath.Join(base, "hello")
+	build := exec.Command(goBin, "build", "-o", bin, "github.com/flatrun/agent/examples/plugins/hello")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building sample plugin: %v\n%s", err, out)
+	}
+
+	// No plugins dir; the plugin is registered as a built-in command.
+	h := New("", filepath.Join(base, "run"), "", "")
+	h.Builtin("hello", bin)
+	if err := h.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer h.Stop()
+
+	proxy, ok := h.Proxy("hello")
+	if !ok {
+		t.Fatal("built-in plugin not running")
+	}
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hello", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "hello from the flatrun plugin") {
+		t.Fatalf("built-in proxied response = code %d body %q", rec.Code, rec.Body.String())
+	}
+}
