@@ -176,7 +176,7 @@ func (m *Manager) RenewCertificates() (*RenewalResult, error) {
 	}, nil
 }
 
-func (m *Manager) RenewCertificate(domain string) (*RenewalResult, error) {
+func (m *Manager) RenewCertificate(domain string, force bool) (*RenewalResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -184,24 +184,41 @@ func (m *Manager) RenewCertificate(domain string) (*RenewalResult, error) {
 		return nil, fmt.Errorf("certificate for domain %q not found", domain)
 	}
 
-	// A user clicking Renew on one certificate wants it renewed now, not "only if
-	// within certbot's ~30-day auto-renew window". Without --force-renewal, certbot
-	// skips a not-yet-due cert and exits 0, so the action silently does nothing.
-	output, err := m.executeCertbot([]string{
-		"renew",
-		"--non-interactive",
-		"--cert-name", domain,
-		"--force-renewal",
-	})
+	args := []string{"renew", "--non-interactive", "--cert-name", domain}
+	if force {
+		args = append(args, "--force-renewal")
+	}
+	output, err := m.executeCertbot(args)
 	if err != nil {
 		return nil, fmt.Errorf("renewal failed for %s: %s - %w", domain, string(output), err)
 	}
 
-	return &RenewalResult{
-		Success:        true,
-		Message:        string(output),
-		RenewedDomains: []string{domain},
-	}, nil
+	// Without --force-renewal certbot skips a not-yet-due cert and still exits 0,
+	// so distinguish an actual reissue from a no-op instead of always claiming success.
+	renewed := force || certbotDidRenew(string(output))
+	result := &RenewalResult{
+		Success: true,
+		Renewed: renewed,
+		Message: string(output),
+	}
+	if renewed {
+		result.RenewedDomains = []string{domain}
+	}
+	return result, nil
+}
+
+// certbotDidRenew reports whether a `certbot renew` run actually reissued a cert,
+// by looking for the phrases certbot prints when it skips a not-yet-due lineage.
+func certbotDidRenew(output string) bool {
+	lower := strings.ToLower(output)
+	switch {
+	case strings.Contains(lower, "no renewals were attempted"),
+		strings.Contains(lower, "not yet due for renewal"),
+		strings.Contains(lower, "no certificates are due for renewal"):
+		return false
+	default:
+		return true
+	}
 }
 
 func (m *Manager) certificateExistsLocked(domain string) bool {
@@ -427,6 +444,7 @@ type CertificateResult struct {
 
 type RenewalResult struct {
 	Success        bool     `json:"success"`
+	Renewed        bool     `json:"renewed"`
 	Message        string   `json:"message"`
 	RenewedDomains []string `json:"renewed_domains,omitempty"`
 }

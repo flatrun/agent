@@ -266,12 +266,12 @@ func (o *Orchestrator) RenewCertificates() (*ssl.RenewalResult, error) {
 	return result, nil
 }
 
-func (o *Orchestrator) RenewCertificate(domain string) (*ssl.RenewalResult, error) {
+func (o *Orchestrator) RenewCertificate(domain string, force bool) (*ssl.RenewalResult, error) {
 	if err := o.ssl.ValidateDomain(domain); err != nil {
 		return nil, err
 	}
 
-	result, err := o.ssl.RenewCertificate(domain)
+	result, err := o.ssl.RenewCertificate(domain, force)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +293,7 @@ func (o *Orchestrator) RenewCertificatesForDomains(domains []string) *ssl.MultiC
 		if !o.ssl.CertificateExists(domain) {
 			continue
 		}
-		if _, err := o.ssl.RenewCertificate(domain); err != nil {
+		if _, err := o.ssl.RenewCertificate(domain, false); err != nil {
 			result.Results = append(result.Results, &ssl.CertificateResult{
 				Domain:  domain,
 				Success: false,

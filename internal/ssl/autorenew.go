@@ -93,7 +93,7 @@ func (r *Renewer) Run() {
 		if !cert.AutoRenew {
 			continue
 		}
-		if _, err := r.manager.RenewCertificate(cert.Domain); err != nil {
+		if _, err := r.manager.RenewCertificate(cert.Domain, false); err != nil {
 			log.Printf("auto-renew: failed to renew %s (days_left=%d): %v", cert.Domain, cert.DaysLeft, err)
 			continue
 		}

@@ -12,9 +12,10 @@ import (
 )
 
 type mockExecutor struct {
-	mu   sync.Mutex
+	mu    sync.Mutex
 	calls []executorCall
 	err   error
+	out   []byte
 }
 
 type executorCall struct {
@@ -28,6 +29,9 @@ func (e *mockExecutor) Execute(cfg *config.ServiceExecConfig, args []string) ([]
 	e.calls = append(e.calls, executorCall{cfg: cfg, args: args})
 	if e.err != nil {
 		return nil, e.err
+	}
+	if e.out != nil {
+		return e.out, nil
 	}
 	return []byte("ok"), nil
 }

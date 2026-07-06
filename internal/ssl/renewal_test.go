@@ -71,50 +71,64 @@ func newTestManager(t *testing.T) (*Manager, *mockExecutor, string) {
 	return m, mock, certsDir
 }
 
-func TestRenewCertificate_PassesCertName(t *testing.T) {
+func hasArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRenewCertificate_ForceAddsForceRenewal(t *testing.T) {
 	m, mock, certsDir := newTestManager(t)
 	writeTestCert(t, certsDir, "example.com", time.Now().Add(10*24*time.Hour))
 
-	result, err := m.RenewCertificate("example.com")
+	result, err := m.RenewCertificate("example.com", true)
 	if err != nil {
 		t.Fatalf("RenewCertificate: %v", err)
 	}
-	if !result.Success {
-		t.Error("expected Success=true")
+	if !result.Success || !result.Renewed {
+		t.Errorf("expected Success and Renewed true, got %+v", result)
 	}
 	if len(result.RenewedDomains) != 1 || result.RenewedDomains[0] != "example.com" {
 		t.Errorf("RenewedDomains = %v, want [example.com]", result.RenewedDomains)
 	}
 
-	if len(mock.calls) != 1 {
-		t.Fatalf("expected 1 executor call, got %d", len(mock.calls))
+	args := mock.calls[0].args
+	if !hasArg(args, "renew") || !hasArg(args, "--cert-name") || !hasArg(args, "--force-renewal") {
+		t.Errorf("expected force renewal args, got: %v", args)
+	}
+}
+
+func TestRenewCertificate_NoForceSkipsForceRenewalAndReportsNotDue(t *testing.T) {
+	m, mock, certsDir := newTestManager(t)
+	mock.out = []byte("Cert not yet due for renewal\nNo renewals were attempted.")
+	writeTestCert(t, certsDir, "example.com", time.Now().Add(60*24*time.Hour))
+
+	result, err := m.RenewCertificate("example.com", false)
+	if err != nil {
+		t.Fatalf("RenewCertificate: %v", err)
+	}
+	if !result.Success {
+		t.Error("expected Success true")
+	}
+	if result.Renewed {
+		t.Error("expected Renewed false when certbot reports the cert is not yet due")
+	}
+	if len(result.RenewedDomains) != 0 {
+		t.Errorf("expected no RenewedDomains, got %v", result.RenewedDomains)
 	}
 
-	args := mock.calls[0].args
-	var hasRenew, hasNonInteractive, hasCertName, hasForce bool
-	for i, arg := range args {
-		switch arg {
-		case "renew":
-			hasRenew = true
-		case "--non-interactive":
-			hasNonInteractive = true
-		case "--force-renewal":
-			hasForce = true
-		case "--cert-name":
-			if i+1 < len(args) && args[i+1] == "example.com" {
-				hasCertName = true
-			}
-		}
-	}
-	if !hasRenew || !hasNonInteractive || !hasCertName || !hasForce {
-		t.Errorf("unexpected certbot args: %v", args)
+	if hasArg(mock.calls[0].args, "--force-renewal") {
+		t.Errorf("did not expect --force-renewal without force, got: %v", mock.calls[0].args)
 	}
 }
 
 func TestRenewCertificate_ErrorsWhenMissing(t *testing.T) {
 	m, mock, _ := newTestManager(t)
 
-	_, err := m.RenewCertificate("missing.example.com")
+	_, err := m.RenewCertificate("missing.example.com", false)
 	if err == nil {
 		t.Fatal("expected error for missing certificate")
 	}
