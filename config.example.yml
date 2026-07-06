@@ -38,7 +38,7 @@ certbot:
     webroot_path: ""
     container_webroot_path: ""
     dns_provider: ""
-    auto_renewal_enabled: false
+    auto_renewal_enabled: true
     renewal_threshold_days: 30
     renewal_check_interval: 12h0m0s
 logging:

@@ -791,7 +791,7 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	if s.config.Certbot.Enabled && s.config.Certbot.AutoRenewalEnabled {
+	if s.config.Certbot.Enabled && s.config.Certbot.AutoRenewalEnabled != nil && *s.config.Certbot.AutoRenewalEnabled {
 		s.certRenewer = ssl.NewRenewer(
 			s.proxyOrchestrator.SSLManager(),
 			s.config.Certbot.RenewalThresholdDays,
