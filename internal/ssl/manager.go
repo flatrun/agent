@@ -184,10 +184,14 @@ func (m *Manager) RenewCertificate(domain string) (*RenewalResult, error) {
 		return nil, fmt.Errorf("certificate for domain %q not found", domain)
 	}
 
+	// A user clicking Renew on one certificate wants it renewed now, not "only if
+	// within certbot's ~30-day auto-renew window". Without --force-renewal, certbot
+	// skips a not-yet-due cert and exits 0, so the action silently does nothing.
 	output, err := m.executeCertbot([]string{
 		"renew",
 		"--non-interactive",
 		"--cert-name", domain,
+		"--force-renewal",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("renewal failed for %s: %s - %w", domain, string(output), err)

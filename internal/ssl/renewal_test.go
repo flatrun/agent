@@ -91,20 +91,22 @@ func TestRenewCertificate_PassesCertName(t *testing.T) {
 	}
 
 	args := mock.calls[0].args
-	var hasRenew, hasNonInteractive, hasCertName bool
+	var hasRenew, hasNonInteractive, hasCertName, hasForce bool
 	for i, arg := range args {
 		switch arg {
 		case "renew":
 			hasRenew = true
 		case "--non-interactive":
 			hasNonInteractive = true
+		case "--force-renewal":
+			hasForce = true
 		case "--cert-name":
 			if i+1 < len(args) && args[i+1] == "example.com" {
 				hasCertName = true
 			}
 		}
 	}
-	if !hasRenew || !hasNonInteractive || !hasCertName {
+	if !hasRenew || !hasNonInteractive || !hasCertName || !hasForce {
 		t.Errorf("unexpected certbot args: %v", args)
 	}
 }
