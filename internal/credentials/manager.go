@@ -15,30 +15,36 @@ import (
 )
 
 type Manager struct {
-	mu            sync.RWMutex
-	registryTypes map[string]*models.RegistryType
-	credentials   map[string]*models.RegistryCredential
-	storagePath   string
-	typesFilePath string
-	credsFilePath string
+	mu               sync.RWMutex
+	registryTypes    map[string]*models.RegistryType
+	credentials      map[string]*models.RegistryCredential
+	genericCreds     map[string]*models.Credential
+	storagePath      string
+	typesFilePath    string
+	credsFilePath    string
+	genericCredsFile string
 }
 
 func NewManager(deploymentsPath string) *Manager {
 	storagePath := filepath.Join(deploymentsPath, ".flatrun")
 	typesFilePath := filepath.Join(storagePath, "registry-types.yml")
 	credsFilePath := filepath.Join(storagePath, "credentials.yml")
+	genericCredsFile := filepath.Join(storagePath, "credentials-store.yml")
 
 	m := &Manager{
-		registryTypes: make(map[string]*models.RegistryType),
-		credentials:   make(map[string]*models.RegistryCredential),
-		storagePath:   storagePath,
-		typesFilePath: typesFilePath,
-		credsFilePath: credsFilePath,
+		registryTypes:    make(map[string]*models.RegistryType),
+		credentials:      make(map[string]*models.RegistryCredential),
+		genericCreds:     make(map[string]*models.Credential),
+		storagePath:      storagePath,
+		typesFilePath:    typesFilePath,
+		credsFilePath:    credsFilePath,
+		genericCredsFile: genericCredsFile,
 	}
 
 	m.initBuiltinTypes()
 	_ = m.loadTypes()
 	_ = m.loadCredentials()
+	_ = m.loadGenericCredentials()
 
 	return m
 }

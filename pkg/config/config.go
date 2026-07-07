@@ -42,11 +42,36 @@ type Config struct {
 	Plans           PlansConfig          `yaml:"plans"`
 	AI              AIConfig             `yaml:"ai"`
 	Files           FilesConfig          `yaml:"files"`
+	Backup          BackupConfig         `yaml:"backup"`
 }
 
 type FilesConfig struct {
 	// Pointer so an explicit false survives reloads; nil means "use default" (true).
 	ShowHidden *bool `yaml:"show_hidden" json:"show_hidden"`
+}
+
+type BackupConfig struct {
+	Destinations []BackupDestination `yaml:"destinations" json:"destinations"`
+}
+
+// BackupDestination is a remote object-storage target that backups are mirrored
+// to after the local copy is written. Secrets are never stored here: CredentialID
+// references an S3 credential held by the credential manager.
+type BackupDestination struct {
+	Name         string `yaml:"name" json:"name"`
+	Type         string `yaml:"type" json:"type"`
+	Endpoint     string `yaml:"endpoint" json:"endpoint"`
+	Region       string `yaml:"region" json:"region"`
+	Bucket       string `yaml:"bucket" json:"bucket"`
+	Prefix       string `yaml:"prefix" json:"prefix"`
+	CredentialID string `yaml:"credential_id" json:"credential_id"`
+	UsePathStyle bool   `yaml:"use_path_style" json:"use_path_style"`
+	// Pointer so an explicit false survives reloads; nil means enabled.
+	Enabled *bool `yaml:"enabled" json:"enabled"`
+}
+
+func (d BackupDestination) IsEnabled() bool {
+	return d.Enabled == nil || *d.Enabled
 }
 
 type AIConfig struct {

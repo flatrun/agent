@@ -31,6 +31,10 @@ type Backup struct {
 	CreatedAt      time.Time    `json:"created_at"`
 	CompletedAt    *time.Time   `json:"completed_at,omitempty"`
 	ExpiresAt      *time.Time   `json:"expires_at,omitempty"`
+	// Locations lists where this backup exists: "local" and/or remote
+	// destination names. A backup may live remotely only if local retention
+	// has pruned the on-disk copy.
+	Locations []string `json:"locations,omitempty"`
 }
 
 type BackupMetadata struct {

@@ -133,6 +133,9 @@ func (s *Server) runtimeAppliers() map[string]func(*Server) error {
 			srv.manager.SetCleanupTimeout(srv.config.Cleanup.Timeout)
 			return nil
 		},
+		"backup.destinations": func(srv *Server) error {
+			return srv.applyBackupDestinations()
+		},
 		"ai.enabled":                       rebuildAIProvider,
 		"ai.base_url":                      rebuildAIProvider,
 		"ai.api_key":                       rebuildAIProvider,
