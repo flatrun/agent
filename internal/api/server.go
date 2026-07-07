@@ -791,7 +791,10 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	if s.config.Certbot.Enabled && s.config.Certbot.AutoRenewalEnabled != nil && *s.config.Certbot.AutoRenewalEnabled {
+	// The renewer runs whenever certbot is enabled; whether each certificate renews
+	// is decided per certificate (with the global setting only as the default), so a
+	// certificate marked for auto-renew is never vetoed by the global flag.
+	if s.config.Certbot.Enabled {
 		s.certRenewer = ssl.NewRenewer(
 			s.proxyOrchestrator.SSLManager(),
 			s.config.Certbot.RenewalThresholdDays,

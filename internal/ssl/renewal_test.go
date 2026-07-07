@@ -182,6 +182,35 @@ func TestSetAutoRenew_ErrorsWhenCertMissing(t *testing.T) {
 	}
 }
 
+func TestAutoRenew_PerCertOverridesGlobalDefault(t *testing.T) {
+	m, _, certsDir := newTestManager(t)
+	writeTestCert(t, certsDir, "untouched.example.com", time.Now().Add(10*24*time.Hour))
+	writeTestCert(t, certsDir, "forced-on.example.com", time.Now().Add(10*24*time.Hour))
+
+	off := false
+	m.config.AutoRenewalEnabled = &off
+
+	if m.isAutoRenewEnabled("untouched.example.com") {
+		t.Error("untouched certificate should follow the global default (off)")
+	}
+
+	if err := m.SetAutoRenew("forced-on.example.com", true); err != nil {
+		t.Fatalf("SetAutoRenew(true): %v", err)
+	}
+	if !m.isAutoRenewEnabled("forced-on.example.com") {
+		t.Error("explicitly enabled certificate must renew despite the global default being off")
+	}
+
+	on := true
+	m.config.AutoRenewalEnabled = &on
+	if err := m.SetAutoRenew("untouched.example.com", false); err != nil {
+		t.Fatalf("SetAutoRenew(false): %v", err)
+	}
+	if m.isAutoRenewEnabled("untouched.example.com") {
+		t.Error("explicitly disabled certificate must not renew despite the global default being on")
+	}
+}
+
 func TestGetExpiringCertificates_FiltersByThreshold(t *testing.T) {
 	m, _, certsDir := newTestManager(t)
 	writeTestCert(t, certsDir, "fresh.example.com", time.Now().Add(90*24*time.Hour))

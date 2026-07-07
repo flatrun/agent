@@ -227,6 +227,14 @@ func (m *Manager) certificateExistsLocked(domain string) bool {
 	return err == nil
 }
 
+// Per-certificate auto-renew markers. An explicit marker overrides the global
+// default in either direction; a certificate with neither marker follows the
+// global default. Only one marker is ever present at a time.
+const (
+	autoRenewEnabledMarker  = ".flatrun-auto-renew-enabled"
+	autoRenewDisabledMarker = ".flatrun-auto-renew-disabled"
+)
+
 func (m *Manager) SetAutoRenew(domain string, enabled bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -235,25 +243,34 @@ func (m *Manager) SetAutoRenew(domain string, enabled bool) error {
 		return fmt.Errorf("certificate for domain %q not found", domain)
 	}
 
-	marker := filepath.Join(m.certsPath, domain, ".flatrun-auto-renew-disabled")
+	dir := filepath.Join(m.certsPath, domain)
+	write := filepath.Join(dir, autoRenewDisabledMarker)
+	remove := filepath.Join(dir, autoRenewEnabledMarker)
 	if enabled {
-		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to enable auto-renew: %w", err)
-		}
-		return nil
+		write, remove = remove, write
 	}
 
-	f, err := os.Create(marker)
+	if err := os.Remove(remove); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to set auto-renew: %w", err)
+	}
+	f, err := os.Create(write)
 	if err != nil {
-		return fmt.Errorf("failed to disable auto-renew: %w", err)
+		return fmt.Errorf("failed to set auto-renew: %w", err)
 	}
 	return f.Close()
 }
 
+// isAutoRenewEnabled reports whether a certificate should auto-renew. An explicit
+// per-certificate marker wins over the global default in both directions.
 func (m *Manager) isAutoRenewEnabled(domain string) bool {
-	marker := filepath.Join(m.certsPath, domain, ".flatrun-auto-renew-disabled")
-	_, err := os.Stat(marker)
-	return os.IsNotExist(err)
+	dir := filepath.Join(m.certsPath, domain)
+	if _, err := os.Stat(filepath.Join(dir, autoRenewDisabledMarker)); err == nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(dir, autoRenewEnabledMarker)); err == nil {
+		return true
+	}
+	return m.config.AutoRenewalEnabled == nil || *m.config.AutoRenewalEnabled
 }
 
 func (m *Manager) RevokeCertificate(domain string) error {
