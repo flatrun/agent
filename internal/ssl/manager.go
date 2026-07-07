@@ -176,7 +176,7 @@ func (m *Manager) RenewCertificates() (*RenewalResult, error) {
 	}, nil
 }
 
-func (m *Manager) RenewCertificate(domain string) (*RenewalResult, error) {
+func (m *Manager) RenewCertificate(domain string, force bool) (*RenewalResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -184,20 +184,41 @@ func (m *Manager) RenewCertificate(domain string) (*RenewalResult, error) {
 		return nil, fmt.Errorf("certificate for domain %q not found", domain)
 	}
 
-	output, err := m.executeCertbot([]string{
-		"renew",
-		"--non-interactive",
-		"--cert-name", domain,
-	})
+	args := []string{"renew", "--non-interactive", "--cert-name", domain}
+	if force {
+		args = append(args, "--force-renewal")
+	}
+	output, err := m.executeCertbot(args)
 	if err != nil {
 		return nil, fmt.Errorf("renewal failed for %s: %s - %w", domain, string(output), err)
 	}
 
-	return &RenewalResult{
-		Success:        true,
-		Message:        string(output),
-		RenewedDomains: []string{domain},
-	}, nil
+	// Without --force-renewal certbot skips a not-yet-due cert and still exits 0,
+	// so distinguish an actual reissue from a no-op instead of always claiming success.
+	renewed := force || certbotDidRenew(string(output))
+	result := &RenewalResult{
+		Success: true,
+		Renewed: renewed,
+		Message: string(output),
+	}
+	if renewed {
+		result.RenewedDomains = []string{domain}
+	}
+	return result, nil
+}
+
+// certbotDidRenew reports whether a `certbot renew` run actually reissued a cert,
+// by looking for the phrases certbot prints when it skips a not-yet-due lineage.
+func certbotDidRenew(output string) bool {
+	lower := strings.ToLower(output)
+	switch {
+	case strings.Contains(lower, "no renewals were attempted"),
+		strings.Contains(lower, "not yet due for renewal"),
+		strings.Contains(lower, "no certificates are due for renewal"):
+		return false
+	default:
+		return true
+	}
 }
 
 func (m *Manager) certificateExistsLocked(domain string) bool {
@@ -205,6 +226,14 @@ func (m *Manager) certificateExistsLocked(domain string) bool {
 	_, err := os.Stat(certPath)
 	return err == nil
 }
+
+// Per-certificate auto-renew markers. An explicit marker overrides the global
+// default in either direction; a certificate with neither marker follows the
+// global default. Only one marker is ever present at a time.
+const (
+	autoRenewEnabledMarker  = ".flatrun-auto-renew-enabled"
+	autoRenewDisabledMarker = ".flatrun-auto-renew-disabled"
+)
 
 func (m *Manager) SetAutoRenew(domain string, enabled bool) error {
 	m.mu.Lock()
@@ -214,25 +243,34 @@ func (m *Manager) SetAutoRenew(domain string, enabled bool) error {
 		return fmt.Errorf("certificate for domain %q not found", domain)
 	}
 
-	marker := filepath.Join(m.certsPath, domain, ".flatrun-auto-renew-disabled")
+	dir := filepath.Join(m.certsPath, domain)
+	write := filepath.Join(dir, autoRenewDisabledMarker)
+	remove := filepath.Join(dir, autoRenewEnabledMarker)
 	if enabled {
-		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to enable auto-renew: %w", err)
-		}
-		return nil
+		write, remove = remove, write
 	}
 
-	f, err := os.Create(marker)
+	if err := os.Remove(remove); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to set auto-renew: %w", err)
+	}
+	f, err := os.Create(write)
 	if err != nil {
-		return fmt.Errorf("failed to disable auto-renew: %w", err)
+		return fmt.Errorf("failed to set auto-renew: %w", err)
 	}
 	return f.Close()
 }
 
+// isAutoRenewEnabled reports whether a certificate should auto-renew. An explicit
+// per-certificate marker wins over the global default in both directions.
 func (m *Manager) isAutoRenewEnabled(domain string) bool {
-	marker := filepath.Join(m.certsPath, domain, ".flatrun-auto-renew-disabled")
-	_, err := os.Stat(marker)
-	return os.IsNotExist(err)
+	dir := filepath.Join(m.certsPath, domain)
+	if _, err := os.Stat(filepath.Join(dir, autoRenewDisabledMarker)); err == nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(dir, autoRenewEnabledMarker)); err == nil {
+		return true
+	}
+	return m.config.AutoRenewalEnabled == nil || *m.config.AutoRenewalEnabled
 }
 
 func (m *Manager) RevokeCertificate(domain string) error {
@@ -423,6 +461,7 @@ type CertificateResult struct {
 
 type RenewalResult struct {
 	Success        bool     `json:"success"`
+	Renewed        bool     `json:"renewed"`
 	Message        string   `json:"message"`
 	RenewedDomains []string `json:"renewed_domains,omitempty"`
 }

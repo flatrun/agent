@@ -791,7 +791,10 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	if s.config.Certbot.Enabled && s.config.Certbot.AutoRenewalEnabled {
+	// The renewer runs whenever certbot is enabled; whether each certificate renews
+	// is decided per certificate (with the global setting only as the default), so a
+	// certificate marked for auto-renew is never vetoed by the global flag.
+	if s.config.Certbot.Enabled {
 		s.certRenewer = ssl.NewRenewer(
 			s.proxyOrchestrator.SSLManager(),
 			s.config.Certbot.RenewalThresholdDays,
@@ -4726,15 +4729,21 @@ func (s *Server) getCertificate(c *gin.Context) {
 
 func (s *Server) renewCertificate(c *gin.Context) {
 	domain := c.Param("domain")
+	force := c.Query("force") == "true"
 
-	result, err := s.proxyOrchestrator.RenewCertificate(domain)
+	result, err := s.proxyOrchestrator.RenewCertificate(domain, force)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	message := "Certificate renewed"
+	if !result.Renewed {
+		message = "Certificate is not yet due for renewal"
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Certificate renewed",
+		"message": message,
 		"domain":  domain,
 		"result":  result,
 	})

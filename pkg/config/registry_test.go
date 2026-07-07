@@ -152,6 +152,21 @@ func TestFilesShowHiddenDefaultsTrueAndAcceptsFalse(t *testing.T) {
 	}
 }
 
+func TestAutoRenewalDefaultsOnAndAcceptsFalse(t *testing.T) {
+	cfg := &Config{}
+	setDefaults(cfg)
+	if cfg.Certbot.AutoRenewalEnabled == nil || !*cfg.Certbot.AutoRenewalEnabled {
+		t.Errorf("auto_renewal_enabled default = %v, want true", cfg.Certbot.AutoRenewalEnabled)
+	}
+
+	off := false
+	cfg.Certbot.AutoRenewalEnabled = &off
+	setDefaults(cfg)
+	if cfg.Certbot.AutoRenewalEnabled == nil || *cfg.Certbot.AutoRenewalEnabled {
+		t.Errorf("explicit false reset to %v, want false", cfg.Certbot.AutoRenewalEnabled)
+	}
+}
+
 func entryKeys(entries []Entry) []string {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {

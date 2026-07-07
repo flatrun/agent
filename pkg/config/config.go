@@ -103,7 +103,7 @@ type CertbotConfig struct {
 	WebrootPath          string        `yaml:"webroot_path" json:"webroot_path"`
 	ContainerWebrootPath string        `yaml:"container_webroot_path" json:"container_webroot_path"`
 	DNSProvider          string        `yaml:"dns_provider" json:"dns_provider"`
-	AutoRenewalEnabled   bool          `yaml:"auto_renewal_enabled" json:"auto_renewal_enabled"`
+	AutoRenewalEnabled   *bool         `yaml:"auto_renewal_enabled" json:"auto_renewal_enabled"`
 	RenewalThresholdDays int           `yaml:"renewal_threshold_days" json:"renewal_threshold_days"`
 	RenewalCheckInterval time.Duration `yaml:"renewal_check_interval" json:"renewal_check_interval"`
 }
@@ -344,6 +344,12 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Certbot.RenewalCheckInterval == 0 {
 		cfg.Certbot.RenewalCheckInterval = 12 * time.Hour
+	}
+	// Auto-renewal defaults on: an unset flag should renew certificates before they
+	// expire, not leave them to lapse. An explicit false is still honored.
+	if cfg.Certbot.AutoRenewalEnabled == nil {
+		enabled := true
+		cfg.Certbot.AutoRenewalEnabled = &enabled
 	}
 	// Security defaults
 	if cfg.Security.ScanInterval == 0 {
