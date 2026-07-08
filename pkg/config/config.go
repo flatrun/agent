@@ -54,12 +54,19 @@ type BackupConfig struct {
 	Destinations []BackupDestination `yaml:"destinations" json:"destinations"`
 }
 
-// BackupDestination is a remote object-storage target that backups are mirrored
-// to after the local copy is written. Secrets are never stored here: CredentialID
-// references an S3 credential held by the credential manager.
+// BackupDestination is an object store that backups are mirrored to after the
+// local copy is written. Secrets are never stored here: CredentialID references
+// an S3 credential held by the credential manager.
+//
+// Kind records who runs the store: "external" (a store FlatRun only connects to)
+// or "managed" (a store FlatRun runs itself, deployed from a template). For a
+// managed store, Deployment names the deployment that runs the container. See
+// docs/OBJECT_STORES.md.
 type BackupDestination struct {
 	Name         string `yaml:"name" json:"name"`
 	Type         string `yaml:"type" json:"type"`
+	Kind         string `yaml:"kind" json:"kind"`
+	Deployment   string `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Endpoint     string `yaml:"endpoint" json:"endpoint"`
 	Region       string `yaml:"region" json:"region"`
 	Bucket       string `yaml:"bucket" json:"bucket"`
@@ -72,6 +79,14 @@ type BackupDestination struct {
 
 func (d BackupDestination) IsEnabled() bool {
 	return d.Enabled == nil || *d.Enabled
+}
+
+// StoreKind returns the store kind, defaulting to "external" when unset.
+func (d BackupDestination) StoreKind() string {
+	if d.Kind == "" {
+		return "external"
+	}
+	return d.Kind
 }
 
 type AIConfig struct {

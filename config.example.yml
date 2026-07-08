@@ -134,6 +134,7 @@ backup:
     destinations: []
     #   - name: s3-prod
     #     type: s3
+    #     kind: external   # external (connect only) or managed (FlatRun runs it)
     #     endpoint: https://s3.us-east-1.amazonaws.com
     #     region: us-east-1
     #     bucket: flatrun-backups
