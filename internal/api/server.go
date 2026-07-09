@@ -348,6 +348,10 @@ func New(cfg *config.Config, configPath string) *Server {
 	}
 
 	if backupManager != nil {
+		if err := s.applyBackupDestinations(); err != nil {
+			log.Printf("Warning: %v", err)
+		}
+
 		executor := scheduler.NewExecutor(backupManager, manager)
 		schedulerManager, err := scheduler.NewManager(cfg.DeploymentsPath, executor)
 		if err != nil {
@@ -619,6 +623,12 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/credentials/:id", s.authMiddleware.RequirePermission(auth.PermRegistriesDelete), s.deleteCredential)
 			protected.POST("/credentials/:id/test", s.authMiddleware.RequirePermission(auth.PermRegistriesRead), s.testCredential)
 
+			// Storage credential endpoints (S3 and other object-storage secrets)
+			protected.GET("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStorageCredentials)
+			protected.POST("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.createStorageCredential)
+			protected.PUT("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.updateStorageCredential)
+			protected.DELETE("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.deleteStorageCredential)
+
 			// Security endpoints
 			protected.GET("/security/stats", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.getSecurityStats)
 			protected.GET("/security/events", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.listSecurityEvents)
@@ -663,6 +673,10 @@ func (s *Server) setupRoutes() {
 			protected.POST("/backups/:id/restore", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.restoreBackup)
 			protected.GET("/backups/jobs", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackupJobs)
 			protected.GET("/backups/jobs/:id", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.getBackupJob)
+
+			// Remote backup destinations
+			protected.GET("/backup-destinations", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackupDestinations)
+			protected.POST("/backup-destinations/test", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.testBackupDestination)
 
 			// Scheduler endpoints
 			protected.GET("/scheduler/tasks", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.listScheduledTasks)

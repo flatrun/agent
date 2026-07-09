@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/flatrun/agent/pkg/version"
@@ -22,6 +23,9 @@ type Manager struct {
 	deploymentsPath string
 	backupsPath     string
 	jobs            *JobTracker
+
+	remotesMu sync.RWMutex
+	remotes   []Store
 }
 
 func NewManager(deploymentsPath string) (*Manager, error) {
@@ -148,6 +152,9 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 	backup.Status = BackupStatusCompleted
 	now := time.Now()
 	backup.CompletedAt = &now
+
+	backup.Locations = []string{locationLocal}
+	backup.Locations = append(backup.Locations, m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size)...)
 
 	log.Printf("Backup completed: %s (%d bytes)", backupID, backup.Size)
 	return backup, nil
@@ -456,7 +463,7 @@ func (m *Manager) createArchive(sourceDir, destPath string) error {
 	})
 }
 
-func (m *Manager) ListBackups(filter *BackupListFilter) ([]Backup, error) {
+func (m *Manager) listLocalBackups(filter *BackupListFilter) ([]Backup, error) {
 	var backups []Backup
 
 	deploymentDirs, err := os.ReadDir(m.backupsPath)
@@ -500,6 +507,7 @@ func (m *Manager) ListBackups(filter *BackupListFilter) ([]Backup, error) {
 				Size:           info.Size(),
 				Path:           filepath.Join(backupDir, file.Name()),
 				CreatedAt:      info.ModTime(),
+				Locations:      []string{locationLocal},
 			}
 
 			backups = append(backups, backup)
@@ -517,7 +525,7 @@ func (m *Manager) ListBackups(filter *BackupListFilter) ([]Backup, error) {
 	return backups, nil
 }
 
-func (m *Manager) GetBackup(backupID string) (*Backup, error) {
+func (m *Manager) getLocalBackup(backupID string) (*Backup, error) {
 	parts := strings.SplitN(backupID, "_", 2)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid backup ID format")
@@ -538,11 +546,12 @@ func (m *Manager) GetBackup(backupID string) (*Backup, error) {
 		Size:           info.Size(),
 		Path:           backupPath,
 		CreatedAt:      info.ModTime(),
+		Locations:      []string{locationLocal},
 	}, nil
 }
 
-func (m *Manager) DeleteBackup(backupID string) error {
-	backup, err := m.GetBackup(backupID)
+func (m *Manager) deleteLocalBackup(backupID string) error {
+	backup, err := m.getLocalBackup(backupID)
 	if err != nil {
 		return err
 	}
@@ -551,15 +560,18 @@ func (m *Manager) DeleteBackup(backupID string) error {
 }
 
 func (m *Manager) GetBackupPath(backupID string) (string, error) {
-	backup, err := m.GetBackup(backupID)
+	backup, err := m.getLocalBackup(backupID)
 	if err != nil {
 		return "", err
 	}
 	return backup.Path, nil
 }
 
+// CleanupOldBackups prunes the local on-disk copies beyond keepCount. Retention
+// applies to local disk only; remote copies are governed by the destination's
+// own lifecycle policy and are never deleted here.
 func (m *Manager) CleanupOldBackups(deploymentName string, keepCount int) (int, error) {
-	backups, err := m.ListBackups(&BackupListFilter{DeploymentName: deploymentName})
+	backups, err := m.listLocalBackups(&BackupListFilter{DeploymentName: deploymentName})
 	if err != nil {
 		return 0, err
 	}
@@ -570,7 +582,7 @@ func (m *Manager) CleanupOldBackups(deploymentName string, keepCount int) (int, 
 
 	deleted := 0
 	for _, backup := range backups[keepCount:] {
-		if err := m.DeleteBackup(backup.ID); err != nil {
+		if err := m.deleteLocalBackup(backup.ID); err != nil {
 			log.Printf("Failed to delete old backup %s: %v", backup.ID, err)
 			continue
 		}
@@ -599,7 +611,13 @@ func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) 
 	}
 	defer os.RemoveAll(tempDir)
 
-	if err := m.extractArchive(backup.Path, tempDir); err != nil {
+	archivePath, cleanup, err := m.ensureLocalArchive(ctx, backup)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	if err := m.extractArchive(archivePath, tempDir); err != nil {
 		return fmt.Errorf("failed to extract backup: %w", err)
 	}
 

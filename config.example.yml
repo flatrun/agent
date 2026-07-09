@@ -126,3 +126,19 @@ ai:
     api_key: your-gemini-api-key-here
     model: gemini-2.5-flash
     timeout: 1m0s
+backup:
+    # Remote destinations that backups are mirrored to after the local copy is
+    # written. The local copy under <deployments_path>/.flatrun/backups always
+    # remains the primary. Secrets live in the credential manager, never here:
+    # credential_id references an s3 credential managed via the API.
+    destinations: []
+    #   - name: s3-prod
+    #     type: s3
+    #     kind: external   # external (connect only) or managed (FlatRun runs it)
+    #     endpoint: https://s3.us-east-1.amazonaws.com
+    #     region: us-east-1
+    #     bucket: flatrun-backups
+    #     prefix: agent-01
+    #     credential_id: <s3-credential-id>
+    #     use_path_style: false
+    #     enabled: true

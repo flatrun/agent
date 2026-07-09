@@ -189,16 +189,16 @@ func (s *Server) downloadBackup(c *gin.Context) {
 		return
 	}
 
-	backupPath, err := s.backupManager.GetBackupPath(backupID)
+	reader, size, err := s.backupManager.OpenBackupArchive(c.Request.Context(), backupID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+	defer reader.Close()
 
 	c.Header("Content-Description", "File Transfer")
 	c.Header("Content-Disposition", "attachment; filename="+backupID+".tar.gz")
-	c.Header("Content-Type", "application/gzip")
-	c.File(backupPath)
+	c.DataFromReader(http.StatusOK, size, "application/gzip", reader, nil)
 }
 
 func (s *Server) getDeploymentBackupConfig(c *gin.Context) {
