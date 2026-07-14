@@ -14,6 +14,13 @@ import (
 	"github.com/docker/docker/client"
 )
 
+// Labels compose stamps on every container it creates, used to map a container
+// back to its deployment without invoking the compose CLI.
+const (
+	composeProjectLabel = "com.docker.compose.project"
+	composeServiceLabel = "com.docker.compose.service"
+)
+
 type APIClient struct {
 	cli *client.Client
 }
@@ -32,8 +39,8 @@ func (a *APIClient) Close() error {
 
 func (a *APIClient) FindContainer(ctx context.Context, project, service string) (string, error) {
 	f := filters.NewArgs(
-		filters.Arg("label", fmt.Sprintf("com.docker.compose.project=%s", project)),
-		filters.Arg("label", fmt.Sprintf("com.docker.compose.service=%s", service)),
+		filters.Arg("label", fmt.Sprintf("%s=%s", composeProjectLabel, project)),
+		filters.Arg("label", fmt.Sprintf("%s=%s", composeServiceLabel, service)),
 		filters.Arg("status", "running"),
 	)
 
@@ -125,8 +132,21 @@ func (a *APIClient) ExecInService(ctx context.Context, project, service, command
 
 func (a *APIClient) ListServiceContainers(ctx context.Context, project string) ([]container.Summary, error) {
 	f := filters.NewArgs(
-		filters.Arg("label", fmt.Sprintf("com.docker.compose.project=%s", project)),
+		filters.Arg("label", fmt.Sprintf("%s=%s", composeProjectLabel, project)),
 	)
 
 	return a.cli.ContainerList(ctx, container.ListOptions{Filters: f, All: true})
+}
+
+// ListLiveComposeContainers returns the containers of every compose project on
+// the host in a single call.
+//
+// It deliberately excludes stopped containers, mirroring `compose ps`, which
+// reports only live ones unless asked for all. Including them would both change
+// what callers report and cost noticeably more, since the daemon walks every
+// container a host has ever left behind.
+func (a *APIClient) ListLiveComposeContainers(ctx context.Context) ([]container.Summary, error) {
+	f := filters.NewArgs(filters.Arg("label", composeProjectLabel))
+
+	return a.cli.ContainerList(ctx, container.ListOptions{Filters: f})
 }
