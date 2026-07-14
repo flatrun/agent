@@ -1,63 +1,91 @@
-# FlatRun Agent
+# FlatRun
 
-Lightweight Go agent for flat-file container orchestration.
+[![CI](https://github.com/flatrun/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/flatrun/agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Overview
+FlatRun turns one server into a full hosting control plane: deploy apps, terminate SSL, manage DNS, run backups, give users scoped access, schedule jobs, and ask a built-in AI assistant what went wrong. It is a single Go agent with a web UI, a CLI, and GitHub Actions over standard Docker Compose. Everything it manages lives as plain files on disk, so the day you outgrow the panel, your infrastructure keeps running without it.
 
-FlatRun Agent is the backend service that manages Docker deployments through a simple filesystem-based approach. It monitors your deployments directory and provides a REST API for the FlatRun UI.
+This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
 
-## Features
+## Why this exists
 
-- Docker Compose deployment management
-- Container lifecycle control (start, stop, restart)
-- Real-time container monitoring and logs
-- Docker resource management (images, volumes, networks)
-- SSL certificate monitoring
-- Quick App templates for rapid deployment
-- JWT-based API authentication
-- Health monitoring and statistics
+Most hosting panels trap you twice. Your data goes into named Docker volumes you can't easily inspect, and your setup goes into a database only the panel understands. The day you want to move hosts, debug a container, or stop paying for the UI, you find your infrastructure is only legible to the tool that created it.
 
-## Installation
+FlatRun inverts that. Every app is a directory: a `docker-compose.yml` and its data and config sitting next to it. The panel reads and writes those files, but the files are the source of truth. Delete FlatRun tomorrow and every app keeps running under plain `docker compose`.
+
+## What you get
+
+- **Nothing hidden** — configs, data, certs, and env live in the filesystem, not in volumes you have to `docker inspect` to see.
+- **No lock-in** — standard Docker Compose. FlatRun is optional at every point; the panel is a convenience, not a dependency.
+- **Copy = migrate** — a deployment is a directory. `tar` it, move it, `docker compose up -d`. Backups are file backups.
+- **AI-native operation** — a built-in assistant reads a deployment's logs and config and answers in plain operator terms: diagnose a failure, suggest improvements, harden security, or explain what a stack is doing. It is off until you configure a provider, and secrets are redacted before anything is sent.
+- **Automatable end to end** — the same actions are available from the UI, the `flatrun` CLI, and a GitHub Action, so a deploy is a dashboard click or a CI step.
+
+## Quick start
+
+Install FlatRun on any Ubuntu/Debian server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/flatrun/installer/main/scripts/install.sh | sudo bash
+```
+
+This installs three pieces:
+
+- **Agent** (`:8090`) — this service, running as a systemd unit
+- **UI** (`:8080`) — the dashboard
+- **Nginx** (`:80`, `:443`) — reverse proxy for your deployments, running as a container
+
+Open the dashboard at `http://<your-server>:8080` and deploy your first app.
+
+## Components
+
+FlatRun is a set of focused pieces, each in its own repository:
+
+| Piece | What it does |
+|---|---|
+| [Agent](https://github.com/flatrun/agent) | This repo. Go service that manages Docker Compose deployments and serves the REST API. Home of the AI assistant and app templates. |
+| [UI](https://github.com/flatrun/ui) | Vue 3 dashboard: deployments, live logs, resource and SSL monitoring. |
+| [CLI](https://github.com/flatrun/cli) | `flatrun`, the operator and automation surface over the agent API. |
+| [Actions](https://github.com/flatrun/actions) | GitHub Actions to install the CLI and deploy from a workflow. |
+| [Installer](https://github.com/flatrun/installer) | One-command server install and image builds. |
+
+## Build from source
+
+For local development or a manual install.
 
 ### Prerequisites
 
-- Go 1.21+ (for building from source)
+- Go 1.21+
 - Docker & Docker Compose v2
-- Access to Docker socket (`/var/run/docker.sock`)
+- Access to the Docker socket (`/var/run/docker.sock`)
 - Linux server (Ubuntu 20.04+, Debian 11+, or similar)
 
-### Option 1: Build from Source
+### Build
 
 ```bash
-# Clone the repository
 git clone https://github.com/flatrun/agent.git
 cd agent
 
-# Install dependencies and build
 make build
-
-# Or manually:
+# or manually:
 go mod download
 go build -o flatrun-agent ./cmd/agent
 ```
 
-### Option 2: Download Binary
+A prebuilt binary is published with each release:
 
 ```bash
-# Download the latest release (when available)
 wget https://github.com/flatrun/agent/releases/latest/download/flatrun-agent
 chmod +x flatrun-agent
 ```
 
 ## Configuration
 
-1. Copy the example configuration:
+Copy the example config and edit it:
 
 ```bash
 cp config.example.yml config.yml
 ```
-
-2. Edit `config.yml`:
 
 ```yaml
 deployments_path: /home/user/deployments
@@ -96,37 +124,28 @@ health:
   metrics_retention: 24h
 ```
 
-### Key Configuration Options
+Key options:
 
-- **deployments_path**: Directory where your docker-compose deployments are stored
-- **api.port**: Port the API server listens on (default: 8090)
-- **auth.api_keys**: List of valid API keys for authentication
-- **auth.jwt_secret**: Secret key for signing JWT tokens (generate a secure random string)
+- **deployments_path** — directory where your docker-compose deployments live
+- **api.port** — port the API server listens on (default: 8090)
+- **auth.api_keys** — valid API keys for authentication
+- **auth.jwt_secret** — secret for signing JWT tokens; generate with `openssl rand -base64 32`
 
-## Running the Agent
+## Running the agent
 
-### Development Mode
+### Development
 
 ```bash
-# Using make
 make run
-
-# Or directly
+# or directly
 ./flatrun-agent --config config.yml
 ```
 
-### Production Setup with Systemd
-
-1. Move the binary to a system location:
+### Production with systemd
 
 ```bash
 sudo mv flatrun-agent /usr/local/bin/
 sudo chmod +x /usr/local/bin/flatrun-agent
-```
-
-2. Create a systemd service file:
-
-```bash
 sudo nano /etc/systemd/system/flatrun-agent.service
 ```
 
@@ -150,109 +169,51 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-3. Enable and start the service:
-
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable flatrun-agent
 sudo systemctl start flatrun-agent
 
-# Check status
 sudo systemctl status flatrun-agent
-
-# View logs
 sudo journalctl -u flatrun-agent -f
 ```
 
-## Directory Structure
+## Documentation
 
-```
-/etc/flatrun/                    # FlatRun configuration (example location)
-└── config.yml                   # Agent configuration
+Full documentation, guides, and the API reference live at [flatrun.dev/docs](https://flatrun.dev/docs).
 
-/usr/local/bin/
-└── flatrun-agent                # Agent binary
+## Security
 
-/path/to/deployments/            # Configurable via deployments_path
-├── .flatrun/                    # FlatRun metadata
-│   └── templates/               # Quick App templates
-├── myapp/                       # Example deployment
-│   └── docker-compose.yml
-└── nginx/                       # Nginx reverse proxy
-    └── conf.d/
-```
-
-The deployments directory can be located anywhere on your system (e.g., `/home/user/deployments`, `/srv/deployments`, `/var/lib/flatrun/deployments`). Configure it via `deployments_path` in your config file.
-
-## API Endpoints
-
-### Authentication
-- `POST /api/auth/login` - Login with API key
-- `GET /api/auth/validate` - Validate JWT token
-- `GET /api/auth/status` - Check auth status
-
-### Deployments
-- `GET /api/deployments` - List all deployments
-- `POST /api/deployments` - Create new deployment
-- `GET /api/deployments/:name` - Get deployment details
-- `DELETE /api/deployments/:name` - Delete deployment
-- `POST /api/deployments/:name/start` - Start deployment
-- `POST /api/deployments/:name/stop` - Stop deployment
-- `POST /api/deployments/:name/restart` - Restart deployment
-- `GET /api/deployments/:name/logs` - Get deployment logs
-
-### Docker Resources
-- `GET /api/containers` - List containers
-- `GET /api/images` - List images
-- `GET /api/volumes` - List volumes
-- `GET /api/networks` - List networks
-- `POST /api/networks` - Create network
-- `DELETE /api/networks/:name` - Delete network
-
-### Other
-- `GET /api/health` - Health check
-- `GET /api/stats` - System statistics
-- `GET /api/certificates` - List SSL certificates
-- `GET /api/templates` - List Quick App templates
-- `GET /api/plugins` - List installed plugins
-
-## Security Considerations
-
-- Always use strong, unique API keys
-- Generate a secure JWT secret (use `openssl rand -base64 32`)
-- Run behind a reverse proxy (nginx) with HTTPS in production
-- Restrict Docker socket access appropriately
-- Keep the agent updated
-
-## Development
-
-```bash
-# Run tests
-make test
-
-# Clean build artifacts
-make clean
-
-# Run in development mode with hot reload (requires air)
-air
-```
+- Use strong, unique API keys.
+- Generate a secure JWT secret (`openssl rand -base64 32`).
+- Run behind a reverse proxy with HTTPS in production.
+- Restrict Docker socket access appropriately.
+- The AI assistant is off until you configure a provider, and secrets are redacted before context is sent.
 
 ## Troubleshooting
 
-### Agent won't start
+**Agent won't start**
 - Check Docker is running: `systemctl status docker`
 - Verify Docker socket permissions: `ls -la /var/run/docker.sock`
-- Check config file syntax: validate your YAML
+- Validate your `config.yml` YAML syntax
 
-### Authentication issues
-- Ensure API key matches between UI and agent config
-- Verify JWT secret is set
+**Authentication issues**
+- Ensure the API key matches between the UI and the agent config
+- Verify the JWT secret is set
 - Check CORS origins include your UI URL
 
-### Can't see deployments
+**Can't see deployments**
 - Verify `deployments_path` exists and is readable
 - Check each deployment has a valid `docker-compose.yml`
 
+## Contributing
+
+FlatRun is open source and moving fast. If the flat-file approach resonates, the fastest ways to help:
+
+- **Star the repo** so more people building on Docker Compose find it.
+- **Open an issue** for a bug, a missing template, or a hosting workflow that feels harder than it should.
+- **Send a PR** for a fix, a new app template, or docs. Start with a good first issue if you want a scoped entry point.
+
 ## License
 
-MIT License - See [LICENSE](LICENSE) file
+MIT License. See [LICENSE](LICENSE).
