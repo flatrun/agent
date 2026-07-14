@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -155,6 +156,28 @@ type Manager struct {
 	basePath       string
 	cleanupTimeout time.Duration
 	mu             sync.RWMutex
+
+	// apiDegraded tracks whether status reads are currently falling back to the
+	// compose CLI, so the fallback is reported once per outage instead of once
+	// per request.
+	apiDegraded atomic.Bool
+}
+
+// noteStatusFallback reports that status reads have dropped to the compose CLI.
+// The deployment list is polled continuously, so logging every failed request
+// would bury the logs at the moment they are worth reading; only the change of
+// state is logged.
+func (m *Manager) noteStatusFallback(err error) {
+	if m.apiDegraded.CompareAndSwap(false, true) {
+		log.Printf("status: docker api unavailable, falling back to the compose cli: %v", err)
+	}
+}
+
+// noteStatusRecovered reports that status reads are served by the engine again.
+func (m *Manager) noteStatusRecovered() {
+	if m.apiDegraded.CompareAndSwap(true, false) {
+		log.Printf("status: docker api reachable again")
+	}
 }
 
 func (m *Manager) SetCleanupTimeout(d time.Duration) {
@@ -178,6 +201,11 @@ func NewManager(deploymentsPath string) *Manager {
 	}
 	if api, err := NewAPIClient(); err == nil {
 		m.apiClient = api
+	} else {
+		// The client is built once and never rebuilt, so this degrades every
+		// later status read to the compose CLI. Say so rather than leaving the
+		// agent quietly slow with no way to tell why.
+		log.Printf("docker api client unavailable, deployment status will use the slower compose cli: %v", err)
 	}
 	return m
 }
@@ -200,12 +228,13 @@ func (m *Manager) ListDeployments() ([]models.Deployment, error) {
 
 	index, err := m.indexContainersByProject(ctx)
 	if err == nil {
+		m.noteStatusRecovered()
 		for i := range deployments {
 			deployments[i].Status = statusFromContainers(index[m.projectFor(&deployments[i], index)])
 		}
 		return deployments, nil
 	}
-	log.Printf("status: falling back to compose CLI for deployment list: %v", err)
+	m.noteStatusFallback(err)
 
 	// Fallback only. Each status check shells out to docker compose, so a serial
 	// loop makes list latency grow with the deployment count. Fetch them
@@ -252,10 +281,11 @@ func (m *Manager) GetDeployment(name string) (*models.Deployment, error) {
 
 	index, err := m.indexContainersByProject(ctx)
 	if err == nil {
+		m.noteStatusRecovered()
 		applyContainers(deployment, index[m.projectFor(deployment, index)])
 		return deployment, nil
 	}
-	log.Printf("status: falling back to compose CLI for deployment %q: %v", name, err)
+	m.noteStatusFallback(err)
 
 	status, _ := m.executor.GetStatus(deployment.Path)
 	deployment.Status = status

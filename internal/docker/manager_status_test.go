@@ -1,8 +1,12 @@
 package docker
 
 import (
+	"bytes"
+	"errors"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
@@ -140,6 +144,33 @@ func writeDeployment(t *testing.T, base, name string, named bool) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(compose), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStatusFallbackLogsOncePerOutage(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	m := &Manager{}
+	failure := errors.New("daemon is not running")
+	for i := 0; i < 3; i++ {
+		m.noteStatusFallback(failure)
+	}
+	if got := strings.Count(logged.String(), "falling back"); got != 1 {
+		t.Errorf("logged the fallback %d times across 3 failed reads, want 1", got)
+	}
+
+	// Recovering and failing again is a new outage, and worth a line.
+	m.noteStatusRecovered()
+	m.noteStatusRecovered()
+	if got := strings.Count(logged.String(), "reachable again"); got != 1 {
+		t.Errorf("logged recovery %d times, want 1", got)
+	}
+
+	m.noteStatusFallback(failure)
+	if got := strings.Count(logged.String(), "falling back"); got != 2 {
+		t.Errorf("logged the fallback %d times across two outages, want 2", got)
 	}
 }
 
