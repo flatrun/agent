@@ -91,4 +91,6 @@ var ConfigSchema = map[string]any{
 	"sample_interval_seconds":  map[string]any{"type": "number", "label": "Sample interval (seconds)", "default": 5, "min": 1},
 	"auto_restart":             map[string]any{"type": "boolean", "label": "Auto-restart unhealthy containers", "default": true},
 	"restart_cooldown_seconds": map[string]any{"type": "number", "label": "Restart cooldown (seconds)", "default": 120, "min": 10},
+	"retention_days":           map[string]any{"type": "number", "label": "Keep history for (days)", "default": 7, "min": 1},
+	"otlp_endpoint":            map[string]any{"type": "string", "label": "OTLP endpoint", "placeholder": "http://localhost:4318", "help": "Push metrics to an OpenTelemetry backend. Leave empty to only serve them for scraping."},
 }

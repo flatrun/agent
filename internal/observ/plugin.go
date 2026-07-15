@@ -103,6 +103,18 @@ func RunPlugin() error {
 		}
 	}
 
+	// Threshold rules over the same metrics the views draw. They are what turns collected
+	// numbers into something that reaches an operator who is not looking at the screen.
+	alertStore := NewAlertStore(dataDir)
+	engine := NewAlertEngine(store)
+	engine.SetRules(alertStore.Load())
+	engine.OnAlert(func(ev AlertEvent) {
+		emitNotification(ev.RuleName, ev.Message())
+	})
+	alertStop := make(chan struct{})
+	defer close(alertStop)
+	go engine.Run(alertStop, cfg.sampleInterval()*3)
+
 	go collector.Run(ctx)
 	go watcher.Run(ctx)
 
@@ -110,7 +122,8 @@ func RunPlugin() error {
 		watcher.SetEnabled(c.AutoRestart)
 	}
 
-	return pluginsdk.Serve(PluginInfo, Handler(store, history, watcher, cfgStore, applyConfig), buildTools(store, watcher, cfgStore)...)
+	handler := HandlerWithAlerts(store, history, watcher, cfgStore, applyConfig, alerts{engine: engine, store: alertStore})
+	return pluginsdk.Serve(PluginInfo, handler, buildTools(store, watcher, cfgStore)...)
 }
 
 // emitNotification asks the core to deliver a notification to the operator's configured
