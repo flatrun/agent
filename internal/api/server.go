@@ -425,6 +425,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogs)
 			protected.GET("/deployments/:name/compose", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentCompose)
 			protected.POST("/deployments/:name/compose/mount", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDeploymentComposeMount)
+			protected.POST("/deployments/:name/compose/unmount", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.removeDeploymentComposeMount)
 
 			// Network endpoints
 			protected.GET("/networks", s.authMiddleware.RequirePermission(auth.PermNetworksRead), s.listNetworks)
@@ -2497,6 +2498,52 @@ func (s *Server) addDeploymentComposeMount(c *gin.Context) {
 		"service_name": req.ServiceName,
 		"mount":        volumeMount,
 		"added":        !alreadyMounted,
+	})
+}
+
+// removeDeploymentComposeMount unmounts a bind mount and recreates the service,
+// which returns it to what its image holds at that path. The host copy stays.
+func (s *Server) removeDeploymentComposeMount(c *gin.Context) {
+	name := c.Param("name")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionUpdateDeployment) {
+		return
+	}
+
+	var req struct {
+		SourcePath  string `json:"source_path" binding:"required"`
+		TargetPath  string `json:"target_path" binding:"required"`
+		ServiceName string `json:"service_name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	sourcePath, err := normalizeComposeMountSource(req.SourcePath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.manager.UnmountPath(name, req.ServiceName, sourcePath, strings.TrimSpace(req.TargetPath)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	content, filename, err := s.manager.GetComposeFile(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Mount removed",
+		"name":         name,
+		"filename":     filename,
+		"content":      content,
+		"service_name": req.ServiceName,
+		"source_path":  sourcePath,
+		"target_path":  req.TargetPath,
 	})
 }
 

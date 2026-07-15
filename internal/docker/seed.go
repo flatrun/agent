@@ -99,6 +99,50 @@ func (m *Manager) MaterializeMount(name, service, containerPath, hostPath string
 	return nil
 }
 
+// UnmountPath removes a bind mount from a service and recreates it, so the
+// service goes back to whatever its image holds at that path.
+//
+// The recreate is what makes the unmount real. Dropping the mount from the
+// compose file alone leaves the running container still bound to the host, so
+// the host copy would keep reaching into it.
+//
+// The host copy is left on disk. It is the only place the mounted content
+// exists, and the service no longer reads it, so deleting it is a separate
+// decision for the caller to make deliberately.
+func (m *Manager) UnmountPath(name, service, hostPath, containerPath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	deployment, err := m.discovery.GetDeployment(name)
+	if err != nil {
+		return err
+	}
+
+	content, filename, err := m.discovery.GetComposeFile(name)
+	if err != nil {
+		return err
+	}
+
+	hostPath = normalizeMountHostPath(hostPath)
+	volume, found := FindVolumeMount(content, service, hostPath, containerPath)
+	if !found {
+		return fmt.Errorf("%s is not mounted at %s in %s", hostPath, containerPath, service)
+	}
+
+	updated, err := RemoveVolumeFromService(content, service, volume)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(deployment.Path, filename), []byte(updated), 0644); err != nil {
+		return err
+	}
+
+	if out, err := m.executor.Up(deployment.Path, WithForceRecreate()); err != nil {
+		return fmt.Errorf("failed to recreate %s without the mount: %w (%s)", name, err, out)
+	}
+	return nil
+}
+
 // SeedMounts fills the named bind mounts of a deployment that has not started
 // yet with the content its images hold at those paths.
 //
