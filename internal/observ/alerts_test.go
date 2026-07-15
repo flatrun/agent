@@ -121,6 +121,40 @@ func TestAlertDoesNotReportRecoveryItNeverAnnounced(t *testing.T) {
 	}
 }
 
+func TestFiringListsARuleOncePerContainer(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	e, store, _ := engineAt(t, &now)
+	e.SetRules([]AlertRule{cpuRule(0)})
+
+	// Breaking, recovering and breaking again leaves a firing event behind each time. What
+	// is firing now is one rule on one container, however many bad days it has had.
+	record(store, 95, now)
+	e.evaluate()
+	now = now.Add(time.Minute)
+	record(store, 5, now)
+	e.evaluate()
+	now = now.Add(time.Minute)
+	record(store, 95, now)
+	e.evaluate()
+
+	firing := e.Firing()
+	if len(firing) != 1 {
+		t.Fatalf("got %d entries for one breached rule, want 1: %+v", len(firing), firing)
+	}
+	// The entry shown is the current breach, not the one from two minutes ago.
+	if !firing[0].At.Equal(now) {
+		t.Errorf("firing entry is from %s, want the latest breach at %s", firing[0].At, now)
+	}
+
+	// And once it recovers it is not firing at all.
+	now = now.Add(time.Minute)
+	record(store, 5, now)
+	e.evaluate()
+	if got := e.Firing(); len(got) != 0 {
+		t.Errorf("a recovered rule is still listed: %+v", got)
+	}
+}
+
 func TestAlertBelowThreshold(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	e, store, fired := engineAt(t, &now)

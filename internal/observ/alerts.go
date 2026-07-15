@@ -189,16 +189,30 @@ func (e *AlertEngine) Events() []AlertEvent {
 	return append(make([]AlertEvent, 0, len(e.events)), e.events...)
 }
 
-// Firing lists the rules currently breached, which is what a UI shows as "needs attention".
+// Firing lists what is breached now, one entry per rule and container.
+//
+// This is the state of things rather than a reading of the history: a rule that breaks,
+// recovers and breaks again leaves a firing event behind each time, and reporting every one
+// of them would list the same rule once per bad day it has had.
 func (e *AlertEngine) Firing() []AlertEvent {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	var out []AlertEvent
+	// The latest firing event carries the values to show, so the last one per key wins.
+	latest := map[string]AlertEvent{}
 	for _, ev := range e.events {
-		if ev.State == AlertFiring && e.states[stateKey(ev.RuleID, ev.Container)].state == AlertFiring {
-			out = append(out, ev)
+		if ev.State != AlertFiring {
+			continue
 		}
+		key := stateKey(ev.RuleID, ev.Container)
+		if e.states[key].state == AlertFiring {
+			latest[key] = ev
+		}
+	}
+
+	out := make([]AlertEvent, 0, len(latest))
+	for _, ev := range latest {
+		out = append(out, ev)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out
