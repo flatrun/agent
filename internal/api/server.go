@@ -569,6 +569,11 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/deployments/:name/permissions/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.chmodDeploymentFile)
 			protected.GET("/deployments/:name/files-info", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentFilesInfo)
 
+			// Container file endpoints: browse what a running service holds, and
+			// bring a path onto the host where the file endpoints above can edit it.
+			protected.GET("/deployments/:name/container-files/:service", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listContainerFiles)
+			protected.POST("/deployments/:name/container-files/:service/materialize", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.materializeContainerPath)
+
 			// System file endpoints (admin-only, scoped to SystemFilesRoot)
 			protected.GET("/system/files", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.listSystemFiles)
 			protected.GET("/system/files-info", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.getSystemFilesInfo)
