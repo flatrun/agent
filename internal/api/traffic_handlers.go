@@ -200,6 +200,35 @@ func (s *Server) cleanupTrafficLogs(c *gin.Context) {
 }
 
 // getDeploymentTrafficStats returns traffic stats for a specific deployment
+// getDeploymentRED returns how a deployment is serving over time: request rate, error rate
+// and latency, measured at the proxy every request already crosses.
+func (s *Server) getDeploymentRED(c *gin.Context) {
+	if s.trafficManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Traffic logging not enabled"})
+		return
+	}
+
+	name := c.Param("name")
+
+	since := time.Hour
+	if v := c.Query("since"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			since = d
+		}
+	}
+
+	points, err := s.trafficManager.GetREDSeries(name, since)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if points == nil {
+		points = []traffic.REDPoint{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deployment": name, "since": since.String(), "points": points})
+}
+
 func (s *Server) getDeploymentTrafficStats(c *gin.Context) {
 	if s.trafficManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Traffic logging not enabled"})

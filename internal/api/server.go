@@ -665,6 +665,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/traffic/unknown-domains", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getUnknownDomainStats)
 			protected.POST("/traffic/cleanup", s.authMiddleware.RequirePermission(auth.PermTrafficWrite), s.cleanupTrafficLogs)
 			protected.GET("/deployments/:name/traffic", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentTrafficStats)
+			protected.GET("/deployments/:name/serving", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentRED)
 
 			// Backup endpoints
 			protected.GET("/backups", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackups)
