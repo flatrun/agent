@@ -118,6 +118,62 @@ func TestHealthWatcherGivesUpAfterMaxAttempts(t *testing.T) {
 	}
 }
 
+func TestHealthWatcherReportsGivingUp(t *testing.T) {
+	states := []ContainerHealth{{Container: "web", Deployment: "d", Status: HealthUnhealthy}}
+	now := time.Unix(1_700_000_000, 0)
+	w := NewHealthWatcher(
+		func() ([]ContainerHealth, error) { return states, nil },
+		func(string) error { return nil },
+		time.Second, time.Minute,
+	)
+	w.now = func() time.Time { return now }
+
+	exhausted := make(chan ExhaustedEvent, 10)
+	w.OnExhausted(func(ev ExhaustedEvent) { exhausted <- ev })
+
+	// Keep checking well past the restart cap. The container never recovers, so the
+	// watcher stops acting and has to say so.
+	for i := 0; i < 8; i++ {
+		w.checkOnce()
+		now = now.Add(2 * time.Minute)
+	}
+
+	select {
+	case ev := <-exhausted:
+		if ev.Container != "web" || ev.Deployment != "d" {
+			t.Errorf("event = %+v, want web in d", ev)
+		}
+		if ev.Attempts != maxRestartAttempts {
+			t.Errorf("attempts = %d, want %d", ev.Attempts, maxRestartAttempts)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("auto-restart gave up without reporting it")
+	}
+
+	// Checks run every few seconds for as long as it stays unhealthy, so it must be
+	// reported once per streak, not once per check.
+	select {
+	case ev := <-exhausted:
+		t.Errorf("reported giving up more than once: %+v", ev)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Recovering and failing again is a new streak, and worth hearing about.
+	states[0].Status = HealthHealthy
+	w.checkOnce()
+	states[0].Status = HealthUnhealthy
+	for i := 0; i < 8; i++ {
+		now = now.Add(2 * time.Minute)
+		w.checkOnce()
+	}
+
+	select {
+	case <-exhausted:
+	case <-time.After(time.Second):
+		t.Error("a second streak that exhausts its restarts was not reported")
+	}
+}
+
 func TestHealthWatcherFiresOnRecover(t *testing.T) {
 	states := []ContainerHealth{{Container: "web", Deployment: "shop", Status: HealthUnhealthy}}
 	w := NewHealthWatcher(

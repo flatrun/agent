@@ -59,6 +59,15 @@ func RunPlugin() error {
 		)
 	})
 
+	watcher.OnExhausted(func(ev ExhaustedEvent) {
+		emitNotification(
+			fmt.Sprintf("Still unhealthy: %s", ev.Container),
+			fmt.Sprintf("Container %s in deployment %s is still unhealthy after %d restart attempts. "+
+				"Nothing further will be tried automatically, so it needs attention.",
+				ev.Container, ev.Deployment, ev.Attempts),
+		)
+	})
+
 	go collector.Run(ctx)
 	go watcher.Run(ctx)
 
