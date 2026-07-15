@@ -164,7 +164,23 @@ func (a *APIClient) EnsureImage(ctx context.Context, ref string) error {
 	return nil
 }
 
+// CopyPathToHost writes containerPath from an existing container out to
+// hostPath. The container does not need to be running, so a caller can stop it
+// first and be certain the copy cannot miss a later write.
+func (a *APIClient) CopyPathToHost(ctx context.Context, containerID, containerPath, hostPath string) error {
+	reader, stat, err := a.cli.CopyFromContainer(ctx, containerID, containerPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %s from the container: %w", containerPath, err)
+	}
+	defer reader.Close()
+
+	return extractSeedTar(reader, hostPath, stat.Mode.IsDir())
+}
+
 // SeedFromImage copies containerPath out of an image and writes it to hostPath.
+// It suits a deployment that has no container yet; for one that is already
+// running, copy from the container instead, since an image holds nothing an
+// entrypoint generated at runtime.
 //
 // The container is created but never started: copying reads the image's
 // filesystem, so nothing from the image is executed to seed a host path.
@@ -181,13 +197,7 @@ func (a *APIClient) SeedFromImage(ctx context.Context, ref, containerPath, hostP
 		_ = a.cli.ContainerRemove(ctx, created.ID, container.RemoveOptions{Force: true})
 	}()
 
-	reader, stat, err := a.cli.CopyFromContainer(ctx, created.ID, containerPath)
-	if err != nil {
-		return fmt.Errorf("failed to read %s from %s: %w", containerPath, ref, err)
-	}
-	defer reader.Close()
-
-	return extractSeedTar(reader, hostPath, stat.Mode.IsDir())
+	return a.CopyPathToHost(ctx, created.ID, containerPath, hostPath)
 }
 
 // ListLiveComposeContainers returns the containers of every compose project on

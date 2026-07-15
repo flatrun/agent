@@ -2,12 +2,113 @@ package docker
 
 import (
 	"archive/tar"
+	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// materializeTimeout bounds the copy out of a container. A path holding an
+// application's whole data directory can be large, so this is generous.
+const materializeTimeout = 10 * time.Minute
+
+// MaterializeMount copies a path out of a running service's container onto the
+// host, then mounts the host copy back at the same place and brings the service
+// up again.
+//
+// The order matters. A bind mount pushes the host's content into the container,
+// so mounting a path the container populated would hide it. Copying first means
+// the service resumes on exactly the content it was already running, now visible
+// and editable on the host. The service is stopped before the copy so no write
+// can land between the copy and the mount taking effect and be lost.
+func (m *Manager) MaterializeMount(name, service, containerPath, hostPath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.apiClient == nil {
+		return fmt.Errorf("docker api client not available")
+	}
+
+	deployment, err := m.discovery.GetDeployment(name)
+	if err != nil {
+		return err
+	}
+
+	hostPath = normalizeMountHostPath(hostPath)
+	fullPath := filepath.Join(deployment.Path, filepath.Clean(hostPath))
+
+	content, filename, err := m.discovery.GetComposeFile(name)
+	if err != nil {
+		return err
+	}
+
+	mount := hostPath + ":" + containerPath
+	if HasVolumeMount(content, service, mount) {
+		return fmt.Errorf("%s is already mounted at %s", containerPath, hostPath)
+	}
+
+	// Refuse rather than merge: the host copy has to be the container's content
+	// alone, or the service would resume on something it never had.
+	seedable, err := isSeedable(fullPath)
+	if err != nil {
+		return err
+	}
+	if !seedable {
+		return fmt.Errorf("%s already has content on the host", hostPath)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), materializeTimeout)
+	defer cancel()
+
+	project := m.projectFor(deployment, containerIndex{})
+	containerID, err := m.apiClient.FindContainer(ctx, project, service)
+	if err != nil {
+		return fmt.Errorf("service %s must be running to copy %s from it: %w", service, containerPath, err)
+	}
+
+	if out, err := m.executor.StopService(deployment.Path, service); err != nil {
+		return fmt.Errorf("failed to stop %s before copying: %w (%s)", service, err, out)
+	}
+
+	if err := m.apiClient.CopyPathToHost(ctx, containerID, containerPath, fullPath); err != nil {
+		// Leave the service as it was found rather than stopped on a failure
+		// that has changed nothing else.
+		if _, upErr := m.executor.Up(deployment.Path); upErr != nil {
+			log.Printf("mounts: failed to restart %s after a failed copy: %v", name, upErr)
+		}
+		return err
+	}
+
+	updated, err := AddVolumeToService(content, service, mount)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(deployment.Path, filename), []byte(updated), 0644); err != nil {
+		return err
+	}
+
+	if out, err := m.executor.Up(deployment.Path, WithForceRecreate()); err != nil {
+		return fmt.Errorf("failed to bring %s back up on the mounted copy: %w (%s)", name, err, out)
+	}
+	return nil
+}
+
+// normalizeMountHostPath keeps a host path in the relative form compose files
+// use, so a mount reads the same whether the caller passed "nginx" or "./nginx".
+func normalizeMountHostPath(hostPath string) string {
+	hostPath = strings.TrimSpace(hostPath)
+	if hostPath == "" {
+		return ""
+	}
+	if strings.HasPrefix(hostPath, "./") || strings.HasPrefix(hostPath, "../") || filepath.IsAbs(hostPath) {
+		return hostPath
+	}
+	return "./" + hostPath
+}
 
 // extractSeedTar writes the tar Docker produces for a copied container path to
 // destPath on the host.
