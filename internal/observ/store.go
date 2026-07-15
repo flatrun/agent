@@ -1,7 +1,7 @@
 // Package observ is the FlatRun observability engine: it collects per-container metrics,
-// keeps a bounded recent-history window for the native UI, and (elsewhere) exposes them over
-// OTLP so any OpenTelemetry-compatible tool can consume the same data. Metric names follow
-// the OpenTelemetry container semantic conventions.
+// keeps a bounded recent-history window for the native UI, and serves them for scraping in
+// Prometheus format so any external tool can consume the same data. Metric names follow the
+// OpenTelemetry container semantic conventions.
 package observ
 
 import (

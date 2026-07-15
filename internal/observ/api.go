@@ -28,6 +28,13 @@ func Handler(store *Store, health healthReporter, cfg configAccess, apply func(C
 	mux.HandleFunc("/metrics/latest", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, groupLatest(store.Latest()))
 	})
+	// Prometheus text exposition, so the same numbers the UI draws can be scraped by
+	// Grafana, SigLens, SigNoz or anything else that speaks it, without FlatRun holding
+	// the data hostage.
+	mux.HandleFunc("/metrics/prometheus", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", prometheusContentType)
+		_, _ = w.Write([]byte(renderPrometheus(store.Latest())))
+	})
 	mux.HandleFunc("/metrics/deployment", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
 		writeJSON(w, filterByDeployment(groupLatest(store.Latest()), name))
