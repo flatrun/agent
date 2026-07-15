@@ -40,8 +40,11 @@ func (m *Manager) MaterializeMount(name, service, containerPath, hostPath string
 		return err
 	}
 
+	fullPath, err := resolveMountHostPath(deployment.Path, hostPath)
+	if err != nil {
+		return err
+	}
 	hostPath = normalizeMountHostPath(hostPath)
-	fullPath := filepath.Join(deployment.Path, filepath.Clean(hostPath))
 
 	content, filename, err := m.discovery.GetComposeFile(name)
 	if err != nil {
@@ -203,7 +206,11 @@ func (m *Manager) SeedMounts(name string, hostPaths []string) error {
 				continue
 			}
 
-			fullPath := filepath.Join(deployment.Path, filepath.Clean(hostPath))
+			fullPath, err := resolveMountHostPath(deployment.Path, hostPath)
+			if err != nil {
+				return err
+			}
+
 			seedable, err := isSeedable(fullPath)
 			if err != nil {
 				return err
@@ -235,6 +242,30 @@ func splitBindMount(volume string) (hostPath, containerPath string) {
 		return "", ""
 	}
 	return parts[0], parts[1]
+}
+
+// resolveMountHostPath turns a mount's host side into an absolute path inside
+// the deployment, refusing anything that would land outside it.
+//
+// These paths arrive from API requests and compose files, so they are untrusted:
+// without this, "../../etc" would write a container's content anywhere the agent
+// can reach. An absolute path is refused for the same reason, even though compose
+// itself allows one.
+func resolveMountHostPath(deploymentPath, hostPath string) (string, error) {
+	normalized := normalizeMountHostPath(hostPath)
+	if normalized == "" {
+		return "", fmt.Errorf("a host path is required")
+	}
+	if filepath.IsAbs(normalized) {
+		return "", fmt.Errorf("host path %q must stay inside the deployment directory", hostPath)
+	}
+
+	full := filepath.Join(deploymentPath, normalized)
+	prefix := filepath.Clean(deploymentPath) + string(os.PathSeparator)
+	if !strings.HasPrefix(full, prefix) {
+		return "", fmt.Errorf("host path %q must stay inside the deployment directory", hostPath)
+	}
+	return full, nil
 }
 
 // normalizeMountHostPath keeps a host path in the relative form compose files
