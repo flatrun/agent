@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 )
 
@@ -136,6 +138,56 @@ func (a *APIClient) ListServiceContainers(ctx context.Context, project string) (
 	)
 
 	return a.cli.ContainerList(ctx, container.ListOptions{Filters: f, All: true})
+}
+
+// EnsureImage makes an image available locally, pulling it only when it is
+// absent so a seeded deploy of an already-pulled image costs nothing.
+func (a *APIClient) EnsureImage(ctx context.Context, ref string) error {
+	_, err := a.cli.ImageInspect(ctx, ref)
+	if err == nil {
+		return nil
+	}
+	if !cerrdefs.IsNotFound(err) {
+		return fmt.Errorf("failed to inspect image %s: %w", ref, err)
+	}
+
+	body, err := a.cli.ImagePull(ctx, ref, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to pull image %s: %w", ref, err)
+	}
+	defer body.Close()
+
+	// The pull only completes once its progress stream is drained.
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return fmt.Errorf("failed to pull image %s: %w", ref, err)
+	}
+	return nil
+}
+
+// SeedFromImage copies containerPath out of an image and writes it to hostPath.
+//
+// The container is created but never started: copying reads the image's
+// filesystem, so nothing from the image is executed to seed a host path.
+func (a *APIClient) SeedFromImage(ctx context.Context, ref, containerPath, hostPath string) error {
+	if err := a.EnsureImage(ctx, ref); err != nil {
+		return err
+	}
+
+	created, err := a.cli.ContainerCreate(ctx, &container.Config{Image: ref}, nil, nil, nil, "")
+	if err != nil {
+		return fmt.Errorf("failed to create a container to seed from %s: %w", ref, err)
+	}
+	defer func() {
+		_ = a.cli.ContainerRemove(ctx, created.ID, container.RemoveOptions{Force: true})
+	}()
+
+	reader, stat, err := a.cli.CopyFromContainer(ctx, created.ID, containerPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %s from %s: %w", containerPath, ref, err)
+	}
+	defer reader.Close()
+
+	return extractSeedTar(reader, hostPath, stat.Mode.IsDir())
 }
 
 // ListLiveComposeContainers returns the containers of every compose project on
