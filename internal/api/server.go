@@ -383,6 +383,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/system/terminal", s.systemTerminal)
 		api.GET("/system/terminal/interactive", s.systemTerminalInteractive)
 		api.GET("/deployments/:name/jobs/:jobId/stream", s.streamDeploymentJob)
+		api.GET("/deployments/:name/logs/stream", s.streamDeploymentLogs)
 
 		// Setup endpoints (public, gated by setup state)
 		setupGroup := api.Group("/setup")
@@ -2384,6 +2385,8 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 		})
 		return
 	}
+
+	logs = filterLogLines(logs, c.Query("filter"))
 
 	c.JSON(http.StatusOK, gin.H{
 		"name": name,
