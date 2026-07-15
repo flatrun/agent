@@ -88,6 +88,21 @@ func RunPlugin() error {
 		go db.Maintain(stop, cfg.retention())
 	}
 
+	// Push to an OTLP backend when one is configured. A failure here leaves the metrics
+	// collected, stored and scrapeable, so a backend being unreachable never costs FlatRun
+	// its own observability.
+	if endpoint := cfg.OTLPEndpoint; endpoint != "" || os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		if shutdown, err := StartOTLPExport(ctx, store, endpoint); err != nil {
+			log.Printf("observability: OTLP export unavailable, metrics remain scrapeable: %v", err)
+		} else {
+			defer func() {
+				flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = shutdown(flush)
+			}()
+		}
+	}
+
 	go collector.Run(ctx)
 	go watcher.Run(ctx)
 

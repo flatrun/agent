@@ -18,6 +18,11 @@ type Config struct {
 	// RetentionDays bounds how far back stored history goes. Samples older than the recent
 	// window are averaged into one point a minute, so a long retention is cheap.
 	RetentionDays int `yaml:"retention_days" json:"retention_days"`
+	// OTLPEndpoint is where metrics are pushed, if anywhere. An http or https URL speaks
+	// OTLP/HTTP; a bare host:port speaks OTLP/gRPC. Left empty, the standard
+	// OTEL_EXPORTER_OTLP_ENDPOINT environment variable is honoured instead, and with
+	// neither set nothing is pushed and the metrics are still there to scrape.
+	OTLPEndpoint string `yaml:"otlp_endpoint,omitempty" json:"otlp_endpoint,omitempty"`
 }
 
 // DefaultConfig returns the built-in defaults.
