@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // materializeTimeout bounds the copy out of a container. A path holding an
@@ -95,6 +97,100 @@ func (m *Manager) MaterializeMount(name, service, containerPath, hostPath string
 		return fmt.Errorf("failed to bring %s back up on the mounted copy: %w (%s)", name, err, out)
 	}
 	return nil
+}
+
+// SeedMounts fills the named bind mounts of a deployment that has not started
+// yet with the content its images hold at those paths.
+//
+// It suits a deployment with no container to copy from. An image holds nothing
+// an entrypoint generates on first start, so an already-running deployment is
+// better served by copying the container itself.
+//
+// Only mounts named by the caller are seeded, and only where the host side is
+// still missing or empty, so seeding never overwrites content a user has.
+func (m *Manager) SeedMounts(name string, hostPaths []string) error {
+	if len(hostPaths) == 0 {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.apiClient == nil {
+		return fmt.Errorf("docker api client not available")
+	}
+
+	deployment, err := m.discovery.GetDeployment(name)
+	if err != nil {
+		return err
+	}
+
+	content, _, err := m.discovery.GetComposeFile(name)
+	if err != nil {
+		return err
+	}
+
+	var compose struct {
+		Services map[string]struct {
+			Image   string   `yaml:"image"`
+			Volumes []string `yaml:"volumes"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return fmt.Errorf("failed to read the compose file: %w", err)
+	}
+
+	wanted := make(map[string]bool, len(hostPaths))
+	for _, p := range hostPaths {
+		wanted[normalizeMountHostPath(p)] = true
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), materializeTimeout)
+	defer cancel()
+
+	var failures []string
+	for _, service := range compose.Services {
+		if service.Image == "" {
+			continue
+		}
+		for _, volume := range service.Volumes {
+			hostPath, containerPath := splitBindMount(volume)
+			if hostPath == "" || containerPath == "" || !wanted[normalizeMountHostPath(hostPath)] {
+				continue
+			}
+
+			fullPath := filepath.Join(deployment.Path, filepath.Clean(hostPath))
+			seedable, err := isSeedable(fullPath)
+			if err != nil {
+				return err
+			}
+			if !seedable {
+				continue
+			}
+
+			if err := m.apiClient.SeedFromImage(ctx, service.Image, containerPath, fullPath); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", hostPath, err))
+			}
+		}
+	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("failed to seed %s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+// splitBindMount splits a compose volume into its host and container sides,
+// ignoring named volumes, which Docker already populates from the image.
+func splitBindMount(volume string) (hostPath, containerPath string) {
+	parts := strings.Split(volume, ":")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	if !strings.HasPrefix(parts[0], ".") && !strings.HasPrefix(parts[0], "/") {
+		return "", ""
+	}
+	return parts[0], parts[1]
 }
 
 // normalizeMountHostPath keeps a host path in the relative form compose files

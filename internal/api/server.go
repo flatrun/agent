@@ -979,6 +979,10 @@ func (s *Server) createDeployment(c *gin.Context) {
 			RegistryURL      string `json:"registry_url,omitempty"`
 		} `json:"registry_credential,omitempty"`
 		ServiceCredentials map[string]string `json:"service_credentials,omitempty"`
+		// SeedMounts names the bind mounts, by host path, to fill from the
+		// image when the host side is empty. A template's own seed mounts are
+		// added to these.
+		SeedMounts []string `json:"seed_mounts,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1114,6 +1118,15 @@ func (s *Server) createDeployment(c *gin.Context) {
 		s.processTemplateFiles(req.Name, req.TemplateID, allEnvVars)
 		s.processTemplateEnv(req.Name, req.TemplateID, req.ComposeContent, allEnvVars)
 		s.applyTemplateMountOwnership(req.Name, req.TemplateID)
+	}
+
+	// Seeding reads the images, so it runs before the deployment is started and
+	// only ever fills a host path that is still empty. A mount that cannot be
+	// seeded is reported without failing the deployment, which exists either way.
+	if seedMounts := append(req.SeedMounts, s.templateSeedMounts(req.TemplateID)...); len(seedMounts) > 0 {
+		if err := s.manager.SeedMounts(req.Name, seedMounts); err != nil {
+			log.Printf("Warning: failed to seed mounts for %s: %v", req.Name, err)
+		}
 	}
 
 	if req.Metadata != nil {
@@ -3242,6 +3255,9 @@ type TemplateMount struct {
 	Required       bool     `json:"required" yaml:"required"`
 	User           string   `json:"user,omitempty" yaml:"user,omitempty"`
 	Subdirectories []string `json:"subdirectories,omitempty" yaml:"subdirectories,omitempty"`
+	// Seed fills the mount from the image's own content when the host side is
+	// empty, for images that do not populate their mounts themselves.
+	Seed bool `json:"seed,omitempty" yaml:"seed,omitempty"`
 }
 
 // templateMountHostPath resolves where a template mount lives in the
@@ -4554,17 +4570,46 @@ func mainServiceImage(content string) string {
 	return ""
 }
 
-func (s *Server) applyTemplateMountOwnership(deploymentName, templateID string) {
-	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
-	metadataPath := filepath.Join(templatesDir, templateID, "metadata.yml")
+// loadTemplateMetadata reads an installed template's metadata.
+func (s *Server) loadTemplateMetadata(templateID string) (*TemplateMetadata, error) {
+	metadataPath := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates", templateID, "metadata.yml")
 
-	metadataContent, err := os.ReadFile(metadataPath)
+	content, err := os.ReadFile(metadataPath)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	var metadata TemplateMetadata
-	if err := yaml.Unmarshal(metadataContent, &metadata); err != nil {
+	if err := yaml.Unmarshal(content, &metadata); err != nil {
+		return nil, err
+	}
+	return &metadata, nil
+}
+
+// templateSeedMounts returns the host paths of a template's mounts that ask to
+// be filled from the image.
+func (s *Server) templateSeedMounts(templateID string) []string {
+	if templateID == "" {
+		return nil
+	}
+
+	metadata, err := s.loadTemplateMetadata(templateID)
+	if err != nil {
+		return nil
+	}
+
+	var hostPaths []string
+	for _, m := range metadata.Mounts {
+		if m.Seed {
+			hostPaths = append(hostPaths, templateMountHostPath(m))
+		}
+	}
+	return hostPaths
+}
+
+func (s *Server) applyTemplateMountOwnership(deploymentName, templateID string) {
+	metadata, err := s.loadTemplateMetadata(templateID)
+	if err != nil {
 		return
 	}
 
