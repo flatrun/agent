@@ -346,6 +346,44 @@ func AddVolumeToService(content string, serviceName string, volumeMount string) 
 }
 
 // RemoveVolumeFromService removes a volume mount from a specific service in the compose file
+// FindVolumeMount returns a service's volume entry whose host and container
+// sides match, ignoring trailing options such as ":ro". Removal matches the
+// entry's exact text, so a caller that knows only what a mount connects can use
+// this to address it.
+func FindVolumeMount(content, serviceName, hostPath, containerPath string) (string, bool) {
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		return "", false
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+
+	service, ok := services[serviceName].(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+
+	volumes, ok := service["volumes"].([]interface{})
+	if !ok {
+		return "", false
+	}
+
+	for _, vol := range volumes {
+		volStr, ok := vol.(string)
+		if !ok {
+			continue
+		}
+		host, container := splitBindMount(volStr)
+		if host == hostPath && container == containerPath {
+			return volStr, true
+		}
+	}
+	return "", false
+}
+
 func RemoveVolumeFromService(content string, serviceName string, volumeMount string) (string, error) {
 	if !HasVolumeMount(content, serviceName, volumeMount) {
 		return content, nil
