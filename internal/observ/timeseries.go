@@ -22,7 +22,14 @@ type TimeSeriesResponse struct {
 
 // buildTimeSeries gathers every series for a deployment (all if empty) since a time and
 // aligns each metric's containers onto a shared timestamp axis.
-func buildTimeSeries(store *Store, deployment string, since time.Time) map[string]MetricSeries {
+// sampleSource is where a chart's data comes from: the in-memory window, or the stored
+// history when the range reaches past it. Store satisfies this as it stands.
+type sampleSource interface {
+	Series() []SeriesKey
+	Range(key SeriesKey, since time.Time) []Sample
+}
+
+func buildTimeSeries(store sampleSource, deployment string, since time.Time) map[string]MetricSeries {
 	grouped := map[string]map[string][]Sample{}
 	for _, key := range store.Series() {
 		if deployment != "" && key.Deployment != deployment {

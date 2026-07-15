@@ -15,11 +15,21 @@ type Config struct {
 	SampleIntervalSeconds  int  `yaml:"sample_interval_seconds" json:"sample_interval_seconds"`
 	AutoRestart            bool `yaml:"auto_restart" json:"auto_restart"`
 	RestartCooldownSeconds int  `yaml:"restart_cooldown_seconds" json:"restart_cooldown_seconds"`
+	// RetentionDays bounds how far back stored history goes. Samples older than the recent
+	// window are averaged into one point a minute, so a long retention is cheap.
+	RetentionDays int `yaml:"retention_days" json:"retention_days"`
 }
 
 // DefaultConfig returns the built-in defaults.
 func DefaultConfig() Config {
-	return Config{SampleIntervalSeconds: 5, AutoRestart: true, RestartCooldownSeconds: 120}
+	return Config{SampleIntervalSeconds: 5, AutoRestart: true, RestartCooldownSeconds: 120, RetentionDays: 7}
+}
+
+func (c Config) retention() time.Duration {
+	if c.RetentionDays <= 0 {
+		return rollupWindow
+	}
+	return time.Duration(c.RetentionDays) * 24 * time.Hour
 }
 
 func (c Config) sampleInterval() time.Duration {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -68,6 +69,25 @@ func RunPlugin() error {
 		)
 	})
 
+	// History outlives the in-memory window and the process. If it cannot be opened the
+	// engine still runs on the live window alone, since losing history is better than
+	// losing the metrics and the self-healing with it.
+	var history *MetricsDB
+	if db, err := OpenMetricsDB(dataDir); err != nil {
+		log.Printf("observability: metrics history unavailable, keeping the live window only: %v", err)
+	} else {
+		defer db.Close()
+		history = db
+		store.OnRecord(func(points []LatestPoint) {
+			if err := db.WriteBatch(points); err != nil {
+				log.Printf("observability: failed to store metrics: %v", err)
+			}
+		})
+		stop := make(chan struct{})
+		defer close(stop)
+		go db.Maintain(stop, cfg.retention())
+	}
+
 	go collector.Run(ctx)
 	go watcher.Run(ctx)
 
@@ -75,7 +95,7 @@ func RunPlugin() error {
 		watcher.SetEnabled(c.AutoRestart)
 	}
 
-	return pluginsdk.Serve(PluginInfo, Handler(store, watcher, cfgStore, applyConfig), buildTools(store, watcher, cfgStore)...)
+	return pluginsdk.Serve(PluginInfo, Handler(store, history, watcher, cfgStore, applyConfig), buildTools(store, watcher, cfgStore)...)
 }
 
 // emitNotification asks the core to deliver a notification to the operator's configured

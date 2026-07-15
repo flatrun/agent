@@ -23,7 +23,17 @@ type configAccess interface {
 // mounted by the plugin and reached through the agent's plugin proxy. health, cfg, and apply
 // may be nil. apply is invoked with the saved config so a live watcher/collector picks up a
 // change without a restart.
-func Handler(store *Store, health healthReporter, cfg configAccess, apply func(Config)) http.Handler {
+func Handler(store *Store, history *MetricsDB, health healthReporter, cfg configAccess, apply func(Config)) http.Handler {
+	// Charts read stored history when there is any: it holds everything the live window
+	// holds and more, so one source answers every range. Without it, ranges are capped at
+	// whatever memory still has.
+	chartsFrom := func(since time.Time) sampleSource {
+		if history == nil {
+			return store
+		}
+		return storedSamples{db: history, since: since, now: time.Now}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics/latest", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, groupLatest(store.Latest()))
@@ -47,7 +57,7 @@ func Handler(store *Store, health healthReporter, cfg configAccess, apply func(C
 				since = time.Now().Add(-d)
 			}
 		}
-		writeJSON(w, TimeSeriesResponse{Deployment: deployment, Metrics: buildTimeSeries(store, deployment, since)})
+		writeJSON(w, TimeSeriesResponse{Deployment: deployment, Metrics: buildTimeSeries(chartsFrom(since), deployment, since)})
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if health == nil {

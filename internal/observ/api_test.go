@@ -16,7 +16,7 @@ func TestHandlerLatestGroupsByDeployment(t *testing.T) {
 	store.Record(ContainerSample{Deployment: "shop", Container: "shop-db", CPUPercent: 4, MemoryUsage: 500}, now)
 
 	rec := httptest.NewRecorder()
-	Handler(store, nil, nil, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics/latest", nil))
+	Handler(store, nil, nil, nil, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics/latest", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
@@ -45,7 +45,7 @@ func TestHandlerLatestGroupsByDeployment(t *testing.T) {
 func TestHandlerConfigRoundTrip(t *testing.T) {
 	cfg := NewConfigStore(t.TempDir())
 	var applied *Config
-	h := Handler(NewStore(10), nil, cfg, func(c Config) { applied = &c })
+	h := Handler(NewStore(10), nil, nil, cfg, func(c Config) { applied = &c })
 
 	body := `{"sample_interval_seconds":10,"auto_restart":false,"restart_cooldown_seconds":300}`
 	rec := httptest.NewRecorder()
@@ -78,7 +78,7 @@ func TestHandlerMetricsDeploymentFilters(t *testing.T) {
 	store.Record(ContainerSample{Deployment: "blog", Container: "blog-web", CPUPercent: 9}, now)
 
 	rec := httptest.NewRecorder()
-	Handler(store, nil, nil, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics/deployment?name=shop", nil))
+	Handler(store, nil, nil, nil, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics/deployment?name=shop", nil))
 	var got []deploymentMetrics
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestHandlerSeriesReturnsSamples(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/metrics/series?deployment=d&container=c&metric="+MetricCPUUsage+"&since=5m", nil)
-	Handler(store, nil, nil, nil).ServeHTTP(rec, req)
+	Handler(store, nil, nil, nil, nil).ServeHTTP(rec, req)
 
 	var got struct {
 		Samples []Sample `json:"samples"`
