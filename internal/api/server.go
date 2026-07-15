@@ -32,6 +32,7 @@ import (
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/internal/credentials"
+	"github.com/flatrun/agent/internal/dashboards"
 	"github.com/flatrun/agent/internal/database"
 	"github.com/flatrun/agent/internal/dns"
 	"github.com/flatrun/agent/internal/docker"
@@ -87,6 +88,7 @@ type Server struct {
 	credentialsManager *credentials.Manager
 	securityManager    *security.Manager
 	trafficManager     *traffic.Manager
+	dashboards         *dashboards.Store
 	backupManager      *backup.Manager
 	schedulerManager   *scheduler.Manager
 	auditManager       *audit.Manager
@@ -325,6 +327,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		credentialsManager: credentialsManager,
 		securityManager:    securityManager,
 		trafficManager:     trafficManager,
+		dashboards:         dashboards.NewStore(cfg.DeploymentsPath),
 		backupManager:      backupManager,
 		auditManager:       auditManager,
 		auditMiddleware:    auditMiddleware,
@@ -660,6 +663,12 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/security/events", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentSecurityEvents)
 
 			// Traffic endpoints
+			// Dashboards an operator builds over their own telemetry.
+			protected.GET("/dashboards", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listDashboards)
+			protected.GET("/dashboards/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.getDashboard)
+			protected.POST("/dashboards", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.saveDashboard)
+			protected.DELETE("/dashboards/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.deleteDashboard)
+
 			protected.GET("/traffic/logs", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getTrafficLogs)
 			protected.GET("/traffic/stats", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getTrafficStats)
 			protected.GET("/traffic/unknown-domains", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getUnknownDomainStats)
