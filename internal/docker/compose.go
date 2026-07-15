@@ -10,12 +10,19 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 )
 
 type ComposeExecutor struct {
 	basePath string
+
+	// composeCmd caches the detected compose command. Detection spawns a
+	// process, and every compose invocation needs the result, so it is resolved
+	// once rather than per call. Only a successful detection is cached, so an
+	// agent that starts before Docker is available still recovers.
+	composeCmd atomic.Value
 }
 
 func NewComposeExecutor(basePath string) *ComposeExecutor {
@@ -467,6 +474,17 @@ func runComposeStreaming(cmd *exec.Cmd, sink func(string)) (string, error) {
 }
 
 func (c *ComposeExecutor) findComposeCommand() string {
+	if cmd, ok := c.composeCmd.Load().(string); ok && cmd != "" {
+		return cmd
+	}
+	cmd := detectComposeCommand()
+	if cmd != "" {
+		c.composeCmd.Store(cmd)
+	}
+	return cmd
+}
+
+func detectComposeCommand() string {
 	if _, err := exec.LookPath("docker"); err == nil {
 		cmd := exec.Command("docker", "compose", "version")
 		if err := cmd.Run(); err == nil {

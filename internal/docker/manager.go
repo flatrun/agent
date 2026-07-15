@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/flatrun/agent/pkg/models"
 )
 
@@ -22,6 +24,131 @@ type composeContainer struct {
 	Health  string `json:"Health"`
 }
 
+// statusReadTimeout bounds the Engine API call backing a status read, so a
+// wedged daemon degrades a list request rather than hanging it.
+const statusReadTimeout = 10 * time.Second
+
+// containerIndex groups a host's live compose containers by project name.
+type containerIndex map[string][]container.Summary
+
+// indexContainersByProject reads every live compose container on the host in one
+// Engine API call and groups it by project. Deriving status from this index
+// keeps a list request at a single Docker round-trip regardless of how many
+// deployments exist, where the compose CLI costs several processes each.
+func (m *Manager) indexContainersByProject(ctx context.Context) (containerIndex, error) {
+	if m.apiClient == nil {
+		return nil, fmt.Errorf("docker api client unavailable")
+	}
+
+	summaries, err := m.apiClient.ListLiveComposeContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	index := make(containerIndex)
+	for _, summary := range summaries {
+		if project := summary.Labels[composeProjectLabel]; project != "" {
+			index[project] = append(index[project], summary)
+		}
+	}
+	return index, nil
+}
+
+// projectFor resolves a deployment's compose project name without shelling out.
+// It mirrors ComposeExecutor.getProjectName, except that the fallback probe for
+// an existing project reads the already-fetched index instead of running
+// `docker compose ps` once per candidate.
+func (m *Manager) projectFor(deployment *models.Deployment, index containerIndex) string {
+	if name := m.executor.readComposeProjectName(deployment.Path); name != "" {
+		return name
+	}
+
+	dirName := filepath.Base(strings.TrimSuffix(deployment.Path, "/"))
+	for _, candidate := range []string{dirName, "flatrun-" + dirName} {
+		if len(index[candidate]) > 0 {
+			return candidate
+		}
+	}
+	return dirName
+}
+
+// statusFromContainers collapses a project's live containers into a deployment
+// status. Stopped containers are absent from the index by construction, so a
+// project with none is stopped. A paused container counts as running because it
+// is still up, which is what the compose CLI path reported.
+func statusFromContainers(containers []container.Summary) string {
+	if len(containers) == 0 {
+		return string(models.StatusStopped)
+	}
+
+	for _, c := range containers {
+		if c.State == container.StateRunning || c.State == container.StatePaused {
+			return string(models.StatusRunning)
+		}
+	}
+
+	// Containers exist but none are up, e.g. restarting or being removed.
+	return string(models.StatusUnknown)
+}
+
+// healthFromStatus extracts a service's health from the Engine API's human
+// readable status ("Up 2 hours (healthy)"), which is where the daemon reports
+// it; `compose ps --format json` exposes it as a discrete field instead. Only
+// the daemon's three health renderings count: other parenthesised suffixes,
+// such as "(Paused)", are not health.
+func healthFromStatus(status string) string {
+	switch {
+	case strings.Contains(status, "(healthy)"):
+		return "healthy"
+	case strings.Contains(status, "(unhealthy)"):
+		return "unhealthy"
+	case strings.Contains(status, "(health: starting)"):
+		return "starting"
+	}
+	return ""
+}
+
+// shortContainerID trims a container ID to the 12-character form Docker itself
+// abbreviates to, which is what the compose CLI reports and therefore what
+// clients already receive.
+func shortContainerID(id string) string {
+	const shortIDLength = 12
+	if len(id) <= shortIDLength {
+		return id
+	}
+	return id[:shortIDLength]
+}
+
+// applyContainers fills a deployment's status and per-service container details
+// from its project's containers.
+func applyContainers(deployment *models.Deployment, containers []container.Summary) {
+	deployment.Status = statusFromContainers(containers)
+
+	byService := make(map[string]container.Summary, len(containers))
+	for _, c := range containers {
+		service := c.Labels[composeServiceLabel]
+		if service == "" {
+			continue
+		}
+		if _, seen := byService[service]; !seen {
+			byService[service] = c
+		}
+	}
+
+	for i := range deployment.Services {
+		svc := &deployment.Services[i]
+		c, ok := byService[svc.Name]
+		if !ok {
+			continue
+		}
+		svc.ContainerID = shortContainerID(c.ID)
+		svc.Status = c.State
+		if health := healthFromStatus(c.Status); health != "" {
+			svc.Health = health
+		}
+	}
+}
+
 type Manager struct {
 	discovery      *Discovery
 	executor       *ComposeExecutor
@@ -29,6 +156,28 @@ type Manager struct {
 	basePath       string
 	cleanupTimeout time.Duration
 	mu             sync.RWMutex
+
+	// apiDegraded tracks whether status reads are currently falling back to the
+	// compose CLI, so the fallback is reported once per outage instead of once
+	// per request.
+	apiDegraded atomic.Bool
+}
+
+// noteStatusFallback reports that status reads have dropped to the compose CLI.
+// The deployment list is polled continuously, so logging every failed request
+// would bury the logs at the moment they are worth reading; only the change of
+// state is logged.
+func (m *Manager) noteStatusFallback(err error) {
+	if m.apiDegraded.CompareAndSwap(false, true) {
+		log.Printf("status: docker api unavailable, falling back to the compose cli: %v", err)
+	}
+}
+
+// noteStatusRecovered reports that status reads are served by the engine again.
+func (m *Manager) noteStatusRecovered() {
+	if m.apiDegraded.CompareAndSwap(true, false) {
+		log.Printf("status: docker api reachable again")
+	}
 }
 
 func (m *Manager) SetCleanupTimeout(d time.Duration) {
@@ -52,6 +201,11 @@ func NewManager(deploymentsPath string) *Manager {
 	}
 	if api, err := NewAPIClient(); err == nil {
 		m.apiClient = api
+	} else {
+		// The client is built once and never rebuilt, so this degrades every
+		// later status read to the compose CLI. Say so rather than leaving the
+		// agent quietly slow with no way to tell why.
+		log.Printf("docker api client unavailable, deployment status will use the slower compose cli: %v", err)
 	}
 	return m
 }
@@ -69,9 +223,23 @@ func (m *Manager) ListDeployments() ([]models.Deployment, error) {
 		return nil, err
 	}
 
-	// Each status check shells out to docker compose, so a serial loop makes
-	// list latency grow with the deployment count. Fetch them concurrently with
-	// a bounded worker pool; each goroutine writes only its own index.
+	ctx, cancel := context.WithTimeout(context.Background(), statusReadTimeout)
+	defer cancel()
+
+	index, err := m.indexContainersByProject(ctx)
+	if err == nil {
+		m.noteStatusRecovered()
+		for i := range deployments {
+			deployments[i].Status = statusFromContainers(index[m.projectFor(&deployments[i], index)])
+		}
+		return deployments, nil
+	}
+	m.noteStatusFallback(err)
+
+	// Fallback only. Each status check shells out to docker compose, so a serial
+	// loop makes list latency grow with the deployment count. Fetch them
+	// concurrently with a bounded worker pool; each goroutine writes only its
+	// own index.
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 12)
 	for i := range deployments {
@@ -89,6 +257,16 @@ func (m *Manager) ListDeployments() ([]models.Deployment, error) {
 	return deployments, nil
 }
 
+// FindDeployments returns deployments built from their on-disk metadata alone,
+// leaving Status unread. Callers that only need names, paths or metadata should
+// prefer it over ListDeployments so they never pay for a Docker round-trip.
+func (m *Manager) FindDeployments() ([]models.Deployment, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.discovery.FindDeployments()
+}
+
 func (m *Manager) GetDeployment(name string) (*models.Deployment, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -97,6 +275,17 @@ func (m *Manager) GetDeployment(name string) (*models.Deployment, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), statusReadTimeout)
+	defer cancel()
+
+	index, err := m.indexContainersByProject(ctx)
+	if err == nil {
+		m.noteStatusRecovered()
+		applyContainers(deployment, index[m.projectFor(deployment, index)])
+		return deployment, nil
+	}
+	m.noteStatusFallback(err)
 
 	status, _ := m.executor.GetStatus(deployment.Path)
 	deployment.Status = status

@@ -4612,7 +4612,7 @@ func (s *Server) annotateCertificatesWithDeployment(certs []models.Certificate) 
 		return
 	}
 
-	deployments, err := s.manager.ListDeployments()
+	deployments, err := s.manager.FindDeployments()
 	if err != nil {
 		log.Printf("warning: failed to list deployments for cert annotation: %v", err)
 		return
@@ -5020,7 +5020,7 @@ func (s *Server) syncAllProxies(c *gin.Context) {
 		return
 	}
 
-	deployments, err := s.manager.ListDeployments()
+	deployments, err := s.manager.FindDeployments()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

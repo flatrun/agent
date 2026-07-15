@@ -153,7 +153,7 @@ func (s *Server) getUnknownDomainStats(c *gin.Context) {
 		}
 	}
 
-	deployments, err := s.manager.ListDeployments()
+	deployments, err := s.manager.FindDeployments()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
