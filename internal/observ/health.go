@@ -46,6 +46,15 @@ const maxRestartAttempts = 3
 // life of the process cannot grow the slice without limit; only the most recent are kept.
 const maxRecoveryEvents = 500
 
+// ExhaustedEvent reports that auto-restart has stopped trying on a container. Restarting it
+// did not fix it, so it stays unhealthy until someone intervenes.
+type ExhaustedEvent struct {
+	Container  string    `json:"container"`
+	Deployment string    `json:"deployment"`
+	Attempts   int       `json:"attempts"`
+	At         time.Time `json:"at"`
+}
+
 // HealthWatcher restarts running-but-unhealthy containers. It only acts on running containers
 // (so it never revives a deployment the user intentionally stopped), only on deployments
 // FlatRun manages, and only up to a bounded number of attempts per unhealthy streak.
@@ -56,14 +65,26 @@ type HealthWatcher struct {
 	cooldown time.Duration
 	now      func() time.Time
 
-	mu        sync.Mutex
-	enabled   bool
-	managed   func(deployment string) bool
-	onRecover func(RecoveryEvent)
-	health    map[string]ContainerHealth
-	lastHeal  map[string]time.Time
-	attempts  map[string]int
+	mu          sync.Mutex
+	enabled     bool
+	managed     func(deployment string) bool
+	onRecover   func(RecoveryEvent)
+	onExhausted func(ExhaustedEvent)
+	health      map[string]ContainerHealth
+	lastHeal    map[string]time.Time
+	attempts    map[string]int
+	// exhausted marks containers already reported as beyond auto-restart, so a container
+	// that stays unhealthy is reported once per streak rather than on every check.
+	exhausted map[string]bool
 	events    []RecoveryEvent
+}
+
+// OnExhausted registers a callback fired once when auto-restart gives up on a container,
+// which is the point the watcher stops acting and an operator has to.
+func (w *HealthWatcher) OnExhausted(fn func(ExhaustedEvent)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onExhausted = fn
 }
 
 // SetManaged restricts auto-restart to deployments for which the predicate returns true.
@@ -97,15 +118,16 @@ func NewHealthWatcher(source HealthSource, restart RestartFunc, interval, cooldo
 		cooldown = 2 * time.Minute
 	}
 	return &HealthWatcher{
-		source:   source,
-		restart:  restart,
-		interval: interval,
-		cooldown: cooldown,
-		now:      time.Now,
-		enabled:  true,
-		health:   map[string]ContainerHealth{},
-		lastHeal: map[string]time.Time{},
-		attempts: map[string]int{},
+		source:    source,
+		restart:   restart,
+		interval:  interval,
+		cooldown:  cooldown,
+		now:       time.Now,
+		enabled:   true,
+		health:    map[string]ContainerHealth{},
+		lastHeal:  map[string]time.Time{},
+		attempts:  map[string]int{},
+		exhausted: map[string]bool{},
 	}
 }
 
@@ -124,6 +146,7 @@ func (w *HealthWatcher) checkOnce() {
 		if s.Status == HealthHealthy {
 			delete(w.attempts, s.Container)
 			delete(w.lastHeal, s.Container)
+			delete(w.exhausted, s.Container)
 		}
 		if !w.enabled || s.Status != HealthUnhealthy {
 			continue
@@ -133,8 +156,20 @@ func (w *HealthWatcher) checkOnce() {
 			continue
 		}
 		// Stop once repeated restarts have not fixed it; the container stays flagged
-		// unhealthy for the operator instead of being restarted forever.
+		// unhealthy for the operator instead of being restarted forever. Say so once:
+		// from here nothing else will act on it, and silence would read as health.
 		if w.attempts[s.Container] >= maxRestartAttempts {
+			if !w.exhausted[s.Container] {
+				w.exhausted[s.Container] = true
+				if w.onExhausted != nil {
+					go w.onExhausted(ExhaustedEvent{
+						Container:  s.Container,
+						Deployment: s.Deployment,
+						Attempts:   w.attempts[s.Container],
+						At:         w.now(),
+					})
+				}
+			}
 			continue
 		}
 		last, seen := w.lastHeal[s.Container]

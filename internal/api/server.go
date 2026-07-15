@@ -32,6 +32,7 @@ import (
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/internal/credentials"
+	"github.com/flatrun/agent/internal/dashboards"
 	"github.com/flatrun/agent/internal/database"
 	"github.com/flatrun/agent/internal/dns"
 	"github.com/flatrun/agent/internal/docker"
@@ -87,6 +88,7 @@ type Server struct {
 	credentialsManager *credentials.Manager
 	securityManager    *security.Manager
 	trafficManager     *traffic.Manager
+	dashboards         *dashboards.Store
 	backupManager      *backup.Manager
 	schedulerManager   *scheduler.Manager
 	auditManager       *audit.Manager
@@ -325,6 +327,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		credentialsManager: credentialsManager,
 		securityManager:    securityManager,
 		trafficManager:     trafficManager,
+		dashboards:         dashboards.NewStore(cfg.DeploymentsPath),
 		backupManager:      backupManager,
 		auditManager:       auditManager,
 		auditMiddleware:    auditMiddleware,
@@ -380,6 +383,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/system/terminal", s.systemTerminal)
 		api.GET("/system/terminal/interactive", s.systemTerminalInteractive)
 		api.GET("/deployments/:name/jobs/:jobId/stream", s.streamDeploymentJob)
+		api.GET("/deployments/:name/logs/stream", s.streamDeploymentLogs)
 
 		// Setup endpoints (public, gated by setup state)
 		setupGroup := api.Group("/setup")
@@ -660,11 +664,18 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/security/events", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentSecurityEvents)
 
 			// Traffic endpoints
+			// Dashboards an operator builds over their own telemetry.
+			protected.GET("/dashboards", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listDashboards)
+			protected.GET("/dashboards/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.getDashboard)
+			protected.POST("/dashboards", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.saveDashboard)
+			protected.DELETE("/dashboards/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.deleteDashboard)
+
 			protected.GET("/traffic/logs", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getTrafficLogs)
 			protected.GET("/traffic/stats", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getTrafficStats)
 			protected.GET("/traffic/unknown-domains", s.authMiddleware.RequirePermission(auth.PermTrafficRead), s.getUnknownDomainStats)
 			protected.POST("/traffic/cleanup", s.authMiddleware.RequirePermission(auth.PermTrafficWrite), s.cleanupTrafficLogs)
 			protected.GET("/deployments/:name/traffic", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentTrafficStats)
+			protected.GET("/deployments/:name/serving", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentRED)
 
 			// Backup endpoints
 			protected.GET("/backups", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackups)
@@ -2374,6 +2385,8 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 		})
 		return
 	}
+
+	logs = filterLogLines(logs, c.Query("filter"))
 
 	c.JSON(http.StatusOK, gin.H{
 		"name": name,

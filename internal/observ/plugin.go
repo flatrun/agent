@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -59,6 +60,61 @@ func RunPlugin() error {
 		)
 	})
 
+	watcher.OnExhausted(func(ev ExhaustedEvent) {
+		emitNotification(
+			fmt.Sprintf("Still unhealthy: %s", ev.Container),
+			fmt.Sprintf("Container %s in deployment %s is still unhealthy after %d restart attempts. "+
+				"Nothing further will be tried automatically, so it needs attention.",
+				ev.Container, ev.Deployment, ev.Attempts),
+		)
+	})
+
+	// History outlives the in-memory window and the process. If it cannot be opened the
+	// engine still runs on the live window alone, since losing history is better than
+	// losing the metrics and the self-healing with it.
+	var history *MetricsDB
+	if db, err := OpenMetricsDB(dataDir); err != nil {
+		log.Printf("observability: metrics history unavailable, keeping the live window only: %v", err)
+	} else {
+		defer db.Close()
+		history = db
+		store.OnRecord(func(points []LatestPoint) {
+			if err := db.WriteBatch(points); err != nil {
+				log.Printf("observability: failed to store metrics: %v", err)
+			}
+		})
+		stop := make(chan struct{})
+		defer close(stop)
+		go db.Maintain(stop, cfg.retention())
+	}
+
+	// Push to an OTLP backend when one is configured. A failure here leaves the metrics
+	// collected, stored and scrapeable, so a backend being unreachable never costs FlatRun
+	// its own observability.
+	if endpoint := cfg.OTLPEndpoint; endpoint != "" || os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		if shutdown, err := StartOTLPExport(ctx, store, endpoint); err != nil {
+			log.Printf("observability: OTLP export unavailable, metrics remain scrapeable: %v", err)
+		} else {
+			defer func() {
+				flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = shutdown(flush)
+			}()
+		}
+	}
+
+	// Threshold rules over the same metrics the views draw. They are what turns collected
+	// numbers into something that reaches an operator who is not looking at the screen.
+	alertStore := NewAlertStore(dataDir)
+	engine := NewAlertEngine(store)
+	engine.SetRules(alertStore.Load())
+	engine.OnAlert(func(ev AlertEvent) {
+		emitNotification(ev.RuleName, ev.Message())
+	})
+	alertStop := make(chan struct{})
+	defer close(alertStop)
+	go engine.Run(alertStop, cfg.sampleInterval()*3)
+
 	go collector.Run(ctx)
 	go watcher.Run(ctx)
 
@@ -66,7 +122,8 @@ func RunPlugin() error {
 		watcher.SetEnabled(c.AutoRestart)
 	}
 
-	return pluginsdk.Serve(PluginInfo, Handler(store, watcher, cfgStore, applyConfig), buildTools(store, watcher, cfgStore)...)
+	handler := HandlerWithAlerts(store, history, watcher, cfgStore, applyConfig, alerts{engine: engine, store: alertStore})
+	return pluginsdk.Serve(PluginInfo, handler, buildTools(store, watcher, cfgStore)...)
 }
 
 // emitNotification asks the core to deliver a notification to the operator's configured

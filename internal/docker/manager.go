@@ -257,6 +257,16 @@ func (m *Manager) ListDeployments() ([]models.Deployment, error) {
 	return deployments, nil
 }
 
+// StreamDeploymentLogs follows a deployment's logs until ctx is done, handing each line to
+// sink as the container writes it.
+//
+// The deployment path is passed in rather than looked up again: the caller has already read
+// the deployment, and following holds for as long as someone is watching, which is far too
+// long to hold the manager's lock.
+func (m *Manager) StreamDeploymentLogs(ctx context.Context, name, path string, tail int, sink func(string)) error {
+	return m.executor.StreamLogs(ctx, path, tail, sink)
+}
+
 // FindDeployments returns deployments built from their on-disk metadata alone,
 // leaving Status unread. Callers that only need names, paths or metadata should
 // prefer it over ListDeployments so they never pay for a Docker round-trip.

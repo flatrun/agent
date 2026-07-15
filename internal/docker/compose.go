@@ -3,6 +3,7 @@ package docker
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -372,15 +373,17 @@ func (c *ComposeExecutor) detectExistingProject(dirName string) string {
 	return ""
 }
 
-func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, args ...string) (string, error) {
+// composeCommand builds the compose invocation for a deployment. ctx is what lets a caller
+// stop a command that would otherwise run until it decides to finish, such as following logs.
+func (c *ComposeExecutor) composeCommand(ctx context.Context, deploymentPath string, args ...string) (*exec.Cmd, error) {
 	composeCmd := c.findComposeCommand()
 	if composeCmd == "" {
-		return "", fmt.Errorf("docker compose command not found")
+		return nil, fmt.Errorf("docker compose command not found")
 	}
 
 	composePath := c.findComposeFile(deploymentPath)
 	if composePath == "" {
-		return "", fmt.Errorf("no compose file found in %s", deploymentPath)
+		return nil, fmt.Errorf("no compose file found in %s", deploymentPath)
 	}
 
 	projectName := c.getProjectName(deploymentPath)
@@ -394,17 +397,24 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, ar
 	}
 
 	var cmd *exec.Cmd
-
 	if composeCmd == "docker-compose" {
 		fullArgs := append(baseArgs, args...)
-		cmd = exec.Command(composeCmd, fullArgs...)
+		cmd = exec.CommandContext(ctx, composeCmd, fullArgs...)
 	} else {
 		fullArgs := append([]string{"compose"}, baseArgs...)
 		fullArgs = append(fullArgs, args...)
-		cmd = exec.Command("docker", fullArgs...)
+		cmd = exec.CommandContext(ctx, "docker", fullArgs...)
 	}
 
 	cmd.Dir = deploymentPath
+	return cmd, nil
+}
+
+func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, args ...string) (string, error) {
+	cmd, err := c.composeCommand(context.Background(), deploymentPath, args...)
+	if err != nil {
+		return "", err
+	}
 
 	var ro runOpts
 	for _, opt := range opts {
@@ -422,12 +432,53 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, ar
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
-	if err != nil {
+	if err := cmd.Run(); err != nil {
 		return stderr.String(), fmt.Errorf("%w: %s", err, stderr.String())
 	}
 
 	return stdout.String(), nil
+}
+
+// StreamLogs follows a deployment's logs, handing each line to sink as it arrives, until ctx
+// is cancelled or the deployment stops producing.
+//
+// Reading logs as a `--tail` blob means a viewer only knows what was true when it asked, so
+// a user watching a container start reloads to see the next line. Following gives them the
+// line when the container writes it, and cancelling ctx stops the process rather than
+// leaving it attached for the life of the agent.
+func (c *ComposeExecutor) StreamLogs(ctx context.Context, deploymentPath string, tail int, sink func(string)) error {
+	if tail <= 0 {
+		tail = 100
+	}
+
+	cmd, err := c.composeCommand(ctx, deploymentPath, "logs", "--follow", "--no-color", "--tail", fmt.Sprintf("%d", tail))
+	if err != nil {
+		return err
+	}
+
+	// Compose writes container output to stdout and its own notices to stderr; a viewer
+	// wants both, in the order they happened.
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = cmd.Stdout
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	scanner := bufio.NewScanner(pipe)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		sink(scanner.Text())
+	}
+
+	// A cancelled follow is the caller closing the viewer, not a failure.
+	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		return err
+	}
+	return nil
 }
 
 func runComposeStreaming(cmd *exec.Cmd, sink func(string)) (string, error) {

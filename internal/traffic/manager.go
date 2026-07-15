@@ -75,6 +75,33 @@ func (m *Manager) GetStats(deploymentName string, since time.Duration) (*Traffic
 	return m.db.GetStats(deploymentName, since)
 }
 
+// GetREDSeries returns a deployment's request rate, error rate and latency over time. The
+// bucket is chosen from the window so a chart gets a useful number of points rather than one
+// per second over a day.
+func (m *Manager) GetREDSeries(deploymentName string, since time.Duration) ([]REDPoint, error) {
+	if since <= 0 {
+		since = time.Hour
+	}
+	return m.db.REDSeries(deploymentName, time.Now().Add(-since), bucketFor(since))
+}
+
+// bucketFor keeps a series around a hundred points whatever the window, which is about what a
+// chart can draw before points stop being distinguishable.
+func bucketFor(window time.Duration) time.Duration {
+	switch {
+	case window <= 15*time.Minute:
+		return 10 * time.Second
+	case window <= time.Hour:
+		return time.Minute
+	case window <= 6*time.Hour:
+		return 5 * time.Minute
+	case window <= 24*time.Hour:
+		return 15 * time.Minute
+	default:
+		return time.Hour
+	}
+}
+
 func (m *Manager) GetUnknownDomainStats(knownDeployments []string, since time.Duration) (*UnknownDomainStats, error) {
 	if since <= 0 {
 		since = 24 * time.Hour

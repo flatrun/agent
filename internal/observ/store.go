@@ -1,7 +1,8 @@
 // Package observ is the FlatRun observability engine: it collects per-container metrics,
-// keeps a bounded recent-history window for the native UI, and (elsewhere) exposes them over
-// OTLP so any OpenTelemetry-compatible tool can consume the same data. Metric names follow
-// the OpenTelemetry container semantic conventions.
+// keeps a bounded recent-history window for the native UI, stores the longer history, and
+// hands the same data to anything else two ways: pushed over OTLP to a configured backend,
+// or scraped in Prometheus format. Metric names follow the OpenTelemetry container semantic
+// conventions.
 package observ
 
 import (
@@ -54,6 +55,7 @@ type Store struct {
 	retention time.Duration
 	series    map[SeriesKey]*ring
 	lastSweep time.Time
+	sink      func([]LatestPoint)
 }
 
 func NewStore(capacityPerSeries int) *Store {
@@ -99,8 +101,8 @@ func (s *Store) add(key SeriesKey, sample Sample) {
 // Record expands a container reading into its semconv series and stores each at t.
 func (s *Store) Record(c ContainerSample, t time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	base := SeriesKey{Deployment: c.Deployment, Container: c.Container}
+	written := make([]LatestPoint, 0, 5)
 	for metric, value := range map[string]float64{
 		MetricCPUUsage:    c.CPUPercent,
 		MetricMemoryUsage: float64(c.MemoryUsage),
@@ -110,9 +112,27 @@ func (s *Store) Record(c ContainerSample, t time.Time) {
 	} {
 		key := base
 		key.Metric = metric
-		s.add(key, Sample{Time: t, Value: value})
+		sample := Sample{Time: t, Value: value}
+		s.add(key, sample)
+		written = append(written, LatestPoint{SeriesKey: key, Sample: sample})
 	}
 	s.sweepStale(t)
+	sink := s.sink
+	s.mu.Unlock()
+
+	// Outside the lock: persisting writes to disk, and readers of the live window should
+	// not wait on it.
+	if sink != nil {
+		sink(written)
+	}
+}
+
+// OnRecord registers a sink handed exactly the samples each record wrote, so they can be
+// persisted without re-reading the store and duplicating series that did not change.
+func (s *Store) OnRecord(fn func([]LatestPoint)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sink = fn
 }
 
 // Range returns the samples for a series recorded at or after since, oldest first.

@@ -18,7 +18,7 @@ FlatRun inverts that. Every app is a directory: a `docker-compose.yml` and its d
 - **Nothing hidden**: configs, data, certs, and env live in the filesystem, not in volumes you have to `docker inspect` to see.
 - **Standard tools**: plain Docker Compose, operated with the `docker`, `docker compose`, and `git` you already know. Nothing proprietary to learn, and FlatRun stays optional.
 - **Copy = migrate**: a deployment is a directory. `tar` it, move it, `docker compose up -d`. Backups are file backups.
-- **Built-in observability**: per-container metrics are collected as time series using OpenTelemetry container semantic conventions and exported over OTLP, so any OpenTelemetry-compatible tool can read the same data. No separate collector to run.
+- **Built-in observability**: per-container metrics are collected as time series using OpenTelemetry container semantic conventions, exported over OTLP to any backend you point them at, and served for scraping in Prometheus format, so Grafana, SigLens, SigNoz or anything else reads exactly what the built-in UI draws. No separate collector to run, and no lock-in on your own numbers.
 - **S3-compatible backups**: schedule deployment backups to any S3-compatible object store. Set your own endpoint and bucket; it is not tied to AWS.
 - **AI-native operation**: a built-in assistant reads a deployment's logs and config and answers in plain operator terms: diagnose a failure, suggest improvements, harden security, or explain what a stack is doing. It is off until you configure a provider, and secrets are redacted before anything is sent.
 - **Automatable end to end**: the same actions are available from the UI, the `flatrun` CLI, and a GitHub Action, so a deploy is a dashboard click or a CI step.

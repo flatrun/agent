@@ -23,10 +23,53 @@ type configAccess interface {
 // mounted by the plugin and reached through the agent's plugin proxy. health, cfg, and apply
 // may be nil. apply is invoked with the saved config so a live watcher/collector picks up a
 // change without a restart.
-func Handler(store *Store, health healthReporter, cfg configAccess, apply func(Config)) http.Handler {
+// alertAccess is the slice of the alert engine and its store the API needs; nil-safe so the
+// handler can be built without alerting.
+type alertAccess interface {
+	Rules() []AlertRule
+	SetRules([]AlertRule)
+	Events() []AlertEvent
+	Firing() []AlertEvent
+}
+
+// alertPersistence saves the rules across restarts.
+type alertPersistence interface {
+	Load() []AlertRule
+	Save([]AlertRule) error
+}
+
+// alerts is optional wiring for the rule endpoints.
+type alerts struct {
+	engine alertAccess
+	store  alertPersistence
+}
+
+func Handler(store *Store, history *MetricsDB, health healthReporter, cfg configAccess, apply func(Config)) http.Handler {
+	return HandlerWithAlerts(store, history, health, cfg, apply, alerts{})
+}
+
+// HandlerWithAlerts is Handler plus the rule endpoints.
+func HandlerWithAlerts(store *Store, history *MetricsDB, health healthReporter, cfg configAccess, apply func(Config), al alerts) http.Handler {
+	// Charts read stored history when there is any: it holds everything the live window
+	// holds and more, so one source answers every range. Without it, ranges are capped at
+	// whatever memory still has.
+	chartsFrom := func(since time.Time) sampleSource {
+		if history == nil {
+			return store
+		}
+		return storedSamples{db: history, since: since, now: time.Now}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics/latest", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, groupLatest(store.Latest()))
+	})
+	// Prometheus text exposition, so the same numbers the UI draws can be scraped by
+	// Grafana, SigLens, SigNoz or anything else that speaks it, without FlatRun holding
+	// the data hostage.
+	mux.HandleFunc("/metrics/prometheus", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", prometheusContentType)
+		_, _ = w.Write([]byte(renderPrometheus(store.Latest())))
 	})
 	mux.HandleFunc("/metrics/deployment", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
@@ -40,7 +83,7 @@ func Handler(store *Store, health healthReporter, cfg configAccess, apply func(C
 				since = time.Now().Add(-d)
 			}
 		}
-		writeJSON(w, TimeSeriesResponse{Deployment: deployment, Metrics: buildTimeSeries(store, deployment, since)})
+		writeJSON(w, TimeSeriesResponse{Deployment: deployment, Metrics: buildTimeSeries(chartsFrom(since), deployment, since)})
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if health == nil {
@@ -69,6 +112,41 @@ func Handler(store *Store, health healthReporter, cfg configAccess, apply func(C
 			}
 		}
 		writeJSON(w, cfg.Load())
+	})
+	mux.HandleFunc("/alerts/rules", func(w http.ResponseWriter, r *http.Request) {
+		if al.engine == nil || al.store == nil {
+			writeJSON(w, []AlertRule{})
+			return
+		}
+		if r.Method == http.MethodPut {
+			var incoming []AlertRule
+			if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+				http.Error(w, "invalid rules", http.StatusBadRequest)
+				return
+			}
+			// Saving assigns ids and rejects a rule that cannot be evaluated, so a bad
+			// rule never reaches the engine.
+			if err := al.store.Save(incoming); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			al.engine.SetRules(al.store.Load())
+		}
+		writeJSON(w, al.engine.Rules())
+	})
+	mux.HandleFunc("/alerts/firing", func(w http.ResponseWriter, _ *http.Request) {
+		if al.engine == nil {
+			writeJSON(w, []AlertEvent{})
+			return
+		}
+		writeJSON(w, al.engine.Firing())
+	})
+	mux.HandleFunc("/alerts/events", func(w http.ResponseWriter, _ *http.Request) {
+		if al.engine == nil {
+			writeJSON(w, []AlertEvent{})
+			return
+		}
+		writeJSON(w, al.engine.Events())
 	})
 	mux.HandleFunc("/health/events", func(w http.ResponseWriter, _ *http.Request) {
 		if health == nil {
