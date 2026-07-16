@@ -26,6 +26,13 @@ type Manager struct {
 	containerWebrootPath string
 	staplingChecker      func(sslDomain string) bool
 	mu                   sync.RWMutex
+
+	// keepalive capability is probed once against the running nginx image and
+	// cached. Guarded by its own mutex, not mu, because it is read while mu is
+	// already held during config generation.
+	keepaliveMu     sync.Mutex
+	keepaliveProbed bool
+	keepaliveOK     bool
 }
 
 // mapsConfigFile is a managed http-context snippet (not a vhost) included
@@ -33,10 +40,14 @@ type Manager struct {
 // Connection header is only sent when a client requests a WebSocket upgrade.
 const mapsConfigFile = "00-flatrun-maps.conf"
 
+// A non-upgrade request clears the upstream Connection header rather than
+// closing it, so nginx can reuse a pooled keepalive connection to the
+// container. Closing here would defeat upstream keepalive on every ordinary
+// request. WebSocket requests still get "upgrade".
 const mapsConfigContent = `# Managed by FlatRun. Do not edit.
 map $http_upgrade $connection_upgrade {
     default upgrade;
-    ''      close;
+    ''      "";
 }
 `
 
@@ -401,6 +412,80 @@ func (m *Manager) waitForContainerReady(maxRetries int) error {
 	return fmt.Errorf("container not ready after %d attempts", maxRetries)
 }
 
+// keepaliveProbeConfig exercises exactly the upstream shape the generator
+// emits: a resolver inside the upstream block plus a resolvable server and a
+// keepalive pool. The `resolve` parameter is open source only since nginx
+// 1.27.3, so an older image rejects this with [emerg].
+const keepaliveProbeConfig = `events {} http { upstream flatrun_keepalive_probe { zone flatrun_keepalive_probe 32k; resolver 127.0.0.11 valid=30s ipv6=off; server 127.0.0.1:80 resolve; keepalive 8; } server { listen 65535; location / { proxy_pass http://flatrun_keepalive_probe; } } }`
+
+// keepaliveSupported reports whether the running nginx can pool upstream
+// connections with resolver-based rediscovery. It validates the probe config
+// inside the proxy container once and caches a conclusive result. An
+// inconclusive probe (container down, exec failed) is not cached, so the next
+// caller retries; the safe answer meanwhile is false, which keeps the existing
+// per-request-resolution behaviour.
+func (m *Manager) keepaliveSupported() bool {
+	m.keepaliveMu.Lock()
+	defer m.keepaliveMu.Unlock()
+
+	if m.keepaliveProbed {
+		return m.keepaliveOK
+	}
+	if m.config.ContainerName == "" {
+		return false
+	}
+	if err := m.waitForContainerReady(1); err != nil {
+		return false
+	}
+
+	script := "printf '%s' '" + keepaliveProbeConfig + "' > /tmp/flatrun-keepalive-probe.conf && nginx -t -c /tmp/flatrun-keepalive-probe.conf"
+	out, _ := exec.Command("docker", "exec", m.config.ContainerName, "sh", "-c", script).CombinedOutput()
+	outStr := string(out)
+
+	if isNginxConfigValid(outStr) {
+		m.keepaliveProbed = true
+		m.keepaliveOK = true
+		return true
+	}
+	// A syntax rejection is a definitive "not supported"; anything else (no
+	// nginx binary, container gone) is inconclusive and left uncached.
+	if strings.Contains(outStr, "[emerg]") {
+		m.keepaliveProbed = true
+		m.keepaliveOK = false
+	}
+	return false
+}
+
+// upstreamNameFor builds a unique, readable nginx upstream name for a
+// service:port target, reserving it in used so distinct targets never collide.
+func upstreamNameFor(service string, port int, used map[string]bool) string {
+	base := fmt.Sprintf("flatrun_%s_%d", sanitizeUpstreamName(service), port)
+	name := base
+	for i := 2; used[name]; i++ {
+		name = fmt.Sprintf("%s_%d", base, i)
+	}
+	used[name] = true
+	return name
+}
+
+// sanitizeUpstreamName keeps the characters a Docker container name can contain
+// (letters, digits, dot, hyphen, underscore), all of which are valid in an nginx
+// upstream name. Since container names are unique per host, the derived upstream
+// name is unique across deployments too, so blocks in separate vhost files never
+// collide. Any other character is replaced, and the caller's used-set suffix
+// guards the residual case where that replacement would collapse two names.
+func sanitizeUpstreamName(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
+}
+
 func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) {
 	net := deployment.Metadata.Networking
 	ssl := deployment.Metadata.SSL
@@ -491,6 +576,10 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 }
 
 func (m *Manager) generateMultiDomainConfig(deployment *models.Deployment) (string, error) {
+	return m.renderMultiDomainConfig(deployment, m.keepaliveSupported())
+}
+
+func (m *Manager) renderMultiDomainConfig(deployment *models.Deployment, keepalive bool) (string, error) {
 	domains := deployment.Metadata.GetDomains()
 	if len(domains) == 0 {
 		return "", fmt.Errorf("no domains configured")
@@ -526,6 +615,8 @@ func (m *Manager) generateMultiDomainConfig(deployment *models.Deployment) (stri
 
 	servers := m.groupDomainsByHost(domains, deployment.Name, m.deploymentComposeContent(deployment))
 
+	upstreams := assignUpstreams(servers, keepalive)
+
 	data := multiRouteTemplateData{
 		DeploymentName:       deployment.Name,
 		ContainerWebrootPath: m.containerWebrootPath,
@@ -533,6 +624,7 @@ func (m *Manager) generateMultiDomainConfig(deployment *models.Deployment) (stri
 		BlockedIPs:           blockedIPs,
 		RateLimits:           rateLimits,
 		Servers:              servers,
+		Upstreams:            upstreams,
 	}
 
 	allSSL := true
@@ -565,6 +657,41 @@ func (m *Manager) generateMultiDomainConfig(deployment *models.Deployment) (stri
 	}
 
 	return buf.String(), nil
+}
+
+// assignUpstreams sets each location's $upstream value and returns the upstream
+// blocks the templates should emit. With keepalive off it preserves the literal
+// service:port target and returns no blocks, so the generated config is
+// unchanged. With keepalive on it points each location at a shared, deduplicated
+// upstream block so requests to the same service:port reuse one connection pool.
+func assignUpstreams(servers []serverData, keepalive bool) []upstreamData {
+	if !keepalive {
+		for si := range servers {
+			for li := range servers[si].Locations {
+				loc := &servers[si].Locations[li]
+				loc.Upstream = fmt.Sprintf("%s:%d", loc.Service, loc.ContainerPort)
+			}
+		}
+		return nil
+	}
+
+	used := make(map[string]bool)
+	byTarget := make(map[string]string)
+	var upstreams []upstreamData
+	for si := range servers {
+		for li := range servers[si].Locations {
+			loc := &servers[si].Locations[li]
+			target := fmt.Sprintf("%s:%d", loc.Service, loc.ContainerPort)
+			name, ok := byTarget[target]
+			if !ok {
+				name = upstreamNameFor(loc.Service, loc.ContainerPort, used)
+				byTarget[target] = name
+				upstreams = append(upstreams, upstreamData{Name: name, Target: target})
+			}
+			loc.Upstream = name
+		}
+	}
+	return upstreams
 }
 
 // deploymentComposeContent reads the deployment's compose file so the upstream for an
@@ -745,6 +872,16 @@ type multiRouteTemplateData struct {
 	BlockedIPs           []string
 	RateLimits           []rateLimitData
 	Servers              []serverData
+	// Upstreams is non-empty only when the running nginx supports pooled,
+	// resolver-backed upstreams; the templates emit an upstream block per entry
+	// and each location's $upstream points at one by name. When empty, each
+	// location keeps its literal service:port target and per-request resolution.
+	Upstreams []upstreamData
+}
+
+type upstreamData struct {
+	Name   string
+	Target string
 }
 
 type serverData struct {
@@ -765,6 +902,9 @@ type locationData struct {
 	StripPrefix   bool
 	OriginalPath  string
 	ProxyTimeout  int
+	// Upstream is the value assigned to $upstream: an upstream block name when
+	// keepalive is supported, otherwise the literal service:port.
+	Upstream string
 }
 
 type rateLimitData struct {
@@ -918,7 +1058,24 @@ server {
 }
 `
 
-const multiRouteHTTPTemplate = `{{- range .Servers}}
+// upstreamBlocks renders one pooled upstream per distinct service:port. It is
+// empty output when .Upstreams is empty (keepalive unsupported), leaving the
+// rest of the vhost byte-for-byte as before. `server ... resolve` keeps the
+// container-restart rediscovery that the variable proxy_pass path provided,
+// while keepalive reuses connections across ordinary requests.
+const upstreamBlocks = `{{- range .Upstreams}}
+upstream {{.Name}} {
+    zone {{.Name}} 64k;
+    resolver 127.0.0.11 valid=30s ipv6=off;
+    server {{.Target}} resolve;
+    keepalive 16;
+    keepalive_timeout 60s;
+    keepalive_requests 1000;
+}
+{{end -}}
+`
+
+const multiRouteHTTPTemplate = upstreamBlocks + `{{- range .Servers}}
 server {
     listen 80;
     server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
@@ -930,7 +1087,7 @@ server {
 {{- range .Locations}}
 
     location {{.Path}} {
-        set $upstream {{.Service}}:{{.ContainerPort}};
+        set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
 {{- end}}
@@ -978,7 +1135,7 @@ server {
 }
 {{end}}`
 
-const multiRouteSSLTemplate = `{{- range .Servers}}
+const multiRouteSSLTemplate = upstreamBlocks + `{{- range .Servers}}
 server {
     listen 80;
     server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
@@ -1021,7 +1178,7 @@ server {
 {{- range .Locations}}
 
     location {{.Path}} {
-        set $upstream {{.Service}}:{{.ContainerPort}};
+        set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
 {{- end}}
@@ -1063,7 +1220,7 @@ server {
 }
 {{end}}`
 
-const multiRouteMixedTemplate = `{{- range .Servers}}
+const multiRouteMixedTemplate = upstreamBlocks + `{{- range .Servers}}
 {{- if .HasSSL}}
 server {
     listen 80;
@@ -1107,7 +1264,7 @@ server {
 {{- range .Locations}}
 
     location {{.Path}} {
-        set $upstream {{.Service}}:{{.ContainerPort}};
+        set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
 {{- end}}
@@ -1159,7 +1316,7 @@ server {
 {{- range .Locations}}
 
     location {{.Path}} {
-        set $upstream {{.Service}}:{{.ContainerPort}};
+        set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
 {{- end}}

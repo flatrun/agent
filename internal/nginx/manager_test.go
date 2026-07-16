@@ -2259,3 +2259,137 @@ services:
 		t.Errorf("upstream must not use the bare service name 'api', got:\n%s", config)
 	}
 }
+
+func newManagerWithDeployment(t *testing.T, domains []models.DomainConfig, compose string) (*Manager, *models.Deployment) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(compose), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+	return m, &models.Deployment{
+		Name:     "tenant-a",
+		Path:     dir,
+		Metadata: &models.ServiceMetadata{Domains: domains},
+	}
+}
+
+// With keepalive supported, each distinct service:port becomes one pooled
+// upstream block that the locations reference by name, and the same target
+// shared by several servers is emitted once.
+func TestRenderMultiDomain_KeepaliveUpstreams(t *testing.T) {
+	compose := "name: tenant-a\nservices:\n  web:\n    container_name: tenant-a-web\n  api:\n    container_name: tenant-a-api\n"
+	m, deployment := newManagerWithDeployment(t, []models.DomainConfig{
+		{ID: "d1", Service: "web", ContainerPort: 80, Domain: "app.example.com"},
+		{ID: "d2", Service: "api", ContainerPort: 8080, Domain: "app.example.com", PathPrefix: "/api"},
+		{ID: "d3", Service: "web", ContainerPort: 80, Domain: "www.example.com"},
+	}, compose)
+
+	config, err := m.renderMultiDomainConfig(deployment, true)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"upstream flatrun_tenant-a-web_80 {",
+		"upstream flatrun_tenant-a-api_8080 {",
+		"server tenant-a-web:80 resolve;",
+		"server tenant-a-api:8080 resolve;",
+		"keepalive 16;",
+		"set $upstream flatrun_tenant-a-web_80;",
+		"set $upstream flatrun_tenant-a-api_8080;",
+	} {
+		if !strings.Contains(config, want) {
+			t.Errorf("keepalive config missing %q, got:\n%s", want, config)
+		}
+	}
+	if n := strings.Count(config, "upstream flatrun_tenant-a-web_80 {"); n != 1 {
+		t.Errorf("shared target should yield exactly one upstream block, got %d", n)
+	}
+	// The literal target must not remain in a location; it lives only in the block.
+	if strings.Contains(config, "set $upstream tenant-a-web:80;") {
+		t.Errorf("location should reference the upstream block, not the literal target, got:\n%s", config)
+	}
+}
+
+// With keepalive unsupported, the config keeps per-request resolution: no
+// upstream blocks, and locations carry the literal service:port.
+func TestRenderMultiDomain_NoKeepaliveKeepsLiteralTarget(t *testing.T) {
+	compose := "name: tenant-a\nservices:\n  web:\n    container_name: tenant-a-web\n"
+	m, deployment := newManagerWithDeployment(t, []models.DomainConfig{
+		{ID: "d1", Service: "web", ContainerPort: 80, Domain: "app.example.com"},
+	}, compose)
+
+	config, err := m.renderMultiDomainConfig(deployment, false)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if strings.Contains(config, "upstream flatrun_") {
+		t.Errorf("no upstream block expected without keepalive, got:\n%s", config)
+	}
+	if !strings.Contains(config, "set $upstream tenant-a-web:80;") {
+		t.Errorf("expected literal target without keepalive, got:\n%s", config)
+	}
+}
+
+func TestAssignUpstreams(t *testing.T) {
+	servers := []serverData{
+		{Locations: []locationData{
+			{Service: "app", ContainerPort: 80},
+			{Service: "api", ContainerPort: 8080},
+		}},
+		{Locations: []locationData{
+			{Service: "app", ContainerPort: 80},
+		}},
+	}
+	ups := assignUpstreams(servers, true)
+	if len(ups) != 2 {
+		t.Fatalf("expected 2 deduped upstreams, got %d: %+v", len(ups), ups)
+	}
+	if servers[0].Locations[0].Upstream != servers[1].Locations[0].Upstream {
+		t.Errorf("same target must share an upstream name, got %q and %q",
+			servers[0].Locations[0].Upstream, servers[1].Locations[0].Upstream)
+	}
+	if servers[0].Locations[0].Upstream == servers[0].Locations[1].Upstream {
+		t.Errorf("different targets must get distinct upstream names")
+	}
+
+	off := []serverData{{Locations: []locationData{{Service: "app", ContainerPort: 80}}}}
+	if ups := assignUpstreams(off, false); ups != nil {
+		t.Errorf("expected no upstream blocks when keepalive is off, got %+v", ups)
+	}
+	if off[0].Locations[0].Upstream != "app:80" {
+		t.Errorf("keepalive-off target must be literal service:port, got %q", off[0].Locations[0].Upstream)
+	}
+}
+
+// Dot, hyphen and underscore are valid in both container and upstream names, so
+// they survive and keep distinct container names distinct.
+func TestUpstreamNameForPreservesContainerChars(t *testing.T) {
+	used := make(map[string]bool)
+	if got := upstreamNameFor("tenant-a.web", 80, used); got != "flatrun_tenant-a.web_80" {
+		t.Errorf("container-name characters should be preserved, got %q", got)
+	}
+}
+
+// Two targets whose names sanitize to the same base must still get distinct
+// upstream names so nginx does not see a duplicate block.
+func TestUpstreamNameForCollision(t *testing.T) {
+	used := make(map[string]bool)
+	a := upstreamNameFor("web@1", 80, used)
+	b := upstreamNameFor("web#1", 80, used)
+	if a == b {
+		t.Fatalf("colliding sanitized names must diverge, both were %q", a)
+	}
+}
+
+// A non-upgrade request must clear the upstream Connection header, not close
+// it, or upstream keepalive is defeated on every ordinary request.
+func TestMapsConfigClearsConnectionForKeepalive(t *testing.T) {
+	if strings.Contains(mapsConfigContent, "close") {
+		t.Errorf("connection map must not close on non-upgrade requests:\n%s", mapsConfigContent)
+	}
+	if !strings.Contains(mapsConfigContent, `''      "";`) {
+		t.Errorf("connection map must clear the header on non-upgrade requests:\n%s", mapsConfigContent)
+	}
+}
