@@ -92,9 +92,9 @@ func (m *Manager) IngestEvent(event *IngestEvent, autoBlockDuration time.Duratio
 	result.Event = secEvent
 
 	// Check if we should auto-block the IP
-	if m.detector.ShouldAutoBlock(event.SourceIP, secEvent) {
+	if blocked, reason := m.detector.ShouldAutoBlock(event.SourceIP, secEvent); blocked {
 		expiresAt := time.Now().Add(autoBlockDuration)
-		_, err := m.db.BlockIP(event.SourceIP, "Auto-blocked due to suspicious activity", &expiresAt, true)
+		_, err := m.db.BlockIP(event.SourceIP, "Auto-blocked: "+reason, &expiresAt, true)
 		if err == nil {
 			result.AutoBlocked = true
 			result.BlockedIP = event.SourceIP

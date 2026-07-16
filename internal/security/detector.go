@@ -2,6 +2,8 @@ package security
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -165,49 +167,75 @@ func (d *Detector) trackRequest(ip string, event *IngestEvent) bool {
 	return window.count > d.rateThreshold
 }
 
-// ShouldAutoBlock determines if an IP should be automatically blocked
-func (d *Detector) ShouldAutoBlock(ip string, event *SecurityEvent) bool {
-	// Always auto-block scanners
+// ShouldAutoBlock reports whether an IP should be auto-blocked, and when it
+// should, a human-readable reason naming the rule and the counts or paths that
+// tripped it, so a blocked IP carries a trace of what led to the block.
+func (d *Detector) ShouldAutoBlock(ip string, event *SecurityEvent) (bool, string) {
 	if event.EventType == EventTypeScannerDetected {
-		return true
+		return true, event.Message
 	}
-
-	// Auto-block high request rates
 	if event.EventType == EventTypeHighRequestRate {
-		return true
+		return true, event.Message
 	}
 
+	// The window fields (including pathHits) are mutated by trackRequest under
+	// the lock, so read them while holding it rather than through a bare pointer.
 	d.mu.RLock()
+	defer d.mu.RUnlock()
+
 	window, exists := d.ipRequestCount[ip]
-	d.mu.RUnlock()
-
 	if !exists {
-		return false
+		return false, ""
 	}
 
-	// Auto-block after too many 404s (probing for files/paths)
 	if window.notFoundHits >= d.notFoundThreshold {
-		return true
+		return true, fmt.Sprintf("%d not-found responses in the detection window; paths: %s",
+			window.notFoundHits, summarizePaths(window.pathHits))
 	}
-
-	// Auto-block after too many auth failures
 	if window.authFailures >= d.authFailureThreshold {
-		return true
+		return true, fmt.Sprintf("%d authentication failures in the detection window", window.authFailures)
 	}
-
-	// Auto-block if trying too many unique paths (scanning)
 	if len(window.pathHits) >= d.uniquePathsThreshold {
-		return true
+		return true, fmt.Sprintf("probed %d distinct paths in the detection window; paths: %s",
+			len(window.pathHits), summarizePaths(window.pathHits))
 	}
-
-	// Auto-block if hammering same path repeatedly
-	for _, hits := range window.pathHits {
+	for path, hits := range window.pathHits {
 		if hits >= d.repeatedHitsThreshold {
-			return true
+			return true, fmt.Sprintf("%d requests to %s in the detection window", hits, path)
 		}
 	}
 
-	return false
+	return false, ""
+}
+
+// summarizePaths renders the busiest few paths in a window for a block reason,
+// most-hit first so the output is stable regardless of map order.
+func summarizePaths(pathHits map[string]int) string {
+	type ph struct {
+		path string
+		hits int
+	}
+	items := make([]ph, 0, len(pathHits))
+	for p, h := range pathHits {
+		items = append(items, ph{p, h})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].hits != items[j].hits {
+			return items[i].hits > items[j].hits
+		}
+		return items[i].path < items[j].path
+	})
+
+	const maxPaths = 3
+	parts := make([]string, 0, maxPaths)
+	for i, it := range items {
+		if i >= maxPaths {
+			parts = append(parts, fmt.Sprintf("and %d more", len(items)-maxPaths))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s (%d)", it.path, it.hits))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // CleanupOldWindows removes expired rate tracking windows

@@ -122,7 +122,11 @@ var SuspiciousPaths = []string{
 	"/clientaccesspolicy.xml",
 }
 
-// Scanner user agent patterns
+// ScannerUserAgents match on sight and block immediately, so this list holds
+// only attack tools that name themselves. General-purpose HTTP clients (curl,
+// wget, python-requests, go-http-client) are deliberately absent: real scripts
+// and health checks use them, so matching them here blocked legitimate callers
+// on their first request. They are still caught by the volumetric thresholds.
 var ScannerUserAgents = []string{
 	"nikto",
 	"nmap",
@@ -144,12 +148,6 @@ var ScannerUserAgents = []string{
 	"joomscan",
 	"droopescan",
 	"zgrab",
-	"curl/",
-	"wget/",
-	"python-requests",
-	"go-http-client",
-	"httpx",
-	"nuclei",
 }
 
 var suspiciousPathPatterns []*regexp.Regexp
