@@ -173,6 +173,42 @@ func TestGetDomainsNeedingCertificates_AutoCertWithDisabledSSL(t *testing.T) {
 	}
 }
 
+func TestGetDomainsNeedingCertificates_ExcludesRouteOnlyAliases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ssl-cert-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	m := NewManager(&config.CertbotConfig{CertsPath: tmpDir}, tmpDir, nil)
+
+	domains := []models.DomainConfig{
+		{
+			Domain:           "api.example.com",
+			SSL:              models.SSLConfig{Enabled: true, AutoCert: true},
+			Aliases:          []string{"www.example.com"},
+			RouteOnlyAliases: []string{"dashboard.example.com"},
+		},
+	}
+
+	got := m.GetDomainsNeedingCertificates(domains)
+	has := func(name string) bool {
+		for _, d := range got {
+			if d == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !has("api.example.com") || !has("www.example.com") {
+		t.Errorf("expected the domain and its cert-bearing alias, got %v", got)
+	}
+	if has("dashboard.example.com") {
+		t.Errorf("routing-only alias must be excluded from certificate issuance, got %v", got)
+	}
+}
+
 func TestGetDomainsNeedingCertificates_SkipsWithoutAutoCert(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "ssl-cert-test-*")
 	if err != nil {

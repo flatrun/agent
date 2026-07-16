@@ -2260,6 +2260,34 @@ services:
 	}
 }
 
+// A routing-only alias must appear in server_name so requests for it route to
+// the deployment; it shares the primary domain's server block and certificate.
+func TestRouteOnlyAliasEmittedIntoServerName(t *testing.T) {
+	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+	deployment := &models.Deployment{
+		Name: "shop",
+		Metadata: &models.ServiceMetadata{
+			Domains: []models.DomainConfig{
+				{
+					ID:               "d1",
+					Service:          "web",
+					ContainerPort:    80,
+					Domain:           "api.example.com",
+					RouteOnlyAliases: []string{"dashboard.example.com"},
+				},
+			},
+		},
+	}
+
+	config, err := m.generateMultiDomainConfig(deployment)
+	if err != nil {
+		t.Fatalf("generateMultiDomainConfig failed: %v", err)
+	}
+	if !strings.Contains(config, "dashboard.example.com") {
+		t.Errorf("routing-only alias must be emitted into server_name, got:\n%s", config)
+	}
+}
+
 func newManagerWithDeployment(t *testing.T, domains []models.DomainConfig, compose string) (*Manager, *models.Deployment) {
 	t.Helper()
 	dir := t.TempDir()

@@ -159,9 +159,16 @@ func (s *Server) getUnknownDomainStats(c *gin.Context) {
 		return
 	}
 
+	// Traffic is logged under the request's Host, so a configured hostname (a
+	// domain, an alias, or a routing-only alias) is "known" even though it is not
+	// the deployment name. Without this, routing-only hostnames and aliases would
+	// be reported as unknown-domain traffic.
 	var knownDeployments []string
 	for _, d := range deployments {
 		knownDeployments = append(knownDeployments, d.Name)
+		if d.Metadata != nil {
+			knownDeployments = append(knownDeployments, d.Metadata.GetUniqueDomainNames()...)
+		}
 	}
 
 	stats, err := s.trafficManager.GetUnknownDomainStats(knownDeployments, since)

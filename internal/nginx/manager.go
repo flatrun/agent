@@ -783,6 +783,13 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 					serverAliases = append(serverAliases, alias)
 				}
 			}
+			// Routing-only hostnames share the primary's server block and cert; they
+			// route by Host but are never issued a certificate of their own.
+			for _, alias := range d.RouteOnlyAliases {
+				if alias != host {
+					serverAliases = append(serverAliases, alias)
+				}
+			}
 		}
 
 		servers = append(servers, serverData{
