@@ -1,6 +1,7 @@
 package security
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,6 +49,88 @@ func TestIngestEventAutoBlocksOnRepeatedAuthFailures(t *testing.T) {
 	}
 	if !blocked {
 		t.Fatal("expected IP to be in blocked list")
+	}
+}
+
+// A legitimate client that identifies as a general-purpose HTTP tool must not be
+// blocked on its first request. This reproduces the reported bug where one 404
+// from curl / a Go or Python script locked the caller out immediately.
+func TestIngestEventDoesNotBlockGenericHTTPClient(t *testing.T) {
+	for _, ua := range []string{"curl/8.4.0", "Go-http-client/1.1", "python-requests/2.31.0", "Wget/1.21"} {
+		m := newTestManager(t)
+		result, err := m.IngestEvent(&IngestEvent{
+			SourceIP:      "203.0.113.20",
+			RequestPath:   "/wp-login.php",
+			RequestMethod: "GET",
+			StatusCode:    404,
+			UserAgent:     ua,
+		}, time.Hour)
+		if err != nil {
+			t.Fatalf("IngestEvent(%s): %v", ua, err)
+		}
+		if result.AutoBlocked {
+			t.Errorf("UA %q: a single 404 must not auto-block a general-purpose client", ua)
+		}
+	}
+}
+
+// A tool that names itself as an attack scanner is still blocked on sight.
+func TestIngestEventBlocksNamedScanner(t *testing.T) {
+	m := newTestManager(t)
+	result, err := m.IngestEvent(&IngestEvent{
+		SourceIP:      "203.0.113.21",
+		RequestPath:   "/",
+		RequestMethod: "GET",
+		StatusCode:    200,
+		UserAgent:     "sqlmap/1.7.2#stable",
+	}, time.Hour)
+	if err != nil {
+		t.Fatalf("IngestEvent: %v", err)
+	}
+	if !result.AutoBlocked {
+		t.Fatal("a named scanner user agent must still be auto-blocked")
+	}
+}
+
+// The persisted block records what tripped it: the rule, the count, and the paths.
+func TestIngestEventBlockReasonTracesTrigger(t *testing.T) {
+	m := newTestManager(t)
+
+	var last *IngestResult
+	for i := 0; i < 10; i++ {
+		var err error
+		last, err = m.IngestEvent(&IngestEvent{
+			SourceIP:      "203.0.113.22",
+			RequestPath:   "/missing.php",
+			RequestMethod: "GET",
+			StatusCode:    404,
+			UserAgent:     "Mozilla/5.0",
+		}, time.Hour)
+		if err != nil {
+			t.Fatalf("IngestEvent: %v", err)
+		}
+	}
+	if !last.AutoBlocked {
+		t.Fatal("expected block after repeated 404 probing")
+	}
+
+	blocked, err := m.GetBlockedIPs()
+	if err != nil {
+		t.Fatalf("GetBlockedIPs: %v", err)
+	}
+	var reason string
+	for _, b := range blocked {
+		if b.IP == "203.0.113.22" {
+			reason = b.Reason
+		}
+	}
+	if reason == "" {
+		t.Fatal("blocked IP not found")
+	}
+	for _, want := range []string{"not-found", "/missing.php"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("block reason should trace the trigger, missing %q in %q", want, reason)
+		}
 	}
 }
 
