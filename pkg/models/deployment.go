@@ -54,6 +54,12 @@ type DomainConfig struct {
 	StripPrefix   bool      `yaml:"strip_prefix,omitempty" json:"strip_prefix,omitempty"`
 	SSL           SSLConfig `yaml:"ssl" json:"ssl"`
 	Aliases       []string  `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+	// RouteOnlyAliases are extra hostnames routed to this deployment but excluded
+	// from certificate issuance and renewal, for a hostname whose TLS is
+	// terminated by an external proxy (e.g. Cloudflare) whose DNS does not point
+	// at FlatRun. They share the primary domain's certificate over the proxy's
+	// SNI; issuing a certificate for them would fail ACME validation.
+	RouteOnlyAliases []string `yaml:"route_only_aliases,omitempty" json:"route_only_aliases,omitempty"`
 	// ProxyTimeout is the proxy read/send timeout in seconds. Defaults to 60
 	// when unset; raise it for domains that proxy long-lived WebSocket
 	// connections so idle sockets are not closed mid-connection.
@@ -113,6 +119,9 @@ func (m *ServiceMetadata) GetUniqueDomainNames() []string {
 	for _, d := range domains {
 		domainSet[d.Domain] = struct{}{}
 		for _, alias := range d.Aliases {
+			domainSet[alias] = struct{}{}
+		}
+		for _, alias := range d.RouteOnlyAliases {
 			domainSet[alias] = struct{}{}
 		}
 	}
