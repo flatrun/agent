@@ -1,9 +1,46 @@
 package notify
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
+
+func TestTargetJSONMasksURL(t *testing.T) {
+	b, err := json.Marshal(Target{ID: "1", Name: "email", URL: "smtp://user:secret@host:587", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(b)
+	if strings.Contains(out, "secret") {
+		t.Errorf("credential leaked in JSON: %s", out)
+	}
+	if !strings.Contains(out, MaskedURL) {
+		t.Errorf("URL should be masked: %s", out)
+	}
+}
+
+func TestUpdatePreservesMaskedURL(t *testing.T) {
+	s := NewService(t.TempDir())
+	const real = "smtp://user:secret@host:587"
+	if err := s.Save(Config{Targets: []Target{{ID: "1", Name: "email", URL: real, Enabled: true}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A client that received a masked URL saves it back with only a name change.
+	if err := s.Update(Config{Targets: []Target{{ID: "1", Name: "renamed", URL: MaskedURL, Enabled: true}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := s.Load()
+	if len(got.Targets) != 1 || got.Targets[0].URL != real {
+		t.Errorf("masked update must keep the stored URL, got %+v", got.Targets)
+	}
+	if got.Targets[0].Name != "renamed" {
+		t.Errorf("non-secret changes should still apply, got name %q", got.Targets[0].Name)
+	}
+}
 
 func TestServiceRoundTripAndNotify(t *testing.T) {
 	s := NewService(t.TempDir())

@@ -5,6 +5,32 @@ import (
 	"time"
 )
 
+// A restart is a blocking docker call; health reads must not stall for its
+// duration, so checkOnce must not hold the lock across it.
+func TestCheckOnceDoesNotBlockReadsDuringRestart(t *testing.T) {
+	states := []ContainerHealth{{Container: "web", Deployment: "d", Status: HealthUnhealthy}}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	w := NewHealthWatcher(
+		func() ([]ContainerHealth, error) { return states, nil },
+		func(string) error { close(started); <-release; return nil },
+		time.Second, time.Minute,
+	)
+
+	go w.checkOnce()
+	<-started // a restart is now in progress
+
+	done := make(chan struct{})
+	go func() { w.Snapshot(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("Snapshot blocked while a restart was in progress")
+	}
+	close(release)
+}
+
 func TestHealthWatcherRestartsUnhealthy(t *testing.T) {
 	states := []ContainerHealth{
 		{Container: "shop-web", Deployment: "shop", Status: HealthUnhealthy},
