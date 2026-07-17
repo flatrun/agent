@@ -10,17 +10,28 @@ import (
 // Plugin is the built-in Firewall app. It implements plugins.Plugin so it registers in the
 // plugin registry and lists as an installed app.
 type Plugin struct {
-	store *Store
+	store  *Store
+	runner nftRunner // nil in production; a fake is injected in tests
 }
 
 func New(store *Store) *Plugin { return &Plugin{store: store} }
+
+// EnforceCurrent applies the stored config to the host firewall. The server calls
+// it at startup so a saved policy takes effect again after a restart.
+func (p *Plugin) EnforceCurrent() (bool, error) {
+	cfg, err := p.store.Load()
+	if err != nil {
+		return false, err
+	}
+	return Apply(cfg, p.runner)
+}
 
 func (p *Plugin) Info() plugins.PluginInfo {
 	return plugins.PluginInfo{
 		Name:         "firewall",
 		Version:      "0.1.0",
 		DisplayName:  "Firewall",
-		Description:  "Set the server's inbound and outbound traffic rules in one place. Enforcement coming soon.",
+		Description:  "Set and enforce the server's inbound and outbound traffic rules in one place.",
 		Author:       "FlatRun",
 		Type:         plugins.TypeIntegration,
 		Category:     "security",
@@ -67,7 +78,12 @@ func (p *Plugin) RegisterRoutes(router *gin.RouterGroup) error {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "firewall config saved", "enforced": false})
+		enforced, err := Apply(&cfg, p.runner)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "saved": true, "enforced": false})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "firewall config saved", "enforced": enforced})
 	})
 
 	router.GET("/firewall/plan", func(c *gin.Context) {
@@ -76,7 +92,16 @@ func (p *Plugin) RegisterRoutes(router *gin.RouterGroup) error {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"plan": Plan(cfg), "enforced": false})
+		c.JSON(http.StatusOK, gin.H{"plan": Plan(cfg), "available": enforcementAvailable(p.runner)})
 	})
 	return nil
+}
+
+// enforcementAvailable reports whether the host can enforce firewall rules (nft
+// present), so the UI can tell an operator when saving will only persist.
+func enforcementAvailable(runner nftRunner) bool {
+	if runner == nil {
+		runner = newExecNftRunner()
+	}
+	return runner.Available()
 }

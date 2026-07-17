@@ -151,10 +151,59 @@ func Plan(cfg *Config) []string {
 	return plan
 }
 
-// Apply would translate the config to host firewall rules. It is a no-op scaffold that only
-// validates the config; the host firewall is never touched yet.
-func Apply(cfg *Config) error {
-	// TODO: render rules to nftables/iptables with a safety net that preserves the active
-	// SSH session before committing a default-deny inbound policy.
-	return Validate(cfg)
+// nftRunner runs the nft commands enforcement needs. It is an interface so the
+// apply/rollback logic can be tested without touching the host firewall.
+type nftRunner interface {
+	// Available reports whether nft can be used on this host.
+	Available() bool
+	// ListRuleset returns the current full ruleset, for rollback.
+	ListRuleset() (string, error)
+	// ApplyScript loads an `nft -f` script.
+	ApplyScript(script string) error
+}
+
+// Apply enforces the config on the host firewall, or removes FlatRun's rules when
+// the firewall is disabled. It reports whether enforcement actually happened:
+// when nft is unavailable (a non-Linux host, or nft not installed) the config is
+// still saved but not enforced, which is not an error.
+//
+// Before a new ruleset is loaded the current one is snapshotted, and if the load
+// fails the snapshot is restored, so a rejected ruleset never leaves the host in
+// a half-applied state. The generated ruleset always keeps loopback,
+// established/related, and the active SSH port open, so a default-deny inbound
+// policy cannot drop the operator's session.
+func Apply(cfg *Config, runner nftRunner) (enforced bool, err error) {
+	if err := Validate(cfg); err != nil {
+		return false, err
+	}
+	if runner == nil {
+		runner = newExecNftRunner()
+	}
+	if !runner.Available() {
+		return false, nil
+	}
+
+	if cfg == nil || !cfg.Enabled {
+		// Disabling enforcement removes only FlatRun's table.
+		script := fmt.Sprintf("add table inet %s\ndelete table inet %s\n", tableName, tableName)
+		if err := runner.ApplyScript(script); err != nil {
+			return false, fmt.Errorf("failed to remove firewall rules: %w", err)
+		}
+		return false, nil
+	}
+
+	snapshot, err := runner.ListRuleset()
+	if err != nil {
+		return false, fmt.Errorf("failed to read current firewall state: %w", err)
+	}
+
+	script := renderNftables(cfg, detectSSHSession())
+	if err := runner.ApplyScript(script); err != nil {
+		if snapshot != "" {
+			// Best-effort restore of the ruleset that was in place before.
+			_ = runner.ApplyScript("flush ruleset\n" + snapshot)
+		}
+		return false, fmt.Errorf("failed to apply firewall rules: %w", err)
+	}
+	return true, nil
 }

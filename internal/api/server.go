@@ -170,6 +170,11 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	firewallPlugin := firewall.New(firewall.NewStore(cfg.DeploymentsPath))
 	_ = pluginRegistry.Register(firewallPlugin)
+	if enforced, err := firewallPlugin.EnforceCurrent(); err != nil {
+		log.Printf("firewall: failed to enforce saved policy at startup: %v", err)
+	} else if enforced {
+		log.Printf("firewall: enforcing saved policy")
+	}
 
 	builtinDNS := []plugins.Plugin{
 		dnsPlugins.NewCloudflarePlugin(),
