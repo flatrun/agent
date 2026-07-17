@@ -400,20 +400,19 @@ func (s *Server) pluginInfos() []pluginapi.Info {
 	return s.pluginHost.Infos()
 }
 
-// pluginToolMutates reports whether a namespaced plugin tool changes state, so the caller
-// applies the write-access gate.
-func (s *Server) pluginToolMutates(plugin, tool string) bool {
+// pluginToolSpec returns the advertised spec for a namespaced plugin tool.
+func (s *Server) pluginToolSpec(plugin, tool string) (pluginapi.ToolSpec, bool) {
 	for _, info := range s.pluginInfos() {
 		if info.Name != plugin {
 			continue
 		}
 		for _, t := range info.Tools {
 			if t.Name == tool {
-				return t.Mutates
+				return t, true
 			}
 		}
 	}
-	return false
+	return pluginapi.ToolSpec{}, false
 }
 
 // runAITool executes one tool call, returning the textual result the
@@ -429,18 +428,26 @@ func (s *Server) runAITool(c *gin.Context, boundDeployment string, call ai.ToolC
 
 	// Plugin-provided tools are dispatched to the owning plugin over its socket.
 	if plugin, tool, ok := parsePluginToolName(call.Name); ok {
-		if s.pluginToolMutates(plugin, tool) {
-			// A state-changing tool requires write access to a deployment, and the plugin is
-			// told which one so it can scope the mutation to that deployment rather than act
-			// on an arbitrary resource the caller named.
-			dep, err := s.toolAllowedDeploymentWrite(c, boundDeployment, args)
-			if err != nil {
-				return "Error: " + err.Error()
+		if spec, found := s.pluginToolSpec(plugin, tool); found && spec.Mutates {
+			if spec.Global {
+				// A host-wide setting has no deployment scope; gate it on settings-write so
+				// it works in an unscoped assistant session instead of demanding a deployment.
+				if err := s.toolAllowedGlobalWrite(c); err != nil {
+					return "Error: " + err.Error()
+				}
+			} else {
+				// A state-changing tool requires write access to a deployment, and the plugin is
+				// told which one so it can scope the mutation to that deployment rather than act
+				// on an arbitrary resource the caller named.
+				dep, err := s.toolAllowedDeploymentWrite(c, boundDeployment, args)
+				if err != nil {
+					return "Error: " + err.Error()
+				}
+				if args == nil {
+					args = map[string]interface{}{}
+				}
+				args["_deployment"] = dep
 			}
-			if args == nil {
-				args = map[string]interface{}{}
-			}
-			args["_deployment"] = dep
 		}
 		result, err := s.pluginHost.ExecTool(plugin, tool, args)
 		if err != nil {
@@ -472,4 +479,15 @@ func (s *Server) toolAllowedDeploymentWrite(c *gin.Context, boundDeployment stri
 		return "", fmt.Errorf("you do not have write access to deployment %q", name)
 	}
 	return name, nil
+}
+
+// toolAllowedGlobalWrite gates a mutating tool that changes a host-wide setting rather than a
+// deployment. It needs settings-write; a nil actor means auth is disabled, which is allowed as
+// elsewhere.
+func (s *Server) toolAllowedGlobalWrite(c *gin.Context) error {
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && !actor.HasPermission(auth.PermSettingsWrite) {
+		return fmt.Errorf("you do not have permission to change this setting")
+	}
+	return nil
 }

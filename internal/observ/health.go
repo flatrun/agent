@@ -132,14 +132,21 @@ func NewHealthWatcher(source HealthSource, restart RestartFunc, interval, cooldo
 }
 
 // checkOnce reads health once and restarts any unhealthy container past its cooldown.
+// The restart call is a blocking docker operation, so it runs without the lock held:
+// otherwise a health read (Snapshot/Events) would stall for the whole restart. The
+// decision is taken under the lock, the restarts run unlocked, and the results are
+// recorded under the lock again. checkOnce is only ever called from the single Run
+// goroutine, so there is no concurrent writer to race with between those phases.
 func (w *HealthWatcher) checkOnce() {
 	states, err := w.source()
 	if err != nil {
 		return
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
+	var toRestart []ContainerHealth
+	var exhaustedEvents []ExhaustedEvent
+
+	w.mu.Lock()
 	w.health = make(map[string]ContainerHealth, len(states))
 	for _, s := range states {
 		w.health[s.Container] = s
@@ -161,14 +168,12 @@ func (w *HealthWatcher) checkOnce() {
 		if w.attempts[s.Container] >= maxRestartAttempts {
 			if !w.exhausted[s.Container] {
 				w.exhausted[s.Container] = true
-				if w.onExhausted != nil {
-					go w.onExhausted(ExhaustedEvent{
-						Container:  s.Container,
-						Deployment: s.Deployment,
-						Attempts:   w.attempts[s.Container],
-						At:         w.now(),
-					})
-				}
+				exhaustedEvents = append(exhaustedEvents, ExhaustedEvent{
+					Container:  s.Container,
+					Deployment: s.Deployment,
+					Attempts:   w.attempts[s.Container],
+					At:         w.now(),
+				})
 			}
 			continue
 		}
@@ -176,16 +181,32 @@ func (w *HealthWatcher) checkOnce() {
 		if seen && w.now().Sub(last) < w.cooldown {
 			continue
 		}
+		toRestart = append(toRestart, s)
+	}
+	w.mu.Unlock()
+
+	if w.onExhausted != nil {
+		for _, ev := range exhaustedEvents {
+			go w.onExhausted(ev)
+		}
+	}
+
+	for _, s := range toRestart {
 		if err := w.restart(s.Container); err != nil {
 			continue
 		}
-		w.lastHeal[s.Container] = w.now()
+		now := w.now()
+		ev := RecoveryEvent{Container: s.Container, Deployment: s.Deployment, At: now}
+
+		w.mu.Lock()
+		w.lastHeal[s.Container] = now
 		w.attempts[s.Container]++
-		ev := RecoveryEvent{Container: s.Container, Deployment: s.Deployment, At: w.now()}
 		w.events = append(w.events, ev)
 		if len(w.events) > maxRecoveryEvents {
 			w.events = w.events[len(w.events)-maxRecoveryEvents:]
 		}
+		w.mu.Unlock()
+
 		if w.onRecover != nil {
 			go w.onRecover(ev)
 		}

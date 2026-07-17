@@ -3106,7 +3106,7 @@ func (s *Server) updateNotificationTargets(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
 		return
 	}
-	if err := s.notify.Save(cfg); err != nil {
+	if err := s.notify.Update(cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

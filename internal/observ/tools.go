@@ -98,6 +98,7 @@ func buildTools(store *Store, watcher *HealthWatcher, cfgStore *ConfigStore) []p
 					"required":   []string{"enabled"},
 				},
 				Mutates: true,
+				Global:  true,
 			},
 			Run: func(args map[string]any) (string, error) {
 				enabled, _ := args["enabled"].(bool)

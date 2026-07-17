@@ -5,6 +5,7 @@
 package notify
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MaskedURL stands in for a target URL in API responses. A shoutrrr URL carries
+// its credentials inline (an SMTP password, a webhook token), so the real URL is
+// never returned to a client; it is written verbatim only to the on-disk store.
+const MaskedURL = "********"
+
 // Target is one delivery destination. URL is a shoutrrr service URL, e.g.
 // "smtp://user:pass@host:587/?from=x&to=y" or "generic+https://example.com/hook".
 type Target struct {
@@ -21,6 +27,17 @@ type Target struct {
 	Name    string `yaml:"name" json:"name"`
 	URL     string `yaml:"url" json:"url"`
 	Enabled bool   `yaml:"enabled" json:"enabled"`
+}
+
+// MarshalJSON masks the credential-bearing URL. YAML persistence does not use
+// this path, so the stored file keeps the real URL.
+func (t Target) MarshalJSON() ([]byte, error) {
+	type alias Target
+	masked := alias(t)
+	if masked.URL != "" {
+		masked.URL = MaskedURL
+	}
+	return json.Marshal(masked)
 }
 
 // Config is the persisted notification settings.
@@ -57,14 +74,31 @@ func (s *Service) Load() Config {
 func (s *Service) Save(cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0644)
+	return os.WriteFile(s.path, data, 0600)
+}
+
+// Update saves targets, restoring the stored URL for any target whose incoming
+// URL is the mask: a client that received a masked target and saved it back
+// unchanged must not overwrite the real URL with the mask.
+func (s *Service) Update(cfg Config) error {
+	stored := s.Load()
+	byID := make(map[string]string, len(stored.Targets))
+	for _, t := range stored.Targets {
+		byID[t.ID] = t.URL
+	}
+	for i := range cfg.Targets {
+		if cfg.Targets[i].URL == MaskedURL {
+			cfg.Targets[i].URL = byID[cfg.Targets[i].ID]
+		}
+	}
+	return s.Save(cfg)
 }
 
 // Test sends a message to a single URL, so an admin can verify a target before saving it.

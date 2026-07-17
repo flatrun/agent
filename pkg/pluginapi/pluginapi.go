@@ -37,12 +37,16 @@ type Info struct {
 
 // ToolSpec declares a tool the plugin exposes to the AI assistant. The host advertises it to
 // the model and dispatches calls back to the plugin's /_plugin/tools/exec endpoint. Mutates
-// marks a tool that changes state, so the host can gate it on write access.
+// marks a tool that changes state, so the host can gate it on write access. Global marks a
+// mutating tool that acts on a host-wide setting rather than a single deployment, so the host
+// gates it on a settings-write permission instead of requiring a deployment scope (which such
+// a tool has no way to provide, and which would make it fail in an unscoped assistant session).
 type ToolSpec struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
 	Mutates     bool           `json:"mutates,omitempty"`
+	Global      bool           `json:"global,omitempty"`
 }
 
 // ToolExecPath is where the host POSTs {name, args} to invoke a plugin tool.
