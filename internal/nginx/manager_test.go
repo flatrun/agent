@@ -2288,6 +2288,34 @@ func TestRouteOnlyAliasEmittedIntoServerName(t *testing.T) {
 	}
 }
 
+// Static-asset caching is opt-in per domain: the expires directive appears only
+// when the domain enables it, so other domains keep their exact previous output.
+func TestStaticCacheEmitsExpiresOnlyWhenEnabled(t *testing.T) {
+	m := NewManager(&config.NginxConfig{ContainerWebrootPath: "/var/www/html"}, "/deployments", "")
+	build := func(on bool) string {
+		dep := &models.Deployment{
+			Name: "shop",
+			Metadata: &models.ServiceMetadata{
+				Domains: []models.DomainConfig{
+					{ID: "d1", Service: "web", ContainerPort: 80, Domain: "shop.example.com", StaticCache: on},
+				},
+			},
+		}
+		out, err := m.generateMultiDomainConfig(dep)
+		if err != nil {
+			t.Fatalf("generateMultiDomainConfig failed: %v", err)
+		}
+		return out
+	}
+
+	if on := build(true); !strings.Contains(on, "expires $flatrun_static_expires;") {
+		t.Errorf("expected the expires directive when static cache is on, got:\n%s", on)
+	}
+	if off := build(false); strings.Contains(off, "expires") {
+		t.Errorf("expected no expires directive when static cache is off, got:\n%s", off)
+	}
+}
+
 func newManagerWithDeployment(t *testing.T, domains []models.DomainConfig, compose string) (*Manager, *models.Deployment) {
 	t.Helper()
 	dir := t.TempDir()
