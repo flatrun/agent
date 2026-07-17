@@ -64,6 +64,10 @@ type DomainConfig struct {
 	// when unset; raise it for domains that proxy long-lived WebSocket
 	// connections so idle sockets are not closed mid-connection.
 	ProxyTimeout int `yaml:"proxy_timeout,omitempty" json:"proxy_timeout,omitempty"`
+	// StaticCache opts this domain into a long browser cache for static assets
+	// (css, js, images, fonts). It applies only to responses whose path has a
+	// static extension; dynamic responses keep the app's own cache headers.
+	StaticCache bool `yaml:"static_cache,omitempty" json:"static_cache,omitempty"`
 }
 
 type DatabaseConfig struct {

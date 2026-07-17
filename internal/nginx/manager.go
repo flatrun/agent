@@ -44,10 +44,19 @@ const mapsConfigFile = "00-flatrun-maps.conf"
 // closing it, so nginx can reuse a pooled keepalive connection to the
 // container. Closing here would defeat upstream keepalive on every ordinary
 // request. WebSocket requests still get "upgrade".
+//
+// $flatrun_static_expires drives per-location static-asset caching. It keys off
+// the request path's extension, so only static files get a long expiry; every
+// other response maps to "off", which leaves the app's own Cache-Control intact.
+// A location opts in by using it in an `expires` directive.
 const mapsConfigContent = `# Managed by FlatRun. Do not edit.
 map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      "";
+}
+map $uri $flatrun_static_expires {
+    default                                                              off;
+    ~*\.(?:css|js|mjs|json|png|jpe?g|gif|ico|svg|webp|avif|woff2?|ttf|otf|eot|map)$ 30d;
 }
 `
 
@@ -772,6 +781,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				StripPrefix:   d.StripPrefix,
 				OriginalPath:  d.PathPrefix,
 				ProxyTimeout:  timeout,
+				StaticCache:   d.StaticCache,
 			})
 
 			if d.SSL.Enabled {
@@ -909,6 +919,7 @@ type locationData struct {
 	StripPrefix   bool
 	OriginalPath  string
 	ProxyTimeout  int
+	StaticCache   bool
 	// Upstream is the value assigned to $upstream: an upstream block name when
 	// keepalive is supported, otherwise the literal service:port.
 	Upstream string
@@ -1109,6 +1120,9 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout {{.ProxyTimeout}}s;
         proxy_read_timeout {{.ProxyTimeout}}s;
+{{- if .StaticCache}}
+        expires $flatrun_static_expires;
+{{- end}}
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -1200,6 +1214,9 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout {{.ProxyTimeout}}s;
         proxy_read_timeout {{.ProxyTimeout}}s;
+{{- if .StaticCache}}
+        expires $flatrun_static_expires;
+{{- end}}
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -1286,6 +1303,9 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout {{.ProxyTimeout}}s;
         proxy_read_timeout {{.ProxyTimeout}}s;
+{{- if .StaticCache}}
+        expires $flatrun_static_expires;
+{{- end}}
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
@@ -1338,6 +1358,9 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout {{.ProxyTimeout}}s;
         proxy_read_timeout {{.ProxyTimeout}}s;
+{{- if .StaticCache}}
+        expires $flatrun_static_expires;
+{{- end}}
 {{- if $.SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
