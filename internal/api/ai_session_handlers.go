@@ -200,6 +200,26 @@ func (s *Server) getAISession(c *gin.Context) {
 	s.sessionResponse(c, sess)
 }
 
+// listAISessions returns the caller's saved sessions (all sessions for an admin),
+// most recent first, so past conversations can be resumed.
+func (s *Server) listAISessions(c *gin.Context) {
+	summaries, err := s.aiSessions.List()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	actor := auth.GetActorFromContext(c)
+	isAdmin := actor != nil && actor.Role == auth.RoleAdmin
+	mine := sessionActorFrom(c).ID
+	out := make([]ai.SessionSummary, 0, len(summaries))
+	for _, sum := range summaries {
+		if isAdmin || sum.CreatedBy.ID == mine {
+			out = append(out, sum)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"sessions": out})
+}
+
 func (s *Server) postAISessionMessage(c *gin.Context) {
 	if !s.aiRequireEnabled(c) {
 		return

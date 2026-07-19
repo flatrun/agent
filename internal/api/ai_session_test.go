@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/flatrun/agent/internal/ai"
+	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/contextkeys"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
@@ -306,5 +309,50 @@ func TestAIToolUnknownToolReported(t *testing.T) {
 	result := s.runAITool(c, "", ai.ToolCall{Name: "does_not_exist", Arguments: "{}"})
 	if !strings.Contains(result, "unknown tool") {
 		t.Errorf("unknown tool not reported: %q", result)
+	}
+}
+
+func TestListAISessionsFiltersByActor(t *testing.T) {
+	s, _, _ := setupPlanTestServer(t)
+
+	own := ai.NewSession(ai.SessionScopeSystem, "", true, ai.SessionActor{ID: "1", Name: "alice"}, "sys")
+	own.AddUserMessage("mine", "", false)
+	other := ai.NewSession(ai.SessionScopeSystem, "", true, ai.SessionActor{ID: "2", Name: "bob"}, "sys")
+	other.AddUserMessage("theirs", "", false)
+	if err := s.aiSessions.Save(own); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.aiSessions.Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	call := func(actor *auth.ActorContext) []map[string]any {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/ai/sessions", nil)
+		if actor != nil {
+			c.Set(contextkeys.Actor, actor)
+		}
+		s.listAISessions(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d", w.Code)
+		}
+		var body struct {
+			Sessions []map[string]any `json:"sessions"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Sessions
+	}
+
+	mine := call(&auth.ActorContext{User: &auth.User{ID: 1, Username: "alice"}, Role: auth.RoleViewer})
+	if len(mine) != 1 || mine[0]["id"] != own.ID {
+		t.Errorf("a non-admin should see only their own sessions, got %v", mine)
+	}
+
+	all := call(&auth.ActorContext{User: &auth.User{ID: 9, Username: "root"}, Role: auth.RoleAdmin})
+	if len(all) != 2 {
+		t.Errorf("an admin should see all sessions, got %d", len(all))
 	}
 }

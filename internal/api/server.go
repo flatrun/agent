@@ -502,6 +502,7 @@ func (s *Server) setupRoutes() {
 
 			// Interactive AI sessions (agentic tool loop)
 			protected.POST("/ai/sessions", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.createAISession)
+			protected.GET("/ai/sessions", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listAISessions)
 			protected.GET("/ai/sessions/:id", s.getAISession)
 			protected.POST("/ai/sessions/:id/messages", s.postAISessionMessage)
 			protected.POST("/ai/sessions/:id/approve", s.approveAISessionTools)
