@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -179,6 +180,87 @@ func (st *SessionStore) PruneOlderThan(cutoff time.Time) int {
 		}
 	}
 	return removed
+}
+
+// SessionSummary is the lightweight view of a session for a list, without the
+// full transcript.
+type SessionSummary struct {
+	ID         string       `json:"id"`
+	Scope      string       `json:"scope"`
+	Deployment string       `json:"deployment,omitempty"`
+	Status     string       `json:"status"`
+	Title      string       `json:"title"`
+	CreatedBy  SessionActor `json:"created_by"`
+	CreatedAt  time.Time    `json:"created_at"`
+	UpdatedAt  time.Time    `json:"updated_at"`
+}
+
+// Title derives a short label from the first visible user turn, so a saved
+// session is recognizable in a list. Falls back to the scope.
+func (s *Session) Title() string {
+	for _, m := range s.Messages {
+		if m.Role != "user" || m.Hidden {
+			continue
+		}
+		text := m.Display
+		if text == "" {
+			text = m.Content
+		}
+		if text = strings.TrimSpace(text); text == "" {
+			continue
+		}
+		return truncateTitle(text)
+	}
+	if s.Deployment != "" {
+		return s.Deployment + " chat"
+	}
+	return "System chat"
+}
+
+func truncateTitle(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > 80 {
+		return string(r[:79]) + "…"
+	}
+	return s
+}
+
+// Summary is the session without its transcript, for a list view.
+func (s *Session) Summary() SessionSummary {
+	return SessionSummary{
+		ID:         s.ID,
+		Scope:      s.Scope,
+		Deployment: s.Deployment,
+		Status:     s.Status,
+		Title:      s.Title(),
+		CreatedBy:  s.CreatedBy,
+		CreatedAt:  s.CreatedAt,
+		UpdatedAt:  s.UpdatedAt,
+	}
+}
+
+// List returns a summary of every stored session, most recently updated first.
+func (st *SessionStore) List() ([]SessionSummary, error) {
+	entries, err := os.ReadDir(st.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []SessionSummary{}, nil
+		}
+		return nil, err
+	}
+	summaries := []SessionSummary{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		sess, err := st.Get(strings.TrimSuffix(e.Name(), ".json"))
+		if err != nil {
+			continue
+		}
+		summaries = append(summaries, sess.Summary())
+	}
+	sort.Slice(summaries, func(i, j int) bool { return summaries[i].UpdatedAt.After(summaries[j].UpdatedAt) })
+	return summaries, nil
 }
 
 // DisplayMessages projects the transcript into UI-facing turns,
