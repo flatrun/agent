@@ -39,7 +39,7 @@ func (p *openAICompatible) Name() string {
 
 func (p *openAICompatible) Complete(ctx context.Context, req Request) (*Response, error) {
 	resp, err := p.engine.Complete(ctx, agents.Request{
-		Messages:    toEngineMessages(req.Messages),
+		Messages:    MessagesToAgents(req.Messages),
 		Tools:       toEngineTools(req.Tools),
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
@@ -55,7 +55,9 @@ func (p *openAICompatible) Complete(ctx context.Context, req Request) (*Response
 	}, nil
 }
 
-func toEngineMessages(messages []Message) []agents.Message {
+// MessagesToAgents converts the stored transcript to the library's message type.
+// Display and Hidden are UI-only and dropped here: the model sees Content.
+func MessagesToAgents(messages []Message) []agents.Message {
 	out := make([]agents.Message, 0, len(messages))
 	for _, m := range messages {
 		out = append(out, agents.Message{

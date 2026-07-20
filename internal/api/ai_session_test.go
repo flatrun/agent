@@ -256,6 +256,55 @@ func TestAISessionDeclineTool(t *testing.T) {
 	}
 }
 
+func TestAISessionPerCallApproval(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+
+	s.aiProvider = &scriptedProvider{responses: []*ai.Response{
+		{ToolCalls: []ai.ToolCall{
+			{ID: "c1", Name: "list_networks", Arguments: "{}"},
+			{ID: "c2", Name: "list_deployments", Arguments: "{}"},
+		}, Model: "scripted"},
+		{Content: "## Summary\nDone.", Model: "scripted"},
+	}}
+
+	_, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/sessions", map[string]interface{}{
+		"scope": "system", "auto_run": false, "message": "inspect networks and deployments",
+	})
+	id := parsed["id"].(string)
+	if parsed["status"] != "awaiting_approval" {
+		t.Fatalf("status = %v, want awaiting_approval", parsed["status"])
+	}
+
+	// Approve one call, decline the other in the same decision.
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/sessions/"+id+"/approve",
+		map[string]interface{}{"approved": map[string]bool{"c1": true, "c2": false}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve status = %d, body %v", resp.StatusCode, parsed)
+	}
+	if parsed["status"] != "ready" {
+		t.Errorf("status = %v, want ready", parsed["status"])
+	}
+
+	results := map[string]string{}
+	for _, m := range parsed["messages"].([]interface{}) {
+		steps, ok := m.(map[string]interface{})["tool_steps"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, st := range steps {
+			step := st.(map[string]interface{})
+			results[step["name"].(string)], _ = step["result"].(string)
+		}
+	}
+	if results["list_networks"] == "" || strings.Contains(results["list_networks"], "declined") {
+		t.Errorf("approved tool should have run, got %q", results["list_networks"])
+	}
+	if !strings.Contains(results["list_deployments"], "declined") {
+		t.Errorf("declined tool should record the refusal, got %q", results["list_deployments"])
+	}
+}
+
 func TestAISessionDisabledReturns503(t *testing.T) {
 	_, _, ts := setupPlanTestServer(t)
 	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/sessions",
