@@ -303,6 +303,145 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 				return truncateToolOutput(content), nil
 			},
 		},
+		"write_deployment_file": {
+			Spec: ai.Tool{
+				Name:        "write_deployment_file",
+				Description: "Create or overwrite a text file inside a deployment's directory, for example a config or compose file. Requires write access to the deployment; the path cannot escape the deployment directory.",
+				Parameters: objSchema(map[string]interface{}{
+					"deployment": strProp("Deployment name. Omit to use the session's deployment."),
+					"path":       strProp("Path to the file relative to the deployment directory."),
+					"content":    strProp("The full new contents of the file."),
+				}, "path", "content"),
+			},
+			Run: func(s *Server, c *gin.Context, bound string, args map[string]interface{}) (string, error) {
+				name, err := s.toolAllowedDeploymentWrite(c, bound, args)
+				if err != nil {
+					return "", err
+				}
+				path := argString(args, "path")
+				if path == "" {
+					return "", fmt.Errorf("path is required")
+				}
+				content, ok := args["content"].(string)
+				if !ok {
+					return "", fmt.Errorf("content is required")
+				}
+				if blocked, reason, perr := s.protectedDeploymentActionBlocked(name, protectedActionUploadFile); perr != nil {
+					return "", fmt.Errorf("could not check protected mode: %w", perr)
+				} else if blocked {
+					return "", fmt.Errorf("%s", reason)
+				}
+				if err := s.filesManager.WriteFile(name, path, strings.NewReader(content)); err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Wrote %d bytes to %s in %s.", len(content), path, name), nil
+			},
+		},
+		"run_quick_action": {
+			Spec: ai.Tool{
+				Name:        "run_quick_action",
+				Description: "Run one of a deployment's configured quick actions by its id. Requires write access to the deployment.",
+				Parameters: objSchema(map[string]interface{}{
+					"deployment": strProp("Deployment name. Omit to use the session's deployment."),
+					"action_id":  strProp("The id of the quick action to run."),
+				}, "action_id"),
+			},
+			Run: func(s *Server, c *gin.Context, bound string, args map[string]interface{}) (string, error) {
+				name, err := s.toolAllowedDeploymentWrite(c, bound, args)
+				if err != nil {
+					return "", err
+				}
+				actionID := argString(args, "action_id")
+				if actionID == "" {
+					return "", fmt.Errorf("action_id is required")
+				}
+				if blocked, reason, perr := s.protectedDeploymentActionBlocked(name, protectedActionQuickAction); perr != nil {
+					return "", fmt.Errorf("could not check protected mode: %w", perr)
+				} else if blocked {
+					return "", fmt.Errorf("%s", reason)
+				}
+				output, err := s.manager.ExecuteQuickAction(name, actionID)
+				if err != nil {
+					return "", err
+				}
+				redactor := ai.NewRedactor(s.deploymentSecretValues(name))
+				redacted, _ := redactor.Redact(output)
+				return truncateToolOutput(redacted), nil
+			},
+		},
+		"control_deployment": {
+			Spec: ai.Tool{
+				Name:        "control_deployment",
+				Description: "Start, stop, or restart a whole deployment. Requires write access to the deployment.",
+				Parameters: objSchema(map[string]interface{}{
+					"deployment": strProp("Deployment name. Omit to use the session's deployment."),
+					"action": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"start", "stop", "restart"},
+						"description": "What to do: start, stop, or restart.",
+					},
+				}, "action"),
+			},
+			Run: func(s *Server, c *gin.Context, bound string, args map[string]interface{}) (string, error) {
+				name, err := s.toolAllowedDeploymentWrite(c, bound, args)
+				if err != nil {
+					return "", err
+				}
+				action := argString(args, "action")
+				var output string
+				switch action {
+				case "start":
+					output, err = s.manager.StartDeployment(name)
+				case "stop":
+					output, err = s.manager.StopDeployment(name)
+				case "restart":
+					output, err = s.manager.RestartDeployment(name)
+				default:
+					return "", fmt.Errorf("action must be start, stop, or restart")
+				}
+				if err != nil {
+					return "", err
+				}
+				return truncateToolOutput(fmt.Sprintf("Ran %s on deployment %s.\n%s", action, name, output)), nil
+			},
+		},
+		"get_security_events": {
+			Spec: ai.Tool{
+				Name:        "get_security_events",
+				Description: "List recent security events for a deployment (blocked requests, scanners, auth failures) so they can be summarized. Read-only.",
+				Parameters: objSchema(map[string]interface{}{
+					"deployment": strProp("Deployment name. Omit to use the session's deployment."),
+					"limit":      map[string]interface{}{"type": "integer", "description": "Maximum events to return (default 50)."},
+				}),
+			},
+			Run: func(s *Server, c *gin.Context, bound string, args map[string]interface{}) (string, error) {
+				name, err := s.toolAllowedDeployment(c, bound, args)
+				if err != nil {
+					return "", err
+				}
+				if s.securityManager == nil {
+					return "The security module is not enabled.", nil
+				}
+				limit := 50
+				if v, ok := args["limit"].(float64); ok && v > 0 {
+					limit = int(v)
+				}
+				events, _, err := s.securityManager.GetEventsByDeployment(name, limit)
+				if err != nil {
+					return "", err
+				}
+				if len(events) == 0 {
+					return fmt.Sprintf("No security events for %s.", name), nil
+				}
+				var b strings.Builder
+				fmt.Fprintf(&b, "%d recent security events for %s:\n", len(events), name)
+				for _, e := range events {
+					fmt.Fprintf(&b, "- %s [%s] %s %s %d from %s: %s\n",
+						e.CreatedAt.Format(time.RFC3339), e.Severity, e.RequestMethod, e.RequestPath, e.StatusCode, e.SourceIP, e.Message)
+				}
+				return truncateToolOutput(b.String()), nil
+			},
+		},
 		"exec_in_service": {
 			Spec: ai.Tool{
 				Name:        "exec_in_service",
@@ -330,7 +469,9 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 				if err != nil {
 					return "", err
 				}
-				if blocked, reason, perr := s.protectedDeploymentActionBlocked(name, protectedActionExec); perr == nil && blocked {
+				if blocked, reason, perr := s.protectedDeploymentActionBlocked(name, protectedActionExec); perr != nil {
+					return "", fmt.Errorf("could not check protected mode: %w", perr)
+				} else if blocked {
 					return "", fmt.Errorf("%s", reason)
 				}
 				ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
