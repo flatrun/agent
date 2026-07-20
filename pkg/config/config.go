@@ -41,8 +41,16 @@ type Config struct {
 	Cleanup         CleanupConfig        `yaml:"cleanup"`
 	Plans           PlansConfig          `yaml:"plans"`
 	AI              AIConfig             `yaml:"ai"`
+	MCP             MCPConfig            `yaml:"mcp"`
 	Files           FilesConfig          `yaml:"files"`
 	Backup          BackupConfig         `yaml:"backup"`
+}
+
+// MCPConfig controls the built-in MCP server that exposes the assistant's tool
+// set to external MCP clients. Every call is authenticated and permission-gated
+// exactly as the assistant is, so it is off unless deliberately enabled.
+type MCPConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 type FilesConfig struct {

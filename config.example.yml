@@ -126,6 +126,11 @@ ai:
     api_key: your-gemini-api-key-here
     model: gemini-2.5-flash
     timeout: 1m0s
+mcp:
+    # Exposes the assistant's tool set to external MCP clients at /api/mcp. Every
+    # call is authenticated and permission-gated exactly as the assistant is.
+    # Off unless enabled.
+    enabled: false
 backup:
     # Remote destinations that backups are mirrored to after the local copy is
     # written. The local copy under <deployments_path>/.flatrun/backups always

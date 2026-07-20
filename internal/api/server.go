@@ -101,6 +101,7 @@ type Server struct {
 	planStore          *plan.Store
 	aiProvider         ai.Provider
 	aiSessions         *ai.SessionStore
+	mcpHandler         http.Handler
 
 	jobs *jobRegistry
 	// runDeploymentAction runs a deployment action and streams each output
@@ -347,6 +348,10 @@ func New(cfg *config.Config, configPath string) *Server {
 	s.runDeploymentAction = s.defaultRunDeploymentAction
 	s.runServiceAction = s.defaultRunServiceAction
 
+	if cfg.MCP.Enabled {
+		s.mcpHandler = s.newMCPHandler()
+	}
+
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
 
 	if provider, aiErr := ai.New(&cfg.AI); aiErr == nil {
@@ -499,6 +504,13 @@ func (s *Server) setupRoutes() {
 			protected.GET("/ai/status", s.getAIStatus)
 			protected.POST("/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.aiAssistSystem)
 			protected.POST("/deployments/:name/ai/analyze", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.aiAssistDeployment)
+
+			// MCP server: the same tool set the assistant uses, exposed to
+			// external MCP clients. Each tool self-gates on the caller's
+			// permissions, so the route only requires authentication.
+			if s.mcpHandler != nil {
+				protected.Any("/mcp", s.mcpHTTP)
+			}
 
 			// Interactive AI sessions (agentic tool loop)
 			protected.POST("/ai/sessions", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.createAISession)
