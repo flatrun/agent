@@ -136,6 +136,9 @@ func (s *Server) runtimeAppliers() map[string]func(*Server) error {
 		"backup.destinations": func(srv *Server) error {
 			return srv.applyBackupDestinations()
 		},
+		// The MCP handler reads the flag per request, so the change is already
+		// live once saved; this entry marks it as apply-without-restart.
+		"mcp.enabled":                      func(*Server) error { return nil },
 		"ai.enabled":                       rebuildAIProvider,
 		"ai.base_url":                      rebuildAIProvider,
 		"ai.api_key":                       rebuildAIProvider,

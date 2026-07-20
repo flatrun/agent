@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -88,6 +89,22 @@ func TestMCPServerExposesToolsOverHTTP(t *testing.T) {
 	}
 	if text := res.Content[0].(*mcp.TextContent).Text; !strings.Contains(text, "Hostname:") {
 		t.Errorf("unexpected tool output %q", text)
+	}
+}
+
+// TestMCPServerRefusesWhenDisabled proves the route stays mounted but rejects
+// calls once mcp.enabled flips off, so the toggle takes effect without a restart.
+func TestMCPServerRefusesWhenDisabled(t *testing.T) {
+	s, _, ts := setupMCPTestServer(t)
+	s.config.MCP.Enabled = false
+
+	resp, err := http.Post(ts.URL+"/api/mcp", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("disabled MCP endpoint status = %d, want 503", resp.StatusCode)
 	}
 }
 

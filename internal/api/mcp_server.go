@@ -29,8 +29,13 @@ func (s *Server) newMCPHandler() http.Handler {
 }
 
 // mcpHTTP adapts the gin request to the MCP handler, passing the actor the auth
-// middleware already resolved so tool handlers can gate on it.
+// middleware already resolved so tool handlers can gate on it. The route is
+// always mounted; the flag is checked here so it can toggle at runtime.
 func (s *Server) mcpHTTP(c *gin.Context) {
+	if !s.config.MCP.Enabled {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "the MCP server is disabled"})
+		return
+	}
 	ctx := context.WithValue(c.Request.Context(), mcpActorKey{}, auth.GetActorFromContext(c))
 	s.mcpHandler.ServeHTTP(c.Writer, c.Request.WithContext(ctx))
 }

@@ -348,9 +348,9 @@ func New(cfg *config.Config, configPath string) *Server {
 	s.runDeploymentAction = s.defaultRunDeploymentAction
 	s.runServiceAction = s.defaultRunServiceAction
 
-	if cfg.MCP.Enabled {
-		s.mcpHandler = s.newMCPHandler()
-	}
+	// Built unconditionally: it is stateless and starts nothing, so requests are
+	// gated on the live config flag instead, letting mcp.enabled toggle at runtime.
+	s.mcpHandler = s.newMCPHandler()
 
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
 
@@ -507,10 +507,9 @@ func (s *Server) setupRoutes() {
 
 			// MCP server: the same tool set the assistant uses, exposed to
 			// external MCP clients. Each tool self-gates on the caller's
-			// permissions, so the route only requires authentication.
-			if s.mcpHandler != nil {
-				protected.Any("/mcp", s.mcpHTTP)
-			}
+			// permissions, so the route only requires authentication. The
+			// handler itself refuses calls while mcp.enabled is off.
+			protected.Any("/mcp", s.mcpHTTP)
 
 			// Interactive AI sessions (agentic tool loop)
 			protected.POST("/ai/sessions", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.createAISession)
