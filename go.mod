@@ -24,12 +24,13 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/lib/pq v1.10.9
 	github.com/moby/moby/client v0.2.2
+	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/nicholas-fedor/shoutrrr v0.16.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/compose v0.41.0
-	github.com/whilesmartgo/agents v0.1.0
+	github.com/whilesmartgo/agents v0.4.0
 	github.com/whilesmartgo/mcp v0.2.0
 	go.opentelemetry.io/otel v1.41.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.41.0
@@ -148,7 +149,6 @@ require (
 	github.com/moby/sys/user v0.4.0 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
-	github.com/modelcontextprotocol/go-sdk v1.6.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/morikuni/aec v1.1.0 // indirect

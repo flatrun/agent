@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -8,6 +11,7 @@ import (
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/gin-gonic/gin"
+	"github.com/whilesmartgo/agents"
 )
 
 // composeUserMessage merges a short message with optional bulky
@@ -52,42 +56,96 @@ func canUseSession(c *gin.Context, sess *ai.Session) bool {
 	return sessionActorFrom(c).ID == sess.CreatedBy.ID
 }
 
-// advanceSession runs the tool loop: it calls the model, executes any
-// requested tools (auto-run) or pauses for approval, and repeats until
-// the model returns a final answer or the step budget is exhausted.
+const aiStepLimitMessage = "I stopped after investigating several steps without reaching a confident answer. Ask a more specific question or check the details directly."
+
+// advanceSession drives the assistant's tool loop through the shared agents
+// runner: it calls the model, runs any requested tools (auto-run) or pauses for
+// approval, and repeats until a final answer or the step budget is spent.
 func (s *Server) advanceSession(c *gin.Context, sess *ai.Session) error {
-	tools := s.aiToolSpecs()
-	for step := 0; step < sess.MaxToolSteps(); step++ {
-		resp, err := s.aiProvider.Complete(c.Request.Context(), ai.Request{Messages: sess.Messages, Tools: tools})
-		if err != nil {
-			return err
-		}
-		if sess.Model == "" {
-			sess.Model = resp.Model
-		}
+	engine := ai.NewCapturingEngine(s.aiProvider)
+	runner := s.aiRunner(c, sess, engine)
+	conv := &agents.Conversation{Messages: ai.MessagesToAgents(sess.Messages)}
+	from := len(conv.Messages)
+	_, err := runner.Advance(c.Request.Context(), conv)
+	return s.absorbAdvance(sess, conv, from, engine, err)
+}
 
-		if len(resp.ToolCalls) == 0 {
-			analysis, suggestions := ai.ParseSuggestions(resp.Content)
-			sess.AddAssistantMessage(analysis, nil)
-			sess.Suggested = s.scopeSuggestions(sess, suggestions)
-			sess.Status = ai.SessionStatusReady
-			return nil
-		}
+// aiRunner assembles the runner for one session turn. A session that does not
+// auto-run pauses before any tools run, surfacing them for per-call approval.
+func (s *Server) aiRunner(c *gin.Context, sess *ai.Session, engine agents.Engine) agents.Runner {
+	runner := agents.Runner{
+		Engine: engine,
+		Harness: agents.Harness{
+			Model:            sess.Model,
+			MaxSteps:         sess.MaxToolSteps(),
+			Tools:            s.sessionToolRegistry(c, sess.Deployment),
+			StepLimitMessage: aiStepLimitMessage,
+		},
+	}
+	if !sess.AutoRun {
+		runner.Approve = func(context.Context, []agents.ToolCall) (bool, error) { return false, nil }
+	}
+	return runner
+}
 
-		sess.AddAssistantMessage(resp.Content, resp.ToolCalls)
+// sessionToolRegistry exposes the assistant's tools to the runner, each bound to
+// this request and the session's deployment so per-tool permission and
+// protected-mode checks run exactly as they do for a direct tool call.
+func (s *Server) sessionToolRegistry(c *gin.Context, deployment string) *agents.Registry {
+	specs := s.aiToolSpecs()
+	tools := make([]agents.Tool, 0, len(specs))
+	for _, spec := range specs {
+		spec := spec
+		tools = append(tools, agents.Tool{
+			Name:        spec.Name,
+			Description: spec.Description,
+			Parameters:  spec.Parameters,
+			Handler: func(_ context.Context, raw json.RawMessage) (string, error) {
+				return s.runAITool(c, deployment, ai.ToolCall{Name: spec.Name, Arguments: string(raw)}), nil
+			},
+		})
+	}
+	return agents.NewRegistry(tools...)
+}
 
-		if !sess.AutoRun {
-			sess.Pending = resp.ToolCalls
-			sess.Status = ai.SessionStatusAwaitingApproval
-			return nil
-		}
-
-		for _, call := range resp.ToolCalls {
-			sess.AddToolResult(call, s.runAITool(c, sess.Deployment, call))
-		}
+// absorbAdvance folds the messages the runner appended back into the stored
+// session, records the model, and sets the resulting status. A paused turn
+// records its pending calls; a real engine error is returned so the caller
+// leaves the session unsaved.
+func (s *Server) absorbAdvance(sess *ai.Session, conv *agents.Conversation, from int, engine *ai.CapturingEngine, err error) error {
+	if err != nil && !errors.Is(err, agents.ErrAwaitingApproval) {
+		return err
 	}
 
-	sess.AddAssistantMessage("I stopped after investigating several steps without reaching a confident answer. Ask a more specific question or check the details directly.", nil)
+	added := conv.Messages[from:]
+	final := err == nil
+	for i, m := range added {
+		switch m.Role {
+		case agents.RoleAssistant:
+			if i == len(added)-1 && final {
+				// The last assistant turn of a completed run is the answer; its
+				// suggestion block is parsed out and offered as one-click actions.
+				analysis, suggestions := ai.ParseSuggestions(m.Content)
+				sess.AddAssistantMessage(analysis, ai.ToolCallsFromAgents(m.ToolCalls))
+				sess.Suggested = s.scopeSuggestions(sess, suggestions)
+			} else {
+				sess.AddAssistantMessage(m.Content, ai.ToolCallsFromAgents(m.ToolCalls))
+			}
+		case agents.RoleTool:
+			sess.AddToolResult(ai.ToolCall{ID: m.ToolCallID, Name: m.Name}, m.Content)
+		}
+	}
+	if sess.Model == "" {
+		sess.Model = engine.LastModel()
+	}
+
+	if errors.Is(err, agents.ErrAwaitingApproval) {
+		last := conv.Messages[len(conv.Messages)-1]
+		sess.Pending = ai.ToolCallsFromAgents(last.ToolCalls)
+		sess.Status = ai.SessionStatusAwaitingApproval
+		return nil
+	}
+	sess.Pending = nil
 	sess.Status = ai.SessionStatusReady
 	return nil
 }
@@ -282,17 +340,18 @@ func (s *Server) approveAISessionTools(c *gin.Context) {
 		return
 	}
 
-	for _, call := range sess.Pending {
-		if req.Approved[call.ID] {
-			sess.AddToolResult(call, s.runAITool(c, sess.Deployment, call))
-		} else {
-			sess.AddToolResult(call, "The operator declined to run this command.")
-		}
+	// A missing or false decision means declined, so a nil map must not be read
+	// as "approve all"; an empty non-nil map declines every pending call.
+	decisions := req.Approved
+	if decisions == nil {
+		decisions = map[string]bool{}
 	}
-	sess.Pending = nil
-	sess.Status = ai.SessionStatusReady
-
-	if err := s.advanceSession(c, sess); err != nil {
+	engine := ai.NewCapturingEngine(s.aiProvider)
+	runner := s.aiRunner(c, sess, engine)
+	conv := &agents.Conversation{Messages: ai.MessagesToAgents(sess.Messages)}
+	from := len(conv.Messages)
+	_, err := runner.Resume(c.Request.Context(), conv, decisions)
+	if err := s.absorbAdvance(sess, conv, from, engine, err); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
