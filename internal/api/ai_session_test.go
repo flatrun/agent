@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -302,6 +304,41 @@ func TestAISessionPerCallApproval(t *testing.T) {
 	}
 	if !strings.Contains(results["list_deployments"], "declined") {
 		t.Errorf("declined tool should record the refusal, got %q", results["list_deployments"])
+	}
+}
+
+func TestAISessionRedactsSeededSecrets(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+	envContent := "DB_PASSWORD=hunter2secret\nAPP_NAME=myapp\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "myapp", ".env.flatrun"), []byte(envContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &scriptedProvider{responses: []*ai.Response{{Content: "Looks fine.", Model: "scripted"}}}
+	s.aiProvider = stub
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/sessions", map[string]interface{}{
+		"scope":      "deployment",
+		"deployment": "myapp",
+		"auto_run":   true,
+		"message":    "Review this file.",
+		"context":    "```\nDB_PASSWORD=hunter2secret\nhost=db\n```",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+
+	// The provider must never see the secret value from the seeded context.
+	var sent strings.Builder
+	for _, m := range stub.lastRequestMessages() {
+		sent.WriteString(m.Content)
+	}
+	if strings.Contains(sent.String(), "hunter2secret") {
+		t.Error("a deployment env value in seeded context reached the provider")
+	}
+	if !strings.Contains(sent.String(), "[REDACTED]") {
+		t.Error("expected the seeded secret to be replaced with a redaction marker")
 	}
 }
 
