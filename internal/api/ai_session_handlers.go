@@ -14,6 +14,18 @@ import (
 	"github.com/whilesmartgo/agents"
 )
 
+// redactSessionInput strips known secret values from operator-supplied text
+// before it enters the transcript, so seeded file content or pasted output
+// never carries a credential to the model provider.
+func (s *Server) redactSessionInput(sess *ai.Session, text string) string {
+	secrets := s.systemSecretValues()
+	if sess.Deployment != "" {
+		secrets = s.deploymentSecretValues(sess.Deployment)
+	}
+	redacted, _ := ai.NewRedactor(secrets).Redact(text)
+	return redacted
+}
+
 // composeUserMessage merges a short message with optional bulky
 // context. The model sees both; the operator's transcript shows only
 // the message.
@@ -72,6 +84,8 @@ func (s *Server) advanceSession(c *gin.Context, sess *ai.Session) error {
 
 // aiRunner assembles the runner for one session turn. A session that does not
 // auto-run pauses before any tools run, surfacing them for per-call approval.
+// Even with auto-run on, a batch containing a state-changing tool pauses:
+// reads run free, writes always ask.
 func (s *Server) aiRunner(c *gin.Context, sess *ai.Session, engine agents.Engine) agents.Runner {
 	runner := agents.Runner{
 		Engine: engine,
@@ -82,8 +96,16 @@ func (s *Server) aiRunner(c *gin.Context, sess *ai.Session, engine agents.Engine
 			StepLimitMessage: aiStepLimitMessage,
 		},
 	}
-	if !sess.AutoRun {
-		runner.Approve = func(context.Context, []agents.ToolCall) (bool, error) { return false, nil }
+	runner.Approve = func(_ context.Context, calls []agents.ToolCall) (bool, error) {
+		if !sess.AutoRun {
+			return false, nil
+		}
+		for _, call := range calls {
+			if s.toolMutates(call.Name) {
+				return false, nil
+			}
+		}
+		return true, nil
 	}
 	return runner
 }
@@ -220,7 +242,7 @@ func (s *Server) createAISession(c *gin.Context) {
 	prompt := ai.BuildSessionPrompt(req.Scope, req.Deployment, s.config.AI.DocsURL)
 	sess := ai.NewSession(req.Scope, req.Deployment, req.AutoRun, sessionActorFrom(c), prompt)
 	content, display := composeUserMessage(req.Message, req.Context)
-	sess.AddUserMessage(content, display, req.Seed)
+	sess.AddUserMessage(s.redactSessionInput(sess, content), display, req.Seed)
 
 	if err := s.advanceSession(c, sess); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -303,7 +325,7 @@ func (s *Server) postAISessionMessage(c *gin.Context) {
 	}
 
 	content, display := composeUserMessage(req.Message, req.Context)
-	sess.AddUserMessage(content, display, false)
+	sess.AddUserMessage(s.redactSessionInput(sess, content), display, false)
 	if err := s.advanceSession(c, sess); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

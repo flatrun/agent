@@ -20,11 +20,14 @@ import (
 
 const maxToolOutputChars = 8000
 
-// aiTool is one read-only investigation capability the model can call
-// to discover facts about this installation instead of guessing.
+// aiTool is one capability the model can call: read-only investigation
+// by default, or a state change when Mutates is set.
 type aiTool struct {
 	Spec ai.Tool
-	Run  func(s *Server, c *gin.Context, boundDeployment string, args map[string]interface{}) (string, error)
+	// Mutates marks a tool that changes state. A batch containing one always
+	// pauses for operator approval, even in an auto-run session.
+	Mutates bool
+	Run     func(s *Server, c *gin.Context, boundDeployment string, args map[string]interface{}) (string, error)
 }
 
 // destructiveCommand matches obviously state-changing shell tokens, so
@@ -304,6 +307,7 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 			},
 		},
 		"write_deployment_file": {
+			Mutates: true,
 			Spec: ai.Tool{
 				Name:        "write_deployment_file",
 				Description: "Create or overwrite a text file inside a deployment's directory, for example a config or compose file. Requires write access to the deployment; the path cannot escape the deployment directory.",
@@ -338,6 +342,7 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 			},
 		},
 		"run_quick_action": {
+			Mutates: true,
 			Spec: ai.Tool{
 				Name:        "run_quick_action",
 				Description: "Run one of a deployment's configured quick actions by its id. Requires write access to the deployment.",
@@ -370,6 +375,7 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 			},
 		},
 		"control_deployment": {
+			Mutates: true,
 			Spec: ai.Tool{
 				Name:        "control_deployment",
 				Description: "Start, stop, or restart a whole deployment. Requires write access to the deployment.",
@@ -606,6 +612,17 @@ func (s *Server) runAITool(c *gin.Context, boundDeployment string, call ai.ToolC
 		return "Error: " + err.Error()
 	}
 	return result
+}
+
+// toolMutates reports whether a named tool changes state, covering both
+// built-in tools and plugin-contributed ones.
+func (s *Server) toolMutates(name string) bool {
+	if plugin, tool, ok := parsePluginToolName(name); ok {
+		spec, found := s.pluginToolSpec(plugin, tool)
+		return found && spec.Mutates
+	}
+	t, ok := s.aiToolRegistry()[name]
+	return ok && t.Mutates
 }
 
 // toolAllowedDeploymentWrite resolves the target deployment and verifies the actor may write
