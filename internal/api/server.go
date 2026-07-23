@@ -101,6 +101,7 @@ type Server struct {
 	planStore          *plan.Store
 	aiProvider         ai.Provider
 	aiSessions         *ai.SessionStore
+	aiAgents           *ai.AgentStore
 	mcpHandler         http.Handler
 
 	jobs *jobRegistry
@@ -343,6 +344,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		setupHandlers:      setup.NewHandlers(setupManager, authManager),
 		planStore:          plan.NewStore(cfg.DeploymentsPath),
 		aiSessions:         ai.NewSessionStore(cfg.DeploymentsPath),
+		aiAgents:           ai.NewAgentStore(cfg.DeploymentsPath),
 		jobs:               newJobRegistry(),
 	}
 	s.runDeploymentAction = s.defaultRunDeploymentAction
@@ -510,6 +512,14 @@ func (s *Server) setupRoutes() {
 			// permissions, so the route only requires authentication. The
 			// handler itself refuses calls while mcp.enabled is off.
 			protected.Any("/mcp", s.mcpHTTP)
+
+			// Agents defined as flat markdown files, executed by the runtime
+			// as AI sessions through the same tools and approval gates.
+			protected.GET("/ai/agents", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listAgents)
+			protected.GET("/ai/agents/:name", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.getAgent)
+			protected.PUT("/ai/agents/:name", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.putAgent)
+			protected.DELETE("/ai/agents/:name", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.deleteAgent)
+			protected.POST("/ai/agents/:name/run", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.runAgent)
 
 			// Interactive AI sessions (agentic tool loop)
 			protected.POST("/ai/sessions", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.createAISession)

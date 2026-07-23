@@ -411,6 +411,68 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 				return truncateToolOutput(fmt.Sprintf("Ran %s on deployment %s.\n%s", action, name, output)), nil
 			},
 		},
+		"list_agents": {
+			Spec: ai.Tool{
+				Name:        "list_agents",
+				Description: "List the agents defined on this server: name, description, and scope. Read-only.",
+				Parameters:  objSchema(map[string]interface{}{}),
+			},
+			Run: func(s *Server, _ *gin.Context, _ string, _ map[string]interface{}) (string, error) {
+				agents, err := s.aiAgents.List()
+				if err != nil {
+					return "", err
+				}
+				if len(agents) == 0 {
+					return "No agents are defined yet.", nil
+				}
+				var b strings.Builder
+				for _, a := range agents {
+					scope := a.Scope
+					if a.Deployment != "" {
+						scope += ":" + a.Deployment
+					}
+					fmt.Fprintf(&b, "- %s (%s): %s\n", a.Name, scope, a.Description)
+				}
+				return b.String(), nil
+			},
+		},
+		"read_agent_file": {
+			Spec: ai.Tool{
+				Name:        "read_agent_file",
+				Description: "Read an agent's definition file: its frontmatter and instructions. Read-only.",
+				Parameters: objSchema(map[string]interface{}{
+					"name": strProp("The agent's name."),
+				}, "name"),
+			},
+			Run: func(s *Server, _ *gin.Context, _ string, args map[string]interface{}) (string, error) {
+				content, err := s.aiAgents.Raw(argString(args, "name"))
+				if err != nil {
+					return "", err
+				}
+				return truncateToolOutput(content), nil
+			},
+		},
+		"write_agent_file": {
+			Mutates: true,
+			Spec: ai.Tool{
+				Name:        "write_agent_file",
+				Description: "Create or update an agent: a markdown file with optional YAML frontmatter (description, scope, deployment) and a body of instructions. The definition is validated before it is written. Requires settings write access.",
+				Parameters: objSchema(map[string]interface{}{
+					"name":    strProp("The agent's name: letters, digits, dots, dashes, underscores."),
+					"content": strProp("The full file content: optional frontmatter plus the instructions."),
+				}, "name", "content"),
+			},
+			Run: func(s *Server, c *gin.Context, _ string, args map[string]interface{}) (string, error) {
+				if err := s.toolAllowedGlobalWrite(c); err != nil {
+					return "", err
+				}
+				agent, err := s.aiAgents.Write(argString(args, "name"), argString(args, "content"))
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Wrote agent %q (%s scope).", agent.Name, agent.Scope), nil
+			},
+		},
 		"get_security_events": {
 			Spec: ai.Tool{
 				Name:        "get_security_events",

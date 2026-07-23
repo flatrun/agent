@@ -32,18 +32,21 @@ type SessionActor struct {
 // transcript (including tool calls and results) plus the derived state
 // the UI needs. Stored as a flat JSON file, true to FlatRun.
 type Session struct {
-	ID         string            `json:"id"`
-	Scope      string            `json:"scope"`
-	Deployment string            `json:"deployment,omitempty"`
-	AutoRun    bool              `json:"auto_run"`
-	Status     string            `json:"status"`
-	Model      string            `json:"model,omitempty"`
-	CreatedBy  SessionActor      `json:"created_by"`
-	Messages   []Message         `json:"messages"`
-	Pending    []ToolCall        `json:"pending,omitempty"`
-	Suggested  []SuggestedAction `json:"suggested_actions"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	ID         string `json:"id"`
+	Scope      string `json:"scope"`
+	Deployment string `json:"deployment,omitempty"`
+	// Agent names the agent definition this session is a run of, when it was
+	// started from one rather than typed by an operator.
+	Agent     string            `json:"agent,omitempty"`
+	AutoRun   bool              `json:"auto_run"`
+	Status    string            `json:"status"`
+	Model     string            `json:"model,omitempty"`
+	CreatedBy SessionActor      `json:"created_by"`
+	Messages  []Message         `json:"messages"`
+	Pending   []ToolCall        `json:"pending,omitempty"`
+	Suggested []SuggestedAction `json:"suggested_actions"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 func NewSession(scope, deployment string, autoRun bool, actor SessionActor, systemPrompt string) *Session {
@@ -188,6 +191,7 @@ type SessionSummary struct {
 	ID         string       `json:"id"`
 	Scope      string       `json:"scope"`
 	Deployment string       `json:"deployment,omitempty"`
+	Agent      string       `json:"agent,omitempty"`
 	Status     string       `json:"status"`
 	Title      string       `json:"title"`
 	CreatedBy  SessionActor `json:"created_by"`
@@ -231,6 +235,7 @@ func (s *Session) Summary() SessionSummary {
 		ID:         s.ID,
 		Scope:      s.Scope,
 		Deployment: s.Deployment,
+		Agent:      s.Agent,
 		Status:     s.Status,
 		Title:      s.Title(),
 		CreatedBy:  s.CreatedBy,

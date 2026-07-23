@@ -189,6 +189,7 @@ func (s *Server) sessionResponse(c *gin.Context, sess *ai.Session) {
 		"id":                sess.ID,
 		"scope":             sess.Scope,
 		"deployment":        sess.Deployment,
+		"agent":             sess.Agent,
 		"auto_run":          sess.AutoRun,
 		"status":            sess.Status,
 		"model":             sess.Model,
