@@ -37,7 +37,12 @@ type Session struct {
 	Deployment string `json:"deployment,omitempty"`
 	// Agent names the agent definition this session is a run of, when it was
 	// started from one rather than typed by an operator.
-	Agent     string            `json:"agent,omitempty"`
+	Agent string `json:"agent,omitempty"`
+	// MaxSteps overrides the per-turn tool-round budget when set.
+	MaxSteps int `json:"max_steps,omitempty"`
+	// DryRun marks a run whose state-changing tools are declined instead of
+	// executed, reporting what would have happened.
+	DryRun    bool              `json:"dry_run,omitempty"`
 	AutoRun   bool              `json:"auto_run"`
 	Status    string            `json:"status"`
 	Model     string            `json:"model,omitempty"`
@@ -94,8 +99,14 @@ func (s *Session) AddToolResult(call ToolCall, result string) {
 }
 
 // MaxToolSteps is the per-turn cap on consecutive tool rounds, so a
-// misbehaving model cannot loop forever.
-func (s *Session) MaxToolSteps() int { return maxSessionToolSteps }
+// misbehaving model cannot loop forever. An agent may raise it, within the
+// definition's validated ceiling.
+func (s *Session) MaxToolSteps() int {
+	if s.MaxSteps > 0 {
+		return s.MaxSteps
+	}
+	return maxSessionToolSteps
+}
 
 var sessionIDPattern = regexp.MustCompile(`^ais_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 

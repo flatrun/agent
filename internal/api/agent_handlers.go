@@ -92,9 +92,21 @@ func (s *Server) runAgent(c *gin.Context) {
 		return
 	}
 
+	var req struct {
+		DryRun bool `json:"dry_run"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	prompt := ai.BuildSessionPrompt(agent.Scope, agent.Deployment, s.config.AI.DocsURL)
 	sess := ai.NewSession(agent.Scope, agent.Deployment, true, sessionActorFrom(c), prompt)
 	sess.Agent = agent.Name
+	sess.MaxSteps = agent.MaxSteps
+	sess.DryRun = req.DryRun
 	display := fmt.Sprintf("Run the %q agent", agent.Name)
 	sess.AddUserMessage(s.redactSessionInput(sess, agent.Instructions), display, false)
 

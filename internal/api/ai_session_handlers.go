@@ -82,26 +82,54 @@ func (s *Server) advanceSession(c *gin.Context, sess *ai.Session) error {
 	return s.absorbAdvance(sess, conv, from, engine, err)
 }
 
+// sessionPolicy resolves the governance for a session. A plain session has
+// none; an agent run re-reads its definition each turn, so the file stays the
+// source of truth. An agent deleted mid-run keeps the default gating.
+func (s *Server) sessionPolicy(sess *ai.Session) *ai.AgentPolicy {
+	if sess.Agent == "" {
+		return nil
+	}
+	agent, err := s.aiAgents.Get(sess.Agent)
+	if err != nil {
+		return nil
+	}
+	return agent.Policy
+}
+
 // aiRunner assembles the runner for one session turn. A session that does not
 // auto-run pauses before any tools run, surfacing them for per-call approval.
-// Even with auto-run on, a batch containing a state-changing tool pauses:
-// reads run free, writes always ask.
+// Even with auto-run on, a batch containing a state-changing tool pauses,
+// unless the agent's governance auto-approves that tool; governance can also
+// force a pause for any tool. A dry run declines every state change instead
+// of executing or pausing.
 func (s *Server) aiRunner(c *gin.Context, sess *ai.Session, engine agents.Engine) agents.Runner {
+	policy := s.sessionPolicy(sess)
 	runner := agents.Runner{
 		Engine: engine,
 		Harness: agents.Harness{
 			Model:            sess.Model,
 			MaxSteps:         sess.MaxToolSteps(),
-			Tools:            s.sessionToolRegistry(c, sess.Deployment),
+			Tools:            s.sessionToolRegistry(c, sess.Deployment, policy),
 			StepLimitMessage: aiStepLimitMessage,
 		},
+	}
+	if sess.DryRun {
+		runner.Authorize = func(_ context.Context, tool agents.Tool, _ agents.ToolCall) error {
+			return fmt.Errorf("dry run: %s was not executed; it would have run with the given arguments", tool.Name)
+		}
+		return runner
 	}
 	runner.Approve = func(_ context.Context, calls []agents.ToolCall) (bool, error) {
 		if !sess.AutoRun {
 			return false, nil
 		}
 		for _, call := range calls {
-			if s.toolMutates(call.Name) {
+			// A denied tool is not registered; the call fails as unknown, so
+			// pausing for it would stall the run on a tool that cannot exist.
+			if policy.Denies(call.Name) {
+				continue
+			}
+			if policy.RequiresPause(call.Name, s.toolMutates(call.Name)) {
 				return false, nil
 			}
 		}
@@ -112,16 +140,21 @@ func (s *Server) aiRunner(c *gin.Context, sess *ai.Session, engine agents.Engine
 
 // sessionToolRegistry exposes the assistant's tools to the runner, each bound to
 // this request and the session's deployment so per-tool permission and
-// protected-mode checks run exactly as they do for a direct tool call.
-func (s *Server) sessionToolRegistry(c *gin.Context, deployment string) *agents.Registry {
+// protected-mode checks run exactly as they do for a direct tool call. A tool
+// the governance denies is not registered at all, so the model never sees it.
+func (s *Server) sessionToolRegistry(c *gin.Context, deployment string, policy *ai.AgentPolicy) *agents.Registry {
 	specs := s.aiToolSpecs()
 	tools := make([]agents.Tool, 0, len(specs))
 	for _, spec := range specs {
+		if policy.Denies(spec.Name) {
+			continue
+		}
 		spec := spec
 		tools = append(tools, agents.Tool{
 			Name:        spec.Name,
 			Description: spec.Description,
 			Parameters:  spec.Parameters,
+			Mutates:     s.toolMutates(spec.Name),
 			Handler: func(_ context.Context, raw json.RawMessage) (string, error) {
 				return s.runAITool(c, deployment, ai.ToolCall{Name: spec.Name, Arguments: string(raw)}), nil
 			},
@@ -190,6 +223,7 @@ func (s *Server) sessionResponse(c *gin.Context, sess *ai.Session) {
 		"scope":             sess.Scope,
 		"deployment":        sess.Deployment,
 		"agent":             sess.Agent,
+		"dry_run":           sess.DryRun,
 		"auto_run":          sess.AutoRun,
 		"status":            sess.Status,
 		"model":             sess.Model,
@@ -368,6 +402,15 @@ func (s *Server) approveAISessionTools(c *gin.Context) {
 	decisions := req.Approved
 	if decisions == nil {
 		decisions = map[string]bool{}
+	}
+	// Calls the batch carried along that never needed a pause themselves, reads
+	// or governance-auto-approved writes, run without an explicit decision. An
+	// explicit decline from the operator still wins.
+	policy := s.sessionPolicy(sess)
+	for _, call := range sess.Pending {
+		if _, decided := decisions[call.ID]; !decided && !policy.RequiresPause(call.Name, s.toolMutates(call.Name)) {
+			decisions[call.ID] = true
+		}
 	}
 	engine := ai.NewCapturingEngine(s.aiProvider)
 	runner := s.aiRunner(c, sess, engine)
