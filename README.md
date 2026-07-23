@@ -3,7 +3,7 @@
 [![CI](https://github.com/flatrun/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/flatrun/agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-FlatRun turns one server into a full hosting control plane: deploy apps, terminate SSL, manage DNS, run backups, give users scoped access, schedule jobs, and ask a built-in AI assistant what went wrong. It is a single Go agent with a web UI, a CLI, and GitHub Actions over standard Docker Compose. Everything it manages is plain files and standard Docker Compose on disk, so you operate it with the tools you already know.
+FlatRun turns one server into a self-operating platform: a hosting OS that deploys apps, terminates SSL, manages DNS, runs backups, and schedules jobs; a full platform API that automates all of it; and an agent engine that runs agents defined as plain markdown files, working under governance you set. It is a single Go binary with a web UI, a CLI, and GitHub Actions over standard Docker Compose. Everything it manages is plain files on disk, so you operate it with the tools you already know.
 
 This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
 
@@ -20,7 +20,8 @@ FlatRun inverts that. Every app is a directory: a `docker-compose.yml` and its d
 - **Copy = migrate**: a deployment is a directory. `tar` it, move it, `docker compose up -d`. Backups are file backups.
 - **Built-in observability**: per-container metrics are collected as time series using OpenTelemetry container semantic conventions, exported over OTLP to any backend you point them at, and served for scraping in Prometheus format, so Grafana, SigLens, SigNoz or anything else reads exactly what the built-in UI draws. No separate collector to run, and no lock-in on your own numbers.
 - **S3-compatible backups**: schedule deployment backups to any S3-compatible object store. Set your own endpoint and bucket; it is not tied to AWS.
-- **AI-native operation**: a built-in assistant reads a deployment's logs and config and answers in plain operator terms: diagnose a failure, suggest improvements, harden security, or explain what a stack is doing. It is off until you configure a provider, and secrets are redacted before anything is sent.
+- **AI-native operation**: a built-in assistant reads a deployment's logs and config and answers in plain operator terms: diagnose a failure, suggest improvements, harden security, or explain what a stack is doing. It carries out changes under governance you set. It is off until you configure a provider, and secrets are redacted before anything is sent.
+- **Agent-native**: define agents as plain markdown files, or describe one to the assistant and let it write the file. The runtime executes them through governed tools: policies decide what runs freely, what needs your sign-off, and what never runs. The same tool set is exposed over a standard MCP server for external agents. See [docs/AGENTS.md](docs/AGENTS.md).
 - **Automatable end to end**: the same actions are available from the UI, the `flatrun` CLI, and a GitHub Action, so a deploy is a dashboard click or a CI step.
 
 ## Quick start
