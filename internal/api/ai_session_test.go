@@ -307,6 +307,46 @@ func TestAISessionPerCallApproval(t *testing.T) {
 	}
 }
 
+func TestAutoRunStillPausesForMutatingTools(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+
+	s.aiProvider = &scriptedProvider{responses: []*ai.Response{
+		{ToolCalls: []ai.ToolCall{{ID: "c1", Name: "write_deployment_file",
+			Arguments: `{"path":"conf/app.conf","content":"key = value\n"}`}}, Model: "scripted"},
+		{Content: "Written.", Model: "scripted"},
+	}}
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/sessions", map[string]interface{}{
+		"scope": "deployment", "deployment": "myapp", "auto_run": true,
+		"message": "set key to value in conf/app.conf",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+	// Auto-run must not silently execute a state-changing tool.
+	if parsed["status"] != "awaiting_approval" {
+		t.Fatalf("status = %v, want awaiting_approval", parsed["status"])
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "myapp", "conf", "app.conf")); !os.IsNotExist(err) {
+		t.Fatal("the file must not be written before approval")
+	}
+
+	id := parsed["id"].(string)
+	resp, parsed = doJSON(t, http.MethodPost, ts.URL+"/api/ai/sessions/"+id+"/approve",
+		map[string]interface{}{"approved": map[string]bool{"c1": true}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve status = %d, body %v", resp.StatusCode, parsed)
+	}
+	if parsed["status"] != "ready" {
+		t.Errorf("status after approve = %v", parsed["status"])
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "myapp", "conf", "app.conf"))
+	if err != nil || string(data) != "key = value\n" {
+		t.Errorf("approved write not applied: %q err=%v", string(data), err)
+	}
+}
+
 func TestAISessionRedactsSeededSecrets(t *testing.T) {
 	s, tmpDir, ts := setupPlanTestServer(t)
 	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
