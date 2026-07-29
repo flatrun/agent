@@ -650,6 +650,53 @@ func TestUpdateComposeFile_SyncsMetadata(t *testing.T) {
 	}
 }
 
+func TestUpdateComposeFile_PrunesOldBackups(t *testing.T) {
+	tmpDir := t.TempDir()
+	deployDir := filepath.Join(tmpDir, "myapp")
+	if err := os.MkdirAll(deployDir, 0755); err != nil {
+		t.Fatalf("Failed to create deploy dir: %v", err)
+	}
+
+	composePath := filepath.Join(deployDir, "docker-compose.yml")
+	if err := os.WriteFile(composePath, []byte("services:\n  app:\n    image: myapp:latest\n"), 0644); err != nil {
+		t.Fatalf("Failed to write compose: %v", err)
+	}
+
+	// Seed backups using the exact production filename shape written by
+	// UpdateComposeFile (discovery.go: composePath + ".bak." + yyyymmddhhmmss).
+	// Older timestamps sort earlier, so the two oldest should be pruned.
+	seeded := []string{
+		"20200101000001", "20200101000002", "20200101000003",
+		"20200101000004", "20200101000005", "20200101000006",
+	}
+	for _, ts := range seeded {
+		if err := os.WriteFile(composePath+".bak."+ts, []byte("old"), 0644); err != nil {
+			t.Fatalf("Failed to seed backup %s: %v", ts, err)
+		}
+	}
+
+	d := NewDiscovery(tmpDir)
+	if err := d.UpdateComposeFile("myapp", "services:\n  app:\n    image: myapp:v2\n"); err != nil {
+		t.Fatalf("UpdateComposeFile failed: %v", err)
+	}
+
+	backups, err := filepath.Glob(composePath + ".bak.*")
+	if err != nil {
+		t.Fatalf("Glob failed: %v", err)
+	}
+	if len(backups) != maxComposeBackups {
+		t.Fatalf("backup count = %d, want %d", len(backups), maxComposeBackups)
+	}
+
+	// The two oldest seeded backups must be gone; the newest seeded ones remain.
+	if _, err := os.Stat(composePath + ".bak.20200101000001"); !os.IsNotExist(err) {
+		t.Error("oldest backup should have been pruned")
+	}
+	if _, err := os.Stat(composePath + ".bak.20200101000006"); err != nil {
+		t.Errorf("newest seeded backup should be retained: %v", err)
+	}
+}
+
 func TestExtractBindMounts(t *testing.T) {
 	tests := []struct {
 		name     string

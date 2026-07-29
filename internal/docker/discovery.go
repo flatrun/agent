@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -579,6 +580,8 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 		return err
 	}
 
+	d.pruneComposeBackups(composePath, maxComposeBackups)
+
 	metadataPath := filepath.Join(dirPath, "service.yml")
 	if _, err := os.Stat(metadataPath); err == nil {
 		if newMeta := d.generateMetadataFromCompose(composePath, name); newMeta != nil {
@@ -600,6 +603,30 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 	}
 
 	return nil
+}
+
+// maxComposeBackups bounds how many timestamped compose backups are retained
+// after a rewrite. The most recent ones are kept so a rollback copy still exists
+// while older backups no longer accumulate in the deployment directory.
+const maxComposeBackups = 5
+
+// pruneComposeBackups keeps the newest `keep` `<compose>.bak.<ts>` files next to
+// composePath and removes the rest. The timestamp suffix is written with a
+// lexicographically ordered layout, so a sorted glob is chronological.
+func (d *Discovery) pruneComposeBackups(composePath string, keep int) {
+	if keep < 0 {
+		keep = 0
+	}
+
+	matches, err := filepath.Glob(composePath + ".bak.*")
+	if err != nil || len(matches) <= keep {
+		return
+	}
+
+	sort.Strings(matches)
+	for _, stale := range matches[:len(matches)-keep] {
+		_ = os.Remove(stale)
+	}
 }
 
 func (d *Discovery) SaveMetadata(name string, metadata *models.ServiceMetadata) error {
