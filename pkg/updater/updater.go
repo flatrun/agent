@@ -52,12 +52,12 @@ type Asset struct {
 }
 
 type UpdateResult struct {
-	CurrentVersion  string
-	LatestVersion   string
-	UpdateAvailable bool
-	Downloaded      bool
-	Installed       bool
-	Message         string
+	CurrentVersion  string `json:"current_version"`
+	LatestVersion   string `json:"latest_version"`
+	UpdateAvailable bool   `json:"update_available"`
+	Downloaded      bool   `json:"downloaded"`
+	Installed       bool   `json:"installed"`
+	Message         string `json:"message"`
 }
 
 func CheckForUpdate(channel Channel) (*UpdateResult, error) {
