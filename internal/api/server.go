@@ -591,6 +591,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/system/services/:name/stop", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.stopSystemService)
 			protected.POST("/system/services/:name/restart", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.restartSystemService)
 
+			protected.GET("/system/update", s.authMiddleware.RequirePermission(auth.PermSystemRead), s.getSystemUpdate)
+			protected.POST("/system/update", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.triggerSystemUpdate)
+
 			// Deployment file endpoints
 			protected.GET("/deployments/:name/files", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentFiles)
 			protected.GET("/deployments/:name/files/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentFile)

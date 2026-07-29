@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ const (
 type Release struct {
 	TagName     string  `json:"tag_name"`
 	Name        string  `json:"name"`
+	Body        string  `json:"body"`
 	PublishedAt string  `json:"published_at"`
 	Prerelease  bool    `json:"prerelease"`
 	Draft       bool    `json:"draft"`
@@ -83,6 +85,88 @@ func CheckForUpdate(channel Channel) (*UpdateResult, error) {
 	}
 
 	return result, nil
+}
+
+// ReleaseInfo is a release presented to a client: the version without its `v`
+// prefix, whether it is a prerelease, when it was published, and its changelog.
+type ReleaseInfo struct {
+	Version     string `json:"version"`
+	Prerelease  bool   `json:"prerelease"`
+	PublishedAt string `json:"published_at"`
+	Changelog   string `json:"changelog"`
+}
+
+// Availability describes the update picture for a channel: the running version,
+// the highest version the channel offers, whether that is an upgrade, and every
+// installable release newest-first.
+type Availability struct {
+	CurrentVersion  string        `json:"current_version"`
+	Channel         Channel       `json:"channel"`
+	LatestVersion   string        `json:"latest_version"`
+	UpdateAvailable bool          `json:"update_available"`
+	Releases        []ReleaseInfo `json:"releases"`
+}
+
+// ListAvailable returns every release the channel can install, newest-first by
+// semver, so a client can present the choices and their changelogs without
+// reimplementing the channel and ordering rules.
+func ListAvailable(channel Channel) (*Availability, error) {
+	releases, err := getReleases()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list releases: %w", err)
+	}
+
+	type ranked struct {
+		info ReleaseInfo
+		ver  *semver.Version
+	}
+	var ranks []ranked
+	for _, r := range releases {
+		if r.Draft {
+			continue
+		}
+		if r.Prerelease && channel != ChannelPrerelease {
+			continue
+		}
+		v, err := semver.NewVersion(strings.TrimPrefix(r.TagName, "v"))
+		if err != nil {
+			continue
+		}
+		ranks = append(ranks, ranked{
+			info: ReleaseInfo{
+				Version:     strings.TrimPrefix(r.TagName, "v"),
+				Prerelease:  r.Prerelease,
+				PublishedAt: r.PublishedAt,
+				Changelog:   r.Body,
+			},
+			ver: v,
+		})
+	}
+
+	sort.Slice(ranks, func(i, j int) bool {
+		return ranks[i].ver.Compare(ranks[j].ver) > 0
+	})
+
+	current := currentVersion()
+	result := &Availability{
+		CurrentVersion: current,
+		Channel:        channel,
+		Releases:       make([]ReleaseInfo, 0, len(ranks)),
+	}
+	for _, r := range ranks {
+		result.Releases = append(result.Releases, r.info)
+	}
+	if len(result.Releases) > 0 {
+		result.LatestVersion = result.Releases[0].Version
+		result.UpdateAvailable = isNewer(result.LatestVersion, current)
+	}
+
+	return result, nil
+}
+
+func currentVersion() string {
+	v := strings.TrimSuffix(version.Get().Version, "-dev")
+	return strings.TrimPrefix(v, "v")
 }
 
 func Update(force bool, channel Channel) (*UpdateResult, error) {
