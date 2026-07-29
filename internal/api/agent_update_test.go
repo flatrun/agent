@@ -30,15 +30,15 @@ func TestParseChannel(t *testing.T) {
 
 // A malformed body must be rejected before any release is fetched or installed,
 // so an update is never attempted on an unparseable request.
-func TestTriggerSystemUpdateRejectsBadBodyBeforeUpdating(t *testing.T) {
+func TestTriggerAgentUpdateRejectsBadBodyBeforeUpdating(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	server := &Server{}
 	router := gin.New()
 	router.Use(actorMiddleware(testActor(auth.RoleAdmin, nil)))
-	router.POST("/system/update", server.triggerSystemUpdate)
+	router.POST("/agent/update", server.triggerAgentUpdate)
 
-	req := httptest.NewRequest(http.MethodPost, "/system/update", bytes.NewBufferString("{invalid"))
+	req := httptest.NewRequest(http.MethodPost, "/agent/update", bytes.NewBufferString("{invalid"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)

@@ -16,10 +16,10 @@ func parseChannel(v string) updater.Channel {
 	return updater.ChannelStable
 }
 
-// getSystemUpdate reports the running version and the releases installable on
+// getAgentUpdate reports the running version and the releases installable on
 // the requested channel, newest-first with their changelogs, so the dashboard
 // can show what an update would move to without shelling out to the CLI.
-func (s *Server) getSystemUpdate(c *gin.Context) {
+func (s *Server) getAgentUpdate(c *gin.Context) {
 	channel := parseChannel(c.Query("channel"))
 
 	availability, err := updater.ListAvailable(channel)
@@ -31,19 +31,19 @@ func (s *Server) getSystemUpdate(c *gin.Context) {
 	c.JSON(http.StatusOK, availability)
 }
 
-type systemUpdateRequest struct {
+type agentUpdateRequest struct {
 	Channel string `json:"channel"`
 	Force   bool   `json:"force"`
 	Restart bool   `json:"restart"`
 }
 
-// triggerSystemUpdate installs the newest release on the requested channel. It
+// triggerAgentUpdate installs the newest release on the requested channel. It
 // runs synchronously: the download and install complete in seconds and the
 // result reports what happened, after which the dashboard confirms the new
 // version from the health endpoint. When restart is requested the agent
 // restarts its own service, which the caller expects to drop the connection.
-func (s *Server) triggerSystemUpdate(c *gin.Context) {
-	var req systemUpdateRequest
+func (s *Server) triggerAgentUpdate(c *gin.Context) {
+	var req agentUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

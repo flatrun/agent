@@ -481,6 +481,9 @@ func (s *Server) setupRoutes() {
 			protected.GET("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getSettings)
 			protected.PUT("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSettings)
 			protected.PUT("/settings/security", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSecuritySettings)
+
+			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getAgentUpdate)
+			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.triggerAgentUpdate)
 			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getNotificationTargets)
 			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationTargets)
 			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.testNotification)
@@ -590,9 +593,6 @@ func (s *Server) setupRoutes() {
 			protected.POST("/system/services/:name/start", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.startSystemService)
 			protected.POST("/system/services/:name/stop", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.stopSystemService)
 			protected.POST("/system/services/:name/restart", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.restartSystemService)
-
-			protected.GET("/system/update", s.authMiddleware.RequirePermission(auth.PermSystemRead), s.getSystemUpdate)
-			protected.POST("/system/update", s.authMiddleware.RequirePermission(auth.PermSystemWrite), s.triggerSystemUpdate)
 
 			// Deployment file endpoints
 			protected.GET("/deployments/:name/files", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentFiles)
