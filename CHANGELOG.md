@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.4.0-beta.1] - 2026-07-29
+
+First beta of the Albacore release: full deployment lifecycle and self-healing operations. Some Albacore items remain in progress and are not in this beta.
+
+### Added
+- Observability with a native time-series UI: OTel-semconv container metrics and per-deployment serving metrics (rate, errors, average and p95) drawn from the proxy's own request record, on-disk history folded to per-minute points so the 6h and 24h ranges hold, OTLP export with a scrape endpoint, and log following
+- Self-healing for FlatRun-managed deployments: unhealthy containers restart with capped retries and a cooldown so an external container can't trigger a restart loop, and the watcher reports when it gives up
+- Notification system with email and webhook targets and test-send; metric thresholds alert through the configured targets
+- Plugin framework: a plugin can inject UI sections, contribute settings, and expose tools the AI assistant can call
+- S3-compatible remote backups to AWS, R2, B2 or MinIO on top of the always-local copy, best-effort so a remote outage never fails a backup, with object-storage secrets held in the credential manager; seeds an object-store abstraction and a MinIO template
+- AI assistant tools to write a deployment file, run a quick action, start/stop/restart a deployment, and summarize a deployment's security events, each requiring deployment write access and honoring protected mode
+- MCP server exposing the shared assistant tool set, and a deployment-scoped file editor whose state-changing tools pause for per-call approval even in auto-run sessions
+- Agents defined as flat markdown files in `.flatrun/agents/`, run by the runtime through the shared tool set so permission gates, protected mode, secret redaction and the state-change approval pause all carry over; created via the assistant, the panel editor, or by dropping a file
+- Listing of saved AI chat sessions, most recent first, each titled from its first message; reopening one restores its transcript and scope
+- Firewall enforcement: a saved policy is translated to nftables and applied, re-applied at startup and removed when disabled, touching only FlatRun's own table and always keeping loopback, established connections and the active SSH port open
+- Opt-in per-domain long browser cache for static assets, keyed off the request path's extension
+- Start/stop/restart run as background jobs whose status and buffered output survive a page reload, streamed over websocket with a poll fallback and serialized per deployment
+- Seeding an empty bind mount from image or running-container content, browsing a running service's files onto the host, and unmounting tagged paths
+- Routing-only hostnames for externally-fronted proxies, sharing the primary domain's certificate over SNI and kept out of issuance and renewal
+- Dashboards screen to create, arrange and manage panels over container and serving metrics
+
+### Changed
+- Deployment status comes from a single Engine API query across all deployments instead of per-deployment `docker compose ps`, so listing is flat with the deployment count rather than scaling with it (list ~486ms to ~26ms at 50 deployments)
+- Proxy pools connections to upstreams with real keepalive, preserving the restart rediscovery the previous per-request routing provided where the nginx image supports `resolve`; serving also gains HTTP/1.1 to upstreams, buffered access logging, wider gzip and larger proxy buffers
+- Certificate auto-renewal defaults on and runs whenever certbot is enabled, with each certificate's own setting winning over the global default; single renew reports success only when something was reissued
+- Nginx vhost generation: configurable WebSocket timeouts, conditional `Connection: upgrade` via a map, `ssl_stapling` skipped when the certificate has no OCSP responder, and the target service and port validated before a vhost is saved
+- Force-recreate, no-cache rebuild and non-cached pull exposed so updated env vars and images take effect without a manual compose run
+- AI assistant loop runs on the shared agents runner with per-call tool approval
+- UI refresh: dark mode, design tokens, Iconify iconography, a reworked assistant and global search
+- Primary-service detection prefers `app`/`web` before the first service with ports
+- Example configuration ships placeholder values only
+
+### Fixed
+- General-purpose HTTP clients (curl, wget, uptime monitors, webhooks) were matched as attack scanners and blocked on sight; scanner matching is now limited to self-identifying tools and ordinary clients are held to volumetric thresholds, with every auto-block recording the rule, count and paths that tripped it
+- Health-watcher restart no longer holds the read lock across the docker call; notification target URLs, including SMTP passwords, are masked in API responses and stored owner-only; the host-wide auto-restart toggle is gated on settings-write rather than a deployment scope
+- Additional-domain proxying routed by bare service name and intermittently served another deployment's container on a shared host; it now routes by the unique deployment name
+- Compose validation resolves a relative `env_file` against the deployment directory on the image-set and update paths
+- `SaveMetadata` failures during compose updates are surfaced instead of silently discarded, so compose and `service.yml` can't diverge
+- ACME challenge locations set `access_log off` and `log_not_found off` so cleaned-up challenge 404s stop burying real errors
+- Top-level `--help` lists `update`, `setup` and `version`, and `help` prints usage instead of starting the server
+
 ## [0.3.0] - 2026-06-08
 
 ### Added
