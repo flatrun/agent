@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
+
 	"github.com/flatrun/agent/pkg/version"
 )
 
@@ -23,10 +25,21 @@ const (
 	BinaryName  = "flatrun-agent"
 )
 
+// Channel selects which releases an update considers. Stable ignores
+// prereleases; Prerelease is the opt-in channel that also sees betas.
+type Channel string
+
+const (
+	ChannelStable     Channel = "stable"
+	ChannelPrerelease Channel = "prerelease"
+)
+
 type Release struct {
 	TagName     string  `json:"tag_name"`
 	Name        string  `json:"name"`
 	PublishedAt string  `json:"published_at"`
+	Prerelease  bool    `json:"prerelease"`
+	Draft       bool    `json:"draft"`
 	Assets      []Asset `json:"assets"`
 }
 
@@ -45,12 +58,12 @@ type UpdateResult struct {
 	Message         string
 }
 
-func CheckForUpdate() (*UpdateResult, error) {
+func CheckForUpdate(channel Channel) (*UpdateResult, error) {
 	current := version.Get()
 	currentVer := strings.TrimSuffix(current.Version, "-dev")
 	currentVer = strings.TrimPrefix(currentVer, "v")
 
-	release, err := getLatestRelease()
+	release, err := getTargetRelease(channel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check for updates: %w", err)
 	}
@@ -60,7 +73,7 @@ func CheckForUpdate() (*UpdateResult, error) {
 	result := &UpdateResult{
 		CurrentVersion:  currentVer,
 		LatestVersion:   latestVer,
-		UpdateAvailable: latestVer != currentVer,
+		UpdateAvailable: isNewer(latestVer, currentVer),
 	}
 
 	if result.UpdateAvailable {
@@ -72,8 +85,8 @@ func CheckForUpdate() (*UpdateResult, error) {
 	return result, nil
 }
 
-func Update(force bool) (*UpdateResult, error) {
-	result, err := CheckForUpdate()
+func Update(force bool, channel Channel) (*UpdateResult, error) {
+	result, err := CheckForUpdate(channel)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +95,7 @@ func Update(force bool) (*UpdateResult, error) {
 		return result, nil
 	}
 
-	release, err := getLatestRelease()
+	release, err := getTargetRelease(channel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get release info: %w", err)
 	}
@@ -139,8 +152,67 @@ func RestartService() error {
 	return nil
 }
 
-func getLatestRelease() (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", GitHubOwner, GitHubRepo)
+// getTargetRelease returns the highest-versioned release visible to the channel.
+// The stable channel skips prereleases; the prerelease channel considers both,
+// so a newer stable is still offered to a beta user. Ordering is by semver, not
+// publish date or string comparison, so a prerelease is ranked below its final
+// and an older tag can never masquerade as the latest.
+func getTargetRelease(channel Channel) (*Release, error) {
+	releases, err := getReleases()
+	if err != nil {
+		return nil, err
+	}
+
+	target := selectRelease(releases, channel)
+	if target == nil {
+		return nil, fmt.Errorf("no %s release found", channel)
+	}
+	return target, nil
+}
+
+func selectRelease(releases []Release, channel Channel) *Release {
+	var best *Release
+	var bestVer *semver.Version
+
+	for i := range releases {
+		r := releases[i]
+		if r.Draft {
+			continue
+		}
+		if r.Prerelease && channel != ChannelPrerelease {
+			continue
+		}
+
+		v, err := semver.NewVersion(strings.TrimPrefix(r.TagName, "v"))
+		if err != nil {
+			continue
+		}
+		if bestVer == nil || v.Compare(bestVer) > 0 {
+			best = &releases[i]
+			bestVer = v
+		}
+	}
+
+	return best
+}
+
+// isNewer reports whether latest is a strictly higher semver than current.
+// A current version that does not parse (e.g. a dev build) is treated as
+// updatable so the CLI is never stuck when it cannot read its own version.
+func isNewer(latest, current string) bool {
+	lv, err := semver.NewVersion(strings.TrimPrefix(latest, "v"))
+	if err != nil {
+		return false
+	}
+	cv, err := semver.NewVersion(strings.TrimPrefix(current, "v"))
+	if err != nil {
+		return true
+	}
+	return lv.Compare(cv) > 0
+}
+
+func getReleases() ([]Release, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=100", GitHubOwner, GitHubRepo)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
@@ -160,12 +232,12 @@ func getLatestRelease() (*Release, error) {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
 
-	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	var releases []Release
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return nil, err
 	}
 
-	return &release, nil
+	return releases, nil
 }
 
 func findAssetForPlatform(assets []Asset) *Asset {
