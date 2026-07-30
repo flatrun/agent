@@ -15,11 +15,16 @@ import (
 // deploy from, instead of inline compose content. Type selects the provider
 // (e.g. "git"); Ref is the provider's locator (a repository URL for git).
 type deploymentSource struct {
-	Type         string `json:"type"`
-	Ref          string `json:"ref"`
-	Branch       string `json:"branch,omitempty"`
-	Subpath      string `json:"subpath,omitempty"`
+	Type    string `json:"type"`
+	Ref     string `json:"ref"`
+	Branch  string `json:"branch,omitempty"`
+	Subpath string `json:"subpath,omitempty"`
+	// CredentialID names a stored credential to authenticate a private source.
+	// Username and Token authenticate inline instead, for a one-off private
+	// source with no saved credential. CredentialID wins when both are given.
 	CredentialID string `json:"credential_id,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Token        string `json:"token,omitempty"`
 }
 
 // fetchedSource is a materialized source ready to become a deployment: the
@@ -42,7 +47,7 @@ func (s *Server) fetchDeploymentSource(ctx context.Context, req *deploymentSourc
 		return nil, fmt.Errorf("unknown source type %q", req.Type)
 	}
 
-	auth, err := s.resolveSourceAuth(req.CredentialID)
+	auth, err := s.resolveSourceAuth(req)
 	if err != nil {
 		return nil, err
 	}
@@ -91,18 +96,22 @@ func (s *Server) fetchDeploymentSource(ctx context.Context, req *deploymentSourc
 	}, nil
 }
 
-// resolveSourceAuth turns a stored credential id into provider auth. A missing id
-// means an anonymous fetch (a public repository).
-func (s *Server) resolveSourceAuth(credentialID string) (*source.Auth, error) {
-	if credentialID == "" {
-		return nil, nil
+// resolveSourceAuth turns a request's credential into provider auth: a stored
+// credential id when given, otherwise an inline token. Neither means an
+// anonymous fetch (a public repository).
+func (s *Server) resolveSourceAuth(req *deploymentSource) (*source.Auth, error) {
+	if req.CredentialID != "" {
+		cred, err := s.credentialsManager.GetGenericCredential(req.CredentialID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load source credential: %w", err)
+		}
+		return &source.Auth{
+			Username: cred.Data["username"],
+			Token:    cred.Data["token"],
+		}, nil
 	}
-	cred, err := s.credentialsManager.GetGenericCredential(credentialID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load source credential: %w", err)
+	if req.Token != "" {
+		return &source.Auth{Username: req.Username, Token: req.Token}, nil
 	}
-	return &source.Auth{
-		Username: cred.Data["username"],
-		Token:    cred.Data["token"],
-	}, nil
+	return nil, nil
 }

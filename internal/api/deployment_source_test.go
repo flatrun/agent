@@ -35,6 +35,22 @@ func gitRepoWithCompose(t *testing.T) string {
 	return dir
 }
 
+func TestResolveSourceAuth(t *testing.T) {
+	s := &Server{}
+
+	if auth, err := s.resolveSourceAuth(&deploymentSource{}); err != nil || auth != nil {
+		t.Errorf("no credential should mean anonymous: auth=%v err=%v", auth, err)
+	}
+
+	auth, err := s.resolveSourceAuth(&deploymentSource{Username: "me", Token: "secret"})
+	if err != nil {
+		t.Fatalf("inline token: %v", err)
+	}
+	if auth == nil || auth.Token != "secret" || auth.Username != "me" {
+		t.Errorf("inline token not resolved: %+v", auth)
+	}
+}
+
 func TestFetchDeploymentSource_UnknownType(t *testing.T) {
 	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{})}
 
