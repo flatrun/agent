@@ -666,6 +666,10 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/credentials/:id", s.authMiddleware.RequirePermission(auth.PermRegistriesDelete), s.deleteCredential)
 			protected.POST("/credentials/:id/test", s.authMiddleware.RequirePermission(auth.PermRegistriesRead), s.testCredential)
 
+			protected.GET("/source-credentials", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listSourceCredentials)
+			protected.POST("/source-credentials", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.createSourceCredential)
+			protected.DELETE("/source-credentials/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.deleteSourceCredential)
+
 			// Storage credential endpoints (S3 and other object-storage secrets)
 			protected.GET("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStorageCredentials)
 			protected.POST("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.createStorageCredential)
