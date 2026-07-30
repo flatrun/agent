@@ -372,8 +372,7 @@ func TestMultipleDatabaseConfigs(t *testing.T) {
 	primary := metadata.GetPrimaryDatabase()
 	if primary == nil {
 		t.Fatal("GetPrimaryDatabase() returned nil")
-	}
-	if primary.Alias != "primary" {
+	} else if primary.Alias != "primary" {
 		t.Errorf("GetPrimaryDatabase().Alias = %s, want primary", primary.Alias)
 	}
 

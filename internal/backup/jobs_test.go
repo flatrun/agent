@@ -9,8 +9,7 @@ func TestNewJobTracker(t *testing.T) {
 	tracker := NewJobTracker()
 	if tracker == nil {
 		t.Fatal("Expected tracker to be non-nil")
-	}
-	if tracker.jobs == nil {
+	} else if tracker.jobs == nil {
 		t.Fatal("Expected jobs map to be initialized")
 	}
 }

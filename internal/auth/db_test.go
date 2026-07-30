@@ -33,9 +33,7 @@ func TestNewAuthDB(t *testing.T) {
 
 	if db == nil {
 		t.Fatal("NewAuthDB returned nil")
-	}
-
-	if db.conn == nil {
+	} else if db.conn == nil {
 		t.Fatal("DB connection is nil")
 	}
 }
