@@ -11,8 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/Masterminds/semver/v3"
 
 	"github.com/flatrun/agent/pkg/version"
 )
@@ -23,10 +26,22 @@ const (
 	BinaryName  = "flatrun-agent"
 )
 
+// Channel selects which releases an update considers. Stable ignores
+// prereleases; Prerelease is the opt-in channel that also sees betas.
+type Channel string
+
+const (
+	ChannelStable     Channel = "stable"
+	ChannelPrerelease Channel = "prerelease"
+)
+
 type Release struct {
 	TagName     string  `json:"tag_name"`
 	Name        string  `json:"name"`
+	Body        string  `json:"body"`
 	PublishedAt string  `json:"published_at"`
+	Prerelease  bool    `json:"prerelease"`
+	Draft       bool    `json:"draft"`
 	Assets      []Asset `json:"assets"`
 }
 
@@ -37,20 +52,20 @@ type Asset struct {
 }
 
 type UpdateResult struct {
-	CurrentVersion  string
-	LatestVersion   string
-	UpdateAvailable bool
-	Downloaded      bool
-	Installed       bool
-	Message         string
+	CurrentVersion  string `json:"current_version"`
+	LatestVersion   string `json:"latest_version"`
+	UpdateAvailable bool   `json:"update_available"`
+	Downloaded      bool   `json:"downloaded"`
+	Installed       bool   `json:"installed"`
+	Message         string `json:"message"`
 }
 
-func CheckForUpdate() (*UpdateResult, error) {
+func CheckForUpdate(channel Channel) (*UpdateResult, error) {
 	current := version.Get()
 	currentVer := strings.TrimSuffix(current.Version, "-dev")
 	currentVer = strings.TrimPrefix(currentVer, "v")
 
-	release, err := getLatestRelease()
+	release, err := getTargetRelease(channel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check for updates: %w", err)
 	}
@@ -60,7 +75,7 @@ func CheckForUpdate() (*UpdateResult, error) {
 	result := &UpdateResult{
 		CurrentVersion:  currentVer,
 		LatestVersion:   latestVer,
-		UpdateAvailable: latestVer != currentVer,
+		UpdateAvailable: isNewer(latestVer, currentVer),
 	}
 
 	if result.UpdateAvailable {
@@ -72,8 +87,90 @@ func CheckForUpdate() (*UpdateResult, error) {
 	return result, nil
 }
 
-func Update(force bool) (*UpdateResult, error) {
-	result, err := CheckForUpdate()
+// ReleaseInfo is a release presented to a client: the version without its `v`
+// prefix, whether it is a prerelease, when it was published, and its changelog.
+type ReleaseInfo struct {
+	Version     string `json:"version"`
+	Prerelease  bool   `json:"prerelease"`
+	PublishedAt string `json:"published_at"`
+	Changelog   string `json:"changelog"`
+}
+
+// Availability describes the update picture for a channel: the running version,
+// the highest version the channel offers, whether that is an upgrade, and every
+// installable release newest-first.
+type Availability struct {
+	CurrentVersion  string        `json:"current_version"`
+	Channel         Channel       `json:"channel"`
+	LatestVersion   string        `json:"latest_version"`
+	UpdateAvailable bool          `json:"update_available"`
+	Releases        []ReleaseInfo `json:"releases"`
+}
+
+// ListAvailable returns every release the channel can install, newest-first by
+// semver, so a client can present the choices and their changelogs without
+// reimplementing the channel and ordering rules.
+func ListAvailable(channel Channel) (*Availability, error) {
+	releases, err := getReleases()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list releases: %w", err)
+	}
+
+	type ranked struct {
+		info ReleaseInfo
+		ver  *semver.Version
+	}
+	var ranks []ranked
+	for _, r := range releases {
+		if r.Draft {
+			continue
+		}
+		if r.Prerelease && channel != ChannelPrerelease {
+			continue
+		}
+		v, err := semver.NewVersion(strings.TrimPrefix(r.TagName, "v"))
+		if err != nil {
+			continue
+		}
+		ranks = append(ranks, ranked{
+			info: ReleaseInfo{
+				Version:     strings.TrimPrefix(r.TagName, "v"),
+				Prerelease:  r.Prerelease,
+				PublishedAt: r.PublishedAt,
+				Changelog:   r.Body,
+			},
+			ver: v,
+		})
+	}
+
+	sort.Slice(ranks, func(i, j int) bool {
+		return ranks[i].ver.Compare(ranks[j].ver) > 0
+	})
+
+	current := currentVersion()
+	result := &Availability{
+		CurrentVersion: current,
+		Channel:        channel,
+		Releases:       make([]ReleaseInfo, 0, len(ranks)),
+	}
+	for _, r := range ranks {
+		result.Releases = append(result.Releases, r.info)
+	}
+	if len(result.Releases) > 0 {
+		result.LatestVersion = result.Releases[0].Version
+		result.UpdateAvailable = isNewer(result.LatestVersion, current)
+	}
+
+	return result, nil
+}
+
+func currentVersion() string {
+	v := strings.TrimSuffix(version.Get().Version, "-dev")
+	return strings.TrimPrefix(v, "v")
+}
+
+func Update(force bool, channel Channel) (*UpdateResult, error) {
+	result, err := CheckForUpdate(channel)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +179,7 @@ func Update(force bool) (*UpdateResult, error) {
 		return result, nil
 	}
 
-	release, err := getLatestRelease()
+	release, err := getTargetRelease(channel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get release info: %w", err)
 	}
@@ -139,8 +236,67 @@ func RestartService() error {
 	return nil
 }
 
-func getLatestRelease() (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", GitHubOwner, GitHubRepo)
+// getTargetRelease returns the highest-versioned release visible to the channel.
+// The stable channel skips prereleases; the prerelease channel considers both,
+// so a newer stable is still offered to a beta user. Ordering is by semver, not
+// publish date or string comparison, so a prerelease is ranked below its final
+// and an older tag can never masquerade as the latest.
+func getTargetRelease(channel Channel) (*Release, error) {
+	releases, err := getReleases()
+	if err != nil {
+		return nil, err
+	}
+
+	target := selectRelease(releases, channel)
+	if target == nil {
+		return nil, fmt.Errorf("no %s release found", channel)
+	}
+	return target, nil
+}
+
+func selectRelease(releases []Release, channel Channel) *Release {
+	var best *Release
+	var bestVer *semver.Version
+
+	for i := range releases {
+		r := releases[i]
+		if r.Draft {
+			continue
+		}
+		if r.Prerelease && channel != ChannelPrerelease {
+			continue
+		}
+
+		v, err := semver.NewVersion(strings.TrimPrefix(r.TagName, "v"))
+		if err != nil {
+			continue
+		}
+		if bestVer == nil || v.Compare(bestVer) > 0 {
+			best = &releases[i]
+			bestVer = v
+		}
+	}
+
+	return best
+}
+
+// isNewer reports whether latest is a strictly higher semver than current.
+// A current version that does not parse (e.g. a dev build) is treated as
+// updatable so the CLI is never stuck when it cannot read its own version.
+func isNewer(latest, current string) bool {
+	lv, err := semver.NewVersion(strings.TrimPrefix(latest, "v"))
+	if err != nil {
+		return false
+	}
+	cv, err := semver.NewVersion(strings.TrimPrefix(current, "v"))
+	if err != nil {
+		return true
+	}
+	return lv.Compare(cv) > 0
+}
+
+func getReleases() ([]Release, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=100", GitHubOwner, GitHubRepo)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
@@ -160,12 +316,12 @@ func getLatestRelease() (*Release, error) {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
 
-	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	var releases []Release
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return nil, err
 	}
 
-	return &release, nil
+	return releases, nil
 }
 
 func findAssetForPlatform(assets []Asset) *Asset {
