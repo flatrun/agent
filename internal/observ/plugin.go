@@ -45,13 +45,14 @@ func RunPlugin() error {
 	watcher.SetEnabled(cfg.AutoRestart)
 	// A deployment FlatRun manages has a directory under the deployments path; only those are
 	// eligible for auto-restart, so stray host containers are never touched.
-	watcher.SetManaged(func(deployment string) bool {
+	isManaged := func(deployment string) bool {
 		if deployment == "" || dataDir == "" {
 			return false
 		}
 		info, err := os.Stat(filepath.Join(dataDir, deployment))
 		return err == nil && info.IsDir()
-	})
+	}
+	watcher.SetManaged(isManaged)
 
 	watcher.OnRecover(func(ev RecoveryEvent) {
 		emitNotification(
@@ -109,7 +110,15 @@ func RunPlugin() error {
 	engine := NewAlertEngine(store)
 	engine.SetRules(alertStore.Load())
 	engine.OnAlert(func(ev AlertEvent) {
-		emitNotification(ev.RuleName, ev.Message())
+		emitNotificationTo(ev.RuleName, ev.Message(), ev.Targets)
+	})
+	// An opt-in rule action restarts the offending deployment when it fires,
+	// scoped to FlatRun-managed deployments and rate-limited so it cannot flap.
+	actioner := NewActionRunner(DockerComposeRestart, isManaged, cfg.restartCooldown(), dataDir)
+	engine.OnAction(func(ev AlertEvent) {
+		if msg := actioner.Run(ev); msg != "" {
+			emitNotificationTo(ev.RuleName, msg, ev.Targets)
+		}
 	})
 	alertStop := make(chan struct{})
 	defer close(alertStop)
@@ -130,11 +139,16 @@ func RunPlugin() error {
 // emitNotification asks the core to deliver a notification to the operator's configured
 // targets. Delivery config and routing live in the agent, not the plugin.
 func emitNotification(title, message string) {
+	emitNotificationTo(title, message, nil)
+}
+
+// emitNotificationTo delivers to a chosen subset of targets by id; nil means all.
+func emitNotificationTo(title, message string, targets []string) {
 	base, token := pluginsdk.AgentCallback()
 	if base == "" || token == "" {
 		return
 	}
-	body, _ := json.Marshal(map[string]string{"title": title, "message": message})
+	body, _ := json.Marshal(map[string]any{"title": title, "message": message, "targets": targets})
 	req, err := http.NewRequest(http.MethodPost, base+"/internal/notify/emit", bytes.NewReader(body))
 	if err != nil {
 		return

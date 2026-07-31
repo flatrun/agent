@@ -112,14 +112,30 @@ func (s *Service) Test(url string) error {
 // Notify delivers title + message to every enabled target. It returns the first delivery
 // error, if any, but attempts all targets.
 func (s *Service) Notify(title, message string) error {
+	return s.NotifyTargets(title, message, nil)
+}
+
+// NotifyTargets delivers to a chosen subset of targets by id. An empty list
+// means every enabled target, which is what plain Notify does.
+func (s *Service) NotifyTargets(title, message string, ids []string) error {
 	cfg := s.Load()
 	body := message
 	if title != "" {
 		body = title + "\n\n" + message
 	}
+	var only map[string]bool
+	if len(ids) > 0 {
+		only = make(map[string]bool, len(ids))
+		for _, id := range ids {
+			only[id] = true
+		}
+	}
 	var firstErr error
 	for _, t := range cfg.Targets {
 		if !t.Enabled || t.URL == "" {
+			continue
+		}
+		if only != nil && !only[t.ID] {
 			continue
 		}
 		if err := s.send(t.URL, body); err != nil && firstErr == nil {
