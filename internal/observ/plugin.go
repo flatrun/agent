@@ -116,6 +116,7 @@ func RunPlugin() error {
 	go engine.Run(alertStop, cfg.sampleInterval()*3)
 
 	go collector.Run(ctx)
+	go NewHostCollector(store, SystemHostSource, cfg.sampleInterval()).Run(ctx)
 	go watcher.Run(ctx)
 
 	applyConfig := func(c Config) {
