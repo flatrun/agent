@@ -62,7 +62,8 @@ func (r AlertRule) forDuration() time.Duration {
 
 func knownMetric(name string) bool {
 	switch name {
-	case MetricCPUUsage, MetricMemoryUsage, MetricMemoryLimit, MetricNetworkRx, MetricNetworkTx:
+	case MetricCPUUsage, MetricMemoryUsage, MetricMemoryLimit, MetricNetworkRx, MetricNetworkTx,
+		MetricHostCPU, MetricHostMemUtil, MetricHostMemUsage, MetricHostMemLimit, MetricHostDisk:
 		return true
 	}
 	return false
@@ -97,9 +98,10 @@ func (e AlertEvent) Message() string {
 
 func formatMetricValue(metric string, v float64) string {
 	switch metric {
-	case MetricCPUUsage:
+	case MetricCPUUsage, MetricHostCPU, MetricHostMemUtil, MetricHostDisk:
 		return fmt.Sprintf("%.1f%%", v)
-	case MetricMemoryUsage, MetricMemoryLimit, MetricNetworkRx, MetricNetworkTx:
+	case MetricMemoryUsage, MetricMemoryLimit, MetricNetworkRx, MetricNetworkTx,
+		MetricHostMemUsage, MetricHostMemLimit:
 		return formatBytes(v)
 	}
 	return fmt.Sprintf("%.2f", v)

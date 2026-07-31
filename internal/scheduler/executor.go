@@ -12,6 +12,9 @@ import (
 type Executor struct {
 	backupManager *backup.Manager
 	dockerManager *docker.Manager
+	// agentRunner runs a scheduled agent headless. It is injected by the API
+	// layer, which owns the AI runtime, so this package stays free of it.
+	agentRunner func(ctx context.Context, agentName string) (string, error)
 }
 
 func NewExecutor(backupManager *backup.Manager, dockerManager *docker.Manager) *Executor {
@@ -19,6 +22,19 @@ func NewExecutor(backupManager *backup.Manager, dockerManager *docker.Manager) *
 		backupManager: backupManager,
 		dockerManager: dockerManager,
 	}
+}
+
+// SetAgentRunner wires the headless agent runner. Until it is set, agent tasks
+// fail rather than run, so a scheduled agent never silently no-ops.
+func (e *Executor) SetAgentRunner(fn func(ctx context.Context, agentName string) (string, error)) {
+	e.agentRunner = fn
+}
+
+func (e *Executor) ExecuteAgent(ctx context.Context, config *AgentTaskConfig) (string, error) {
+	if e.agentRunner == nil {
+		return "", fmt.Errorf("agent runner not available")
+	}
+	return e.agentRunner(ctx, config.AgentName)
 }
 
 func (e *Executor) ExecuteBackup(ctx context.Context, deploymentName string, config *BackupTaskConfig) (string, error) {

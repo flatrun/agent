@@ -74,8 +74,15 @@ const aiStepLimitMessage = "I stopped after investigating several steps without 
 // runner: it calls the model, runs any requested tools (auto-run) or pauses for
 // approval, and repeats until a final answer or the step budget is spent.
 func (s *Server) advanceSession(c *gin.Context, sess *ai.Session) error {
+	return s.advanceSessionWith(c, sess, false)
+}
+
+// advanceSessionWith drives a session turn. autoApprove runs every requested
+// tool without pausing: it is for headless (scheduled) runs, where the actor's
+// permission grant, not a human, is the gate. Interactive turns pass false.
+func (s *Server) advanceSessionWith(c *gin.Context, sess *ai.Session, autoApprove bool) error {
 	engine := ai.NewCapturingEngine(s.aiProvider)
-	runner := s.aiRunner(c, sess, engine)
+	runner := s.aiRunner(c, sess, engine, autoApprove)
 	conv := &agents.Conversation{Messages: ai.MessagesToAgents(sess.Messages)}
 	from := len(conv.Messages)
 	_, err := runner.Advance(c.Request.Context(), conv)
@@ -86,7 +93,7 @@ func (s *Server) advanceSession(c *gin.Context, sess *ai.Session) error {
 // auto-run pauses before any tools run, surfacing them for per-call approval.
 // Even with auto-run on, a batch containing a state-changing tool pauses:
 // reads run free, writes always ask.
-func (s *Server) aiRunner(c *gin.Context, sess *ai.Session, engine agents.Engine) agents.Runner {
+func (s *Server) aiRunner(c *gin.Context, sess *ai.Session, engine agents.Engine, autoApprove bool) agents.Runner {
 	runner := agents.Runner{
 		Engine: engine,
 		Harness: agents.Harness{
@@ -97,6 +104,12 @@ func (s *Server) aiRunner(c *gin.Context, sess *ai.Session, engine agents.Engine
 		},
 	}
 	runner.Approve = func(_ context.Context, calls []agents.ToolCall) (bool, error) {
+		// A headless run has no human to ask: approve every call and let the
+		// actor's permission grant deny anything it does not cover, inside the
+		// tool. Interactive runs still pause before a state-changing tool.
+		if autoApprove {
+			return true, nil
+		}
 		if !sess.AutoRun {
 			return false, nil
 		}
@@ -282,7 +295,9 @@ func (s *Server) getAISession(c *gin.Context) {
 }
 
 // listAISessions returns the caller's saved sessions (all sessions for an admin),
-// most recent first, so past conversations can be resumed.
+// most recent first, so past conversations can be resumed. An optional agent
+// query parameter narrows the list to one agent's runs, which is how a run
+// history is read from an agent's definition.
 func (s *Server) listAISessions(c *gin.Context) {
 	summaries, err := s.aiSessions.List()
 	if err != nil {
@@ -292,11 +307,16 @@ func (s *Server) listAISessions(c *gin.Context) {
 	actor := auth.GetActorFromContext(c)
 	isAdmin := actor != nil && actor.Role == auth.RoleAdmin
 	mine := sessionActorFrom(c).ID
+	agentFilter := c.Query("agent")
 	out := make([]ai.SessionSummary, 0, len(summaries))
 	for _, sum := range summaries {
-		if isAdmin || sum.CreatedBy.ID == mine {
-			out = append(out, sum)
+		if !isAdmin && sum.CreatedBy.ID != mine {
+			continue
 		}
+		if agentFilter != "" && sum.Agent != agentFilter {
+			continue
+		}
+		out = append(out, sum)
 	}
 	c.JSON(http.StatusOK, gin.H{"sessions": out})
 }
@@ -370,7 +390,7 @@ func (s *Server) approveAISessionTools(c *gin.Context) {
 		decisions = map[string]bool{}
 	}
 	engine := ai.NewCapturingEngine(s.aiProvider)
-	runner := s.aiRunner(c, sess, engine)
+	runner := s.aiRunner(c, sess, engine, false)
 	conv := &agents.Conversation{Messages: ai.MessagesToAgents(sess.Messages)}
 	from := len(conv.Messages)
 	_, err := runner.Resume(c.Request.Context(), conv, decisions)

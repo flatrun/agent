@@ -16,11 +16,18 @@ import (
 // shared tool set; the file is the whole definition, so it can be read,
 // edited, and versioned like any other deployment file.
 type Agent struct {
-	Name         string `json:"name" yaml:"-"`
-	Description  string `json:"description" yaml:"description"`
-	Scope        string `json:"scope" yaml:"scope"`
-	Deployment   string `json:"deployment,omitempty" yaml:"deployment"`
-	Instructions string `json:"-" yaml:"-"`
+	Name        string `json:"name" yaml:"-"`
+	Description string `json:"description" yaml:"description"`
+	Scope       string `json:"scope" yaml:"scope"`
+	Deployment  string `json:"deployment,omitempty" yaml:"deployment"`
+	// Schedule is an optional cron expression. When set, the agent runs on that
+	// schedule without a human present.
+	Schedule string `json:"schedule,omitempty" yaml:"schedule"`
+	// Permissions is the grant a scheduled (headless) run executes under: the
+	// runtime auto-approves tools these permissions cover and denies the rest.
+	// Empty means read-only, since a cron run has no human to approve a change.
+	Permissions  []string `json:"permissions,omitempty" yaml:"permissions"`
+	Instructions string   `json:"-" yaml:"-"`
 }
 
 var frontmatterPattern = regexp.MustCompile(`(?s)\A---\s*\n(.*?)\n---\s*\n?`)

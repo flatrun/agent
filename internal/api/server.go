@@ -371,6 +371,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		}
 
 		executor := scheduler.NewExecutor(backupManager, manager)
+		executor.SetAgentRunner(s.runAgentHeadless)
 		schedulerManager, err := scheduler.NewManager(cfg.DeploymentsPath, executor)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize scheduler manager: %v", err)

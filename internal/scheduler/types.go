@@ -9,6 +9,7 @@ type TaskType string
 const (
 	TaskTypeBackup  TaskType = "backup"
 	TaskTypeCommand TaskType = "command"
+	TaskTypeAgent   TaskType = "agent"
 )
 
 type TaskStatus string
@@ -39,6 +40,12 @@ type TaskConfig struct {
 	BackupConfig *BackupTaskConfig `json:"backup_config,omitempty"`
 	// For command tasks
 	CommandConfig *CommandTaskConfig `json:"command_config,omitempty"`
+	// For agent tasks
+	AgentConfig *AgentTaskConfig `json:"agent_config,omitempty"`
+}
+
+type AgentTaskConfig struct {
+	AgentName string `json:"agent_name"`
 }
 
 type BackupTaskConfig struct {

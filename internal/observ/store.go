@@ -21,6 +21,22 @@ const (
 	MetricNetworkTx   = "container.network.io.tx"
 )
 
+// Host (system-wide) metric names, semconv system.* conventions. These answer
+// "is the machine in trouble", which per-container percentages against a
+// container's own limit cannot. Utilizations are percentages so an alert can
+// target them directly; usage/limit are bytes for charting.
+const (
+	MetricHostCPU      = "system.cpu.utilization"
+	MetricHostMemUtil  = "system.memory.utilization"
+	MetricHostMemUsage = "system.memory.usage"
+	MetricHostMemLimit = "system.memory.limit"
+	MetricHostDisk     = "system.disk.utilization"
+)
+
+// HostContainer is the reserved Container value for host series; their Deployment
+// is empty, so host series never collide with a real container.
+const HostContainer = "host"
+
 // Sample is a single metric reading at a point in time.
 type Sample struct {
 	Time  time.Time `json:"time"`
@@ -100,16 +116,41 @@ func (s *Store) add(key SeriesKey, sample Sample) {
 
 // Record expands a container reading into its semconv series and stores each at t.
 func (s *Store) Record(c ContainerSample, t time.Time) {
-	s.mu.Lock()
-	base := SeriesKey{Deployment: c.Deployment, Container: c.Container}
-	written := make([]LatestPoint, 0, 5)
-	for metric, value := range map[string]float64{
+	s.record(SeriesKey{Deployment: c.Deployment, Container: c.Container}, map[string]float64{
 		MetricCPUUsage:    c.CPUPercent,
 		MetricMemoryUsage: float64(c.MemoryUsage),
 		MetricMemoryLimit: float64(c.MemoryLimit),
 		MetricNetworkRx:   float64(c.NetworkRx),
 		MetricNetworkTx:   float64(c.NetworkTx),
-	} {
+	}, t)
+}
+
+// HostSample is a single host-wide reading.
+type HostSample struct {
+	CPUPercent    float64
+	MemoryUsage   uint64
+	MemoryLimit   uint64
+	MemoryPercent float64
+	DiskPercent   float64
+}
+
+// RecordHost stores a host reading under the reserved host series key.
+func (s *Store) RecordHost(h HostSample, t time.Time) {
+	s.record(SeriesKey{Container: HostContainer}, map[string]float64{
+		MetricHostCPU:      h.CPUPercent,
+		MetricHostMemUtil:  h.MemoryPercent,
+		MetricHostMemUsage: float64(h.MemoryUsage),
+		MetricHostMemLimit: float64(h.MemoryLimit),
+		MetricHostDisk:     h.DiskPercent,
+	}, t)
+}
+
+// record writes each metric of one series at t, then hands the batch to the sink
+// outside the lock so persistence never blocks readers of the live window.
+func (s *Store) record(base SeriesKey, metrics map[string]float64, t time.Time) {
+	s.mu.Lock()
+	written := make([]LatestPoint, 0, len(metrics))
+	for metric, value := range metrics {
 		key := base
 		key.Metric = metric
 		sample := Sample{Time: t, Value: value}
@@ -120,8 +161,6 @@ func (s *Store) Record(c ContainerSample, t time.Time) {
 	sink := s.sink
 	s.mu.Unlock()
 
-	// Outside the lock: persisting writes to disk, and readers of the live window should
-	// not wait on it.
 	if sink != nil {
 		sink(written)
 	}

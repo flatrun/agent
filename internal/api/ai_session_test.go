@@ -482,3 +482,38 @@ func TestListAISessionsFiltersByActor(t *testing.T) {
 		t.Errorf("an admin should see all sessions, got %d", len(all))
 	}
 }
+
+func TestListAISessionsFiltersByAgent(t *testing.T) {
+	s, _, _ := setupPlanTestServer(t)
+
+	actor := ai.SessionActor{ID: "1", Name: "alice"}
+	run := ai.NewSession(ai.SessionScopeSystem, "", true, actor, "sys")
+	run.Agent = "nightly-audit"
+	run.AddUserMessage("run", "", false)
+	adhoc := ai.NewSession(ai.SessionScopeSystem, "", true, actor, "sys")
+	adhoc.AddUserMessage("chat", "", false)
+	if err := s.aiSessions.Save(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.aiSessions.Save(adhoc); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/ai/sessions?agent=nightly-audit", nil)
+	c.Set(contextkeys.Actor, &auth.ActorContext{User: &auth.User{ID: 1, Username: "alice"}, Role: auth.RoleViewer})
+	s.listAISessions(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	var body struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Sessions) != 1 || body.Sessions[0]["id"] != run.ID {
+		t.Errorf("agent filter should return only that agent's runs, got %v", body.Sessions)
+	}
+}
