@@ -34,7 +34,19 @@ type AlertRule struct {
 	Threshold  float64 `json:"threshold" yaml:"threshold"`
 	ForSeconds int     `json:"for_seconds" yaml:"for_seconds"`
 	Enabled    bool    `json:"enabled" yaml:"enabled"`
+	// Targets are the notification target ids this rule delivers to. Empty means
+	// every configured target, which is the original behaviour.
+	Targets []string `json:"targets,omitempty" yaml:"targets,omitempty"`
+	// Action is an optional remediation taken when the rule fires. "" is notify
+	// only; ActionRestart restarts the offending deployment.
+	Action string `json:"action,omitempty" yaml:"action,omitempty"`
 }
+
+// Alert actions.
+const (
+	ActionNone    = ""
+	ActionRestart = "restart"
+)
 
 // Validate reports why a rule cannot be used, if it cannot.
 func (r AlertRule) Validate() error {
@@ -49,6 +61,9 @@ func (r AlertRule) Validate() error {
 	}
 	if r.ForSeconds < 0 {
 		return fmt.Errorf("for_seconds cannot be negative")
+	}
+	if r.Action != ActionNone && r.Action != ActionRestart {
+		return fmt.Errorf("unknown action %q", r.Action)
 	}
 	return nil
 }
@@ -81,6 +96,54 @@ type AlertEvent struct {
 	Comparison string    `json:"comparison"`
 	State      string    `json:"state"`
 	At         time.Time `json:"at"`
+	// Targets and Action are copied from the rule so the event is self-contained
+	// for the notification and action sinks.
+	Targets []string `json:"targets,omitempty"`
+	Action  string   `json:"action,omitempty"`
+	// Snapshot is the top consuming containers at the moment a rule fired, so a
+	// notification and the dashboard can show what was using the resource.
+	Snapshot []Consumer `json:"snapshot,omitempty"`
+}
+
+// Consumer is one container's reading in a firing snapshot.
+type Consumer struct {
+	Deployment string  `json:"deployment"`
+	Container  string  `json:"container"`
+	Value      float64 `json:"value"`
+}
+
+// consumerMetric maps an alert metric to the per-container metric to rank by, so
+// a host or container memory alert both surface the containers using the most
+// memory, and likewise for CPU. Metrics with no useful ranking return "".
+func consumerMetric(alertMetric string) string {
+	switch {
+	case strings.Contains(alertMetric, "memory"):
+		return MetricMemoryUsage
+	case strings.Contains(alertMetric, "cpu"):
+		return MetricCPUUsage
+	}
+	return ""
+}
+
+// topConsumers ranks real containers by a metric, highest first, keeping at most
+// n. The host pseudo-container is excluded, since the point is to name the
+// containers responsible for the pressure.
+func topConsumers(latest []LatestPoint, metric string, n int) []Consumer {
+	if metric == "" {
+		return nil
+	}
+	var out []Consumer
+	for _, p := range latest {
+		if p.Metric != metric || p.Container == HostContainer {
+			continue
+		}
+		out = append(out, Consumer{Deployment: p.Deployment, Container: p.Container, Value: p.Value})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Value > out[j].Value })
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out
 }
 
 // Message renders the event the way an operator reads it in a notification.
@@ -92,8 +155,17 @@ func (e AlertEvent) Message() string {
 	if e.State == AlertOK {
 		return fmt.Sprintf("%s is back to normal: %s is %s.", e.RuleName, where, formatMetricValue(e.Metric, e.Value))
 	}
-	return fmt.Sprintf("%s: %s is %s, %s %s.",
+	msg := fmt.Sprintf("%s: %s is %s, %s %s.",
 		e.RuleName, where, formatMetricValue(e.Metric, e.Value), e.Comparison, formatMetricValue(e.Metric, e.Threshold))
+	if len(e.Snapshot) > 0 {
+		metric := consumerMetric(e.Metric)
+		parts := make([]string, 0, len(e.Snapshot))
+		for _, c := range e.Snapshot {
+			parts = append(parts, fmt.Sprintf("%s (%s)", c.Container, formatMetricValue(metric, c.Value)))
+		}
+		msg += "\nTop: " + strings.Join(parts, ", ")
+	}
+	return msg
 }
 
 func formatMetricValue(metric string, v float64) string {
@@ -136,10 +208,11 @@ type AlertEngine struct {
 	now    func() time.Time
 	notify func(AlertEvent)
 
-	mu     sync.Mutex
-	rules  []AlertRule
-	states map[string]seriesState
-	events []AlertEvent
+	mu       sync.Mutex
+	rules    []AlertRule
+	states   map[string]seriesState
+	events   []AlertEvent
+	onAction func(AlertEvent)
 }
 
 // maxAlertEvents bounds retained history the same way recovery events are bounded.
@@ -158,6 +231,13 @@ func (e *AlertEngine) OnAlert(fn func(AlertEvent)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.notify = fn
+}
+
+// OnAction registers the sink that carries out a firing rule's action.
+func (e *AlertEngine) OnAction(fn func(AlertEvent)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.onAction = fn
 }
 
 // SetRules replaces the rule set, forgetting the state of rules that no longer exist.
@@ -264,6 +344,8 @@ func (e *AlertEngine) evaluate() {
 				Threshold:  rule.Threshold,
 				Comparison: rule.Comparison,
 				At:         now,
+				Targets:    rule.Targets,
+				Action:     rule.Action,
 			}
 
 			switch {
@@ -275,6 +357,7 @@ func (e *AlertEngine) evaluate() {
 					if now.Sub(prev.since) >= rule.forDuration() {
 						e.states[key] = seriesState{since: prev.since, state: AlertFiring}
 						ev.State = AlertFiring
+						ev.Snapshot = topConsumers(latest, consumerMetric(rule.Metric), 5)
 						fired = append(fired, ev)
 					}
 				default:
@@ -283,6 +366,7 @@ func (e *AlertEngine) evaluate() {
 					if rule.forDuration() == 0 {
 						e.states[key] = seriesState{since: now, state: AlertFiring}
 						ev.State = AlertFiring
+						ev.Snapshot = topConsumers(latest, consumerMetric(rule.Metric), 5)
 						fired = append(fired, ev)
 					} else {
 						e.states[key] = seriesState{since: now, state: AlertPending}
@@ -303,13 +387,19 @@ func (e *AlertEngine) evaluate() {
 	if len(e.events) > maxAlertEvents {
 		e.events = e.events[len(e.events)-maxAlertEvents:]
 	}
+	action := e.onAction
 	e.mu.Unlock()
 
 	// Outside the lock: a notification goes over the network and evaluation should not
 	// hold readers while it does.
-	if notify != nil {
-		for _, ev := range fired {
+	for _, ev := range fired {
+		if notify != nil {
 			notify(ev)
+		}
+		// An action runs only on a firing transition with an action set; the
+		// sink itself enforces cooldown and the managed-deployment guard.
+		if action != nil && ev.State == AlertFiring && ev.Action != ActionNone {
+			action(ev)
 		}
 	}
 }

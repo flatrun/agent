@@ -74,6 +74,26 @@ func TestServiceRoundTripAndNotify(t *testing.T) {
 	}
 }
 
+func TestNotifyTargetsDeliversToSubset(t *testing.T) {
+	s := NewService(t.TempDir())
+	var sent []string
+	s.send = func(url, msg string) error { sent = append(sent, url); return nil }
+
+	if err := s.Save(Config{Targets: []Target{
+		{ID: "1", Name: "email", URL: "smtp://x", Enabled: true},
+		{ID: "2", Name: "webhook", URL: "generic+https://h", Enabled: true},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.NotifyTargets("Alert", "msg", []string{"2"}); err != nil {
+		t.Fatalf("NotifyTargets = %v", err)
+	}
+	if len(sent) != 1 || sent[0] != "generic+https://h" {
+		t.Fatalf("expected delivery only to target 2, got %v", sent)
+	}
+}
+
 func TestServiceTest(t *testing.T) {
 	s := NewService(t.TempDir())
 	called := ""
