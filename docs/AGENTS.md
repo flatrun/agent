@@ -64,16 +64,19 @@ Hard floors live in frontmatter policy, enforced by the runtime before any tool
 runs:
 
 ```yaml
+max_steps: 20            # tool rounds per turn, capped at 50
 policy:
-  auto_approve: [github__create_pull_request]   # runs without asking
-  require_approval: [github__merge_pull_request] # always asks, regardless
-  deny: [control_deployment]                     # not even registered
+  auto_approve: [write_deployment_file]  # runs without asking
+  require_approval: [get_deployment_logs] # always asks, even read-only
+  deny: [control_deployment]              # not even advertised to the model
 ```
 
-The default is unchanged: any state-changing tool pauses for per-call operator
-approval. Policy can only widen approval upward (`auto_approve`) for named
-tools, or harden it (`require_approval`, `deny`). A `dry_run` run auto-declines
-every mutation and reports what would have happened.
+Precedence is deny, then require_approval, then auto_approve. The default is
+unchanged: any state-changing tool pauses for per-call operator approval.
+The policy is re-read from the file on every turn, so the file stays the
+source of truth mid-run. A run started with `dry_run: true` declines every
+state change instead of executing or pausing, reporting what would have
+happened.
 
 ## External tools over MCP
 
@@ -106,8 +109,8 @@ run away.
 
 ## Delivery slices
 
-1. Frontmatter policy (`auto_approve` / `require_approval` / `deny`),
-   `max_steps`, `dry_run` runs.
+1. ~~Frontmatter policy (`auto_approve` / `require_approval` / `deny`),
+   `max_steps`, `dry_run` runs.~~ Shipped.
 2. Run lifecycle: `wait_for_event` / `finish`, `waiting` / `completed`
    statuses, the events endpoint.
 3. MCP client and `mcp_servers`.

@@ -192,6 +192,140 @@ func TestWriteAgentFileToolCreatesRunnableAgent(t *testing.T) {
 	}
 }
 
+func TestAutoApprovePolicyRunsWriteWithoutPause(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	s.aiAgents = ai.NewAgentStore(tmpDir)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+	writeAgentFile(t, tmpDir, "fixer.md",
+		"---\nscope: deployment\ndeployment: myapp\npolicy:\n  auto_approve: [write_deployment_file]\n---\nEnsure conf/app.conf sets key to value.")
+
+	s.aiProvider = &scriptedProvider{responses: []*ai.Response{
+		{ToolCalls: []ai.ToolCall{{ID: "c1", Name: "write_deployment_file",
+			Arguments: `{"path":"conf/app.conf","content":"key = value\n"}`}}, Model: "scripted"},
+		{Content: "Done.", Model: "scripted"},
+	}}
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/agents/fixer/run", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+	if parsed["status"] != "ready" {
+		t.Fatalf("status = %v, want ready: an auto-approved write must not pause", parsed["status"])
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "myapp", "conf", "app.conf"))
+	if err != nil || string(data) != "key = value\n" {
+		t.Errorf("auto-approved write not applied: %q err=%v", string(data), err)
+	}
+}
+
+func TestRequireApprovalPolicyPausesReadTool(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	s.aiAgents = ai.NewAgentStore(tmpDir)
+	writeAgentFile(t, tmpDir, "careful.md",
+		"---\npolicy:\n  require_approval: [list_networks]\n---\nList the networks.")
+
+	s.aiProvider = &scriptedProvider{responses: []*ai.Response{
+		{ToolCalls: []ai.ToolCall{{ID: "c1", Name: "list_networks", Arguments: "{}"}}, Model: "scripted"},
+		{Content: "Done.", Model: "scripted"},
+	}}
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/agents/careful/run", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+	if parsed["status"] != "awaiting_approval" {
+		t.Errorf("status = %v: require_approval must pause even a read-only tool", parsed["status"])
+	}
+}
+
+func TestDenyPolicyHidesTool(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	s.aiAgents = ai.NewAgentStore(tmpDir)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+	writeAgentFile(t, tmpDir, "restrained.md",
+		"---\nscope: deployment\ndeployment: myapp\npolicy:\n  deny: [control_deployment]\n---\nRestart the deployment.")
+
+	stub := &scriptedProvider{responses: []*ai.Response{
+		{ToolCalls: []ai.ToolCall{{ID: "c1", Name: "control_deployment",
+			Arguments: `{"action":"restart"}`}}, Model: "scripted"},
+		{Content: "Could not.", Model: "scripted"},
+	}}
+	s.aiProvider = stub
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/agents/restrained/run", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+	// The denied tool is not registered: the call fails as unknown rather than
+	// pausing or executing, and the tool is not advertised to the model.
+	if parsed["status"] != "ready" {
+		t.Errorf("status = %v", parsed["status"])
+	}
+	for _, tool := range stub.lastReq.Tools {
+		if tool.Name == "control_deployment" {
+			t.Error("a denied tool must not be advertised to the model")
+		}
+	}
+}
+
+func TestDryRunDeclinesWritesWithoutPausing(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	s.aiAgents = ai.NewAgentStore(tmpDir)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+	writeAgentFile(t, tmpDir, "fixer.md",
+		"---\nscope: deployment\ndeployment: myapp\n---\nEnsure conf/app.conf sets key to value.")
+
+	s.aiProvider = &scriptedProvider{responses: []*ai.Response{
+		{ToolCalls: []ai.ToolCall{{ID: "c1", Name: "write_deployment_file",
+			Arguments: `{"path":"conf/app.conf","content":"key = value\n"}`}}, Model: "scripted"},
+		{Content: "Reported.", Model: "scripted"},
+	}}
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/agents/fixer/run",
+		map[string]interface{}{"dry_run": true})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+	if parsed["status"] != "ready" || parsed["dry_run"] != true {
+		t.Fatalf("status = %v dry_run = %v", parsed["status"], parsed["dry_run"])
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "myapp", "conf", "app.conf")); !os.IsNotExist(err) {
+		t.Fatal("a dry run must not write the file")
+	}
+	// The decline is reported to the model as the tool result.
+	found := false
+	for _, m := range parsed["messages"].([]interface{}) {
+		if steps, ok := m.(map[string]interface{})["tool_steps"].([]interface{}); ok {
+			for _, st := range steps {
+				if r, _ := st.(map[string]interface{})["result"].(string); strings.Contains(r, "dry run") {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a dry-run decline in the tool results")
+	}
+}
+
+func TestAgentMaxStepsHonored(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	s.aiAgents = ai.NewAgentStore(tmpDir)
+	writeAgentFile(t, tmpDir, "looper.md", "---\nmax_steps: 1\n---\nKeep listing networks.")
+
+	loop := &ai.Response{ToolCalls: []ai.ToolCall{{ID: "c", Name: "list_networks", Arguments: "{}"}}, Model: "scripted"}
+	stub := &scriptedProvider{responses: []*ai.Response{loop, loop, loop}}
+	s.aiProvider = stub
+
+	resp, parsed := doJSON(t, http.MethodPost, ts.URL+"/api/ai/agents/looper/run", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body %v", resp.StatusCode, parsed)
+	}
+	if stub.calls != 1 {
+		t.Errorf("engine calls = %d, want exactly max_steps", stub.calls)
+	}
+}
+
 func TestRunAgentNotFound(t *testing.T) {
 	s, tmpDir, ts := setupPlanTestServer(t)
 	s.aiAgents = ai.NewAgentStore(tmpDir)

@@ -6,6 +6,50 @@ import (
 	"testing"
 )
 
+func TestParseAgentPolicyAndBudget(t *testing.T) {
+	agent, err := ParseAgent("governed", `---
+max_steps: 20
+policy:
+  auto_approve: [write_deployment_file]
+  require_approval: [list_networks]
+  deny: [control_deployment]
+---
+Do the work.`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.MaxSteps != 20 {
+		t.Errorf("max_steps = %d", agent.MaxSteps)
+	}
+	p := agent.Policy
+	if p.Denies("list_networks") || !p.Denies("control_deployment") {
+		t.Error("deny list misread")
+	}
+	if p.RequiresPause("write_deployment_file", true) {
+		t.Error("an auto-approved write must not pause")
+	}
+	if !p.RequiresPause("list_networks", false) {
+		t.Error("require_approval must pause a read tool")
+	}
+	if !p.RequiresPause("run_quick_action", true) {
+		t.Error("an unlisted mutating tool keeps the default pause")
+	}
+
+	if _, err := ParseAgent("greedy", "---\nmax_steps: 500\n---\nLoop."); err == nil {
+		t.Error("max_steps beyond the ceiling must be rejected")
+	}
+}
+
+func TestNilPolicyKeepsDefaults(t *testing.T) {
+	var p *AgentPolicy
+	if p.Denies("anything") {
+		t.Error("nil policy must deny nothing")
+	}
+	if !p.RequiresPause("write_deployment_file", true) || p.RequiresPause("list_networks", false) {
+		t.Error("nil policy must keep the mutating-pauses default")
+	}
+}
+
 func TestParseAgentWithFrontmatter(t *testing.T) {
 	rt, err := ParseAgent("tidy-logs", `---
 description: Trim old logs

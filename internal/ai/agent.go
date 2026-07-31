@@ -26,9 +26,61 @@ type Agent struct {
 	// Permissions is the grant a scheduled (headless) run executes under: the
 	// runtime auto-approves tools these permissions cover and denies the rest.
 	// Empty means read-only, since a cron run has no human to approve a change.
-	Permissions  []string `json:"permissions,omitempty" yaml:"permissions"`
-	Instructions string   `json:"-" yaml:"-"`
+	Permissions []string `json:"permissions,omitempty" yaml:"permissions"`
+	// MaxSteps raises the per-turn tool budget within a hard ceiling.
+	MaxSteps int `json:"max_steps,omitempty" yaml:"max_steps"`
+	// Policy is the governance policy: which tools run freely, which always ask,
+	// and which the model never sees.
+	Policy       *AgentPolicy `json:"policy,omitempty" yaml:"policy"`
+	Instructions string       `json:"-" yaml:"-"`
 }
+
+// AgentPolicy is the agent's governance: deterministic rules the runtime
+// enforces before any tool runs, regardless of what the model decides.
+// Precedence is Deny, then RequireApproval, then AutoApprove. Without a rule,
+// the default holds: state-changing tools pause for per-call approval.
+type AgentPolicy struct {
+	// AutoApprove names state-changing tools that run without pausing.
+	AutoApprove []string `json:"auto_approve,omitempty" yaml:"auto_approve"`
+	// RequireApproval names tools that always pause, even read-only ones.
+	RequireApproval []string `json:"require_approval,omitempty" yaml:"require_approval"`
+	// Deny names tools the agent can never call; they are not even advertised.
+	Deny []string `json:"deny,omitempty" yaml:"deny"`
+}
+
+func inList(list []string, name string) bool {
+	for _, n := range list {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Denies reports whether the policy forbids a tool outright.
+func (p *AgentPolicy) Denies(name string) bool {
+	return p != nil && inList(p.Deny, name)
+}
+
+// RequiresPause reports whether a call to the named tool must pause for
+// operator approval. mutates is the tool's own classification; policy can
+// widen it in either direction, but never past a Deny.
+func (p *AgentPolicy) RequiresPause(name string, mutates bool) bool {
+	if p == nil {
+		return mutates
+	}
+	if inList(p.RequireApproval, name) {
+		return true
+	}
+	if mutates && inList(p.AutoApprove, name) {
+		return false
+	}
+	return mutates
+}
+
+// maxAgentSteps is the hard ceiling on max_steps, so a definition cannot buy
+// itself an unbounded loop.
+const maxAgentSteps = 50
 
 var frontmatterPattern = regexp.MustCompile(`(?s)\A---\s*\n(.*?)\n---\s*\n?`)
 
@@ -57,6 +109,9 @@ func ParseAgent(name, content string) (*Agent, error) {
 	}
 	if agent.Scope == SessionScopeDeployment && agent.Deployment == "" {
 		return nil, fmt.Errorf("a deployment-scoped agent must name its deployment")
+	}
+	if agent.MaxSteps < 0 || agent.MaxSteps > maxAgentSteps {
+		return nil, fmt.Errorf("max_steps must be between 1 and %d", maxAgentSteps)
 	}
 	agent.Instructions = strings.TrimSpace(body)
 	if agent.Instructions == "" {
