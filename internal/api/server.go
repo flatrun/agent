@@ -46,6 +46,7 @@ import (
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/setup"
+	"github.com/flatrun/agent/internal/source"
 	"github.com/flatrun/agent/internal/ssl"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/internal/traffic"
@@ -86,6 +87,7 @@ type Server struct {
 	databaseManager    *database.Manager
 	infraManager       *infra.Manager
 	credentialsManager *credentials.Manager
+	sourceRegistry     *source.Registry
 	securityManager    *security.Manager
 	trafficManager     *traffic.Manager
 	dashboards         *dashboards.Store
@@ -332,6 +334,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		databaseManager:    databaseManager,
 		infraManager:       infraManager,
 		credentialsManager: credentialsManager,
+		sourceRegistry:     source.NewRegistry(source.GitProvider{}),
 		securityManager:    securityManager,
 		trafficManager:     trafficManager,
 		dashboards:         dashboards.NewStore(cfg.DeploymentsPath),
@@ -662,6 +665,10 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/credentials/:id", s.authMiddleware.RequirePermission(auth.PermRegistriesWrite), s.updateCredential)
 			protected.DELETE("/credentials/:id", s.authMiddleware.RequirePermission(auth.PermRegistriesDelete), s.deleteCredential)
 			protected.POST("/credentials/:id/test", s.authMiddleware.RequirePermission(auth.PermRegistriesRead), s.testCredential)
+
+			protected.GET("/source-credentials", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listSourceCredentials)
+			protected.POST("/source-credentials", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.createSourceCredential)
+			protected.DELETE("/source-credentials/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.deleteSourceCredential)
 
 			// Storage credential endpoints (S3 and other object-storage secrets)
 			protected.GET("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStorageCredentials)
@@ -1030,6 +1037,10 @@ func (s *Server) createDeployment(c *gin.Context) {
 		// image when the host side is empty. A template's own seed mounts are
 		// added to these.
 		SeedMounts []string `json:"seed_mounts,omitempty"`
+		// Source deploys from fetched code (a git URL today) instead of inline
+		// compose content: the fetched tree becomes the deployment directory and
+		// its compose file is what runs.
+		Source *deploymentSource `json:"source,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1037,6 +1048,20 @@ func (s *Server) createDeployment(c *gin.Context) {
 			"error": err.Error(),
 		})
 		return
+	}
+
+	var fetched *fetchedSource
+	if req.Source != nil {
+		f, err := s.fetchDeploymentSource(c.Request.Context(), req.Source)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Failed to fetch source: " + err.Error(),
+			})
+			return
+		}
+		defer f.cleanup()
+		fetched = f
+		req.ComposeContent = f.composeContent
 	}
 
 	if req.ComposeContent == "" {
@@ -1097,9 +1122,15 @@ func (s *Server) createDeployment(c *gin.Context) {
 		req.ComposeContent = s.addContainerNetwork(req.ComposeContent, req.ExistingDatabaseContainer)
 	}
 
-	if err := s.manager.CreateDeployment(req.Name, req.ComposeContent, nil); err != nil {
+	var createErr error
+	if fetched != nil {
+		createErr = s.manager.CreateDeploymentFromSource(req.Name, fetched.dir, req.ComposeContent, fetched.composeName)
+	} else {
+		createErr = s.manager.CreateDeployment(req.Name, req.ComposeContent, nil)
+	}
+	if createErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error": createErr.Error(),
 		})
 		return
 	}

@@ -268,6 +268,62 @@ func (d *Discovery) CreateDeployment(name string, composeContent string, fileMou
 	return os.WriteFile(composePath, []byte(composeContent), 0644)
 }
 
+// CreateDeploymentFromSource creates a deployment whose files come from a fetched
+// source tree rather than a single compose string. The whole tree is copied into
+// the deployment directory (so code, not just compose, is preserved), then the
+// transformed compose content is written back over the source's own compose file
+// under composeName, keeping the source's layout. Bind mount directories are
+// created as for a plain compose deployment.
+func (d *Discovery) CreateDeploymentFromSource(name, srcDir, composeContent, composeName string) error {
+	dirPath := filepath.Join(d.basePath, name)
+
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return err
+	}
+
+	if err := copyTree(srcDir, dirPath); err != nil {
+		return fmt.Errorf("failed to copy source into deployment: %w", err)
+	}
+
+	composeContent = d.ensureComposeName(name, composeContent)
+
+	if err := d.createBindMountDirs(dirPath, composeContent, nil); err != nil {
+		return fmt.Errorf("failed to create mount directories: %w", err)
+	}
+
+	if composeName == "" {
+		composeName = "docker-compose.yml"
+	}
+	composePath := filepath.Join(dirPath, filepath.Base(composeName))
+	return os.WriteFile(composePath, []byte(composeContent), 0644)
+}
+
+// copyTree recursively copies the contents of src into dst, creating dst
+// subdirectories as needed. File modes are preserved.
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm()|0700)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
+}
+
 // createBindMountDirs parses compose content and creates bind mount directories
 // with world-writable permissions to support non-root containers (e.g., Bitnami).
 // fileMounts lists relative paths (e.g., "./nginx.conf") that are file mounts
