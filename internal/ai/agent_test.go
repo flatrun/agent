@@ -69,6 +69,28 @@ Check the logs directory and report anything unusual.`)
 	}
 }
 
+func TestParseAgentScheduleAndPermissions(t *testing.T) {
+	rt, err := ParseAgent("nightly", `---
+description: Nightly checkup
+scope: deployment
+deployment: myapp
+schedule: "0 3 * * *"
+permissions:
+  - deployments:read
+  - deployments:write
+---
+Restart the app if it is unhealthy.`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.Schedule != "0 3 * * *" {
+		t.Errorf("schedule = %q", rt.Schedule)
+	}
+	if len(rt.Permissions) != 2 || rt.Permissions[0] != "deployments:read" || rt.Permissions[1] != "deployments:write" {
+		t.Errorf("permissions = %v", rt.Permissions)
+	}
+}
+
 func TestParseAgentBareMarkdown(t *testing.T) {
 	rt, err := ParseAgent("hello", "Say hello to the operator.")
 	if err != nil {

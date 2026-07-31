@@ -203,6 +203,7 @@ func handleUpdate(args []string) {
 	force := updateFlags.Bool("force", false, "Force update even if on latest version")
 	restart := updateFlags.Bool("restart", false, "Restart service after update")
 	rollback := updateFlags.Bool("rollback", false, "Rollback to previous version")
+	prerelease := updateFlags.Bool("prerelease", false, "Include prereleases (beta) when checking for updates")
 
 	updateFlags.Usage = func() {
 		fmt.Println("Usage: flatrun-agent update [options]")
@@ -211,14 +212,20 @@ func handleUpdate(args []string) {
 		updateFlags.PrintDefaults()
 		fmt.Println()
 		fmt.Println("Examples:")
-		fmt.Println("  flatrun-agent update --check     Check for available updates")
-		fmt.Println("  flatrun-agent update             Download and install latest version")
-		fmt.Println("  flatrun-agent update --restart   Update and restart the service")
-		fmt.Println("  flatrun-agent update --rollback  Rollback to previous version")
+		fmt.Println("  flatrun-agent update --check       Check for available updates")
+		fmt.Println("  flatrun-agent update               Download and install latest version")
+		fmt.Println("  flatrun-agent update --prerelease  Include beta releases")
+		fmt.Println("  flatrun-agent update --restart     Update and restart the service")
+		fmt.Println("  flatrun-agent update --rollback    Rollback to previous version")
 	}
 
 	if err := updateFlags.Parse(args); err != nil {
 		os.Exit(1)
+	}
+
+	channel := updater.ChannelStable
+	if *prerelease {
+		channel = updater.ChannelPrerelease
 	}
 
 	if *rollback {
@@ -233,7 +240,7 @@ func handleUpdate(args []string) {
 	}
 
 	if *checkOnly {
-		result, err := updater.CheckForUpdate()
+		result, err := updater.CheckForUpdate(channel)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -249,7 +256,7 @@ func handleUpdate(args []string) {
 		return
 	}
 
-	result, err := updater.Update(*force)
+	result, err := updater.Update(*force, channel)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)

@@ -33,6 +33,27 @@ func createTestDeployment(t *testing.T, basePath, name, composeContent string) {
 	}
 }
 
+func TestExecuteAgent_UsesInjectedRunner(t *testing.T) {
+	executor := NewExecutor(nil, nil)
+
+	if _, err := executor.ExecuteAgent(context.Background(), &AgentTaskConfig{AgentName: "x"}); err == nil {
+		t.Fatal("expected an error when no agent runner is wired")
+	}
+
+	var ran string
+	executor.SetAgentRunner(func(_ context.Context, name string) (string, error) {
+		ran = name
+		return "ok", nil
+	})
+	out, err := executor.ExecuteAgent(context.Background(), &AgentTaskConfig{AgentName: "nightly"})
+	if err != nil {
+		t.Fatalf("ExecuteAgent: %v", err)
+	}
+	if ran != "nightly" || out != "ok" {
+		t.Errorf("runner not invoked as expected: ran=%q out=%q", ran, out)
+	}
+}
+
 func TestExecuteCommand_NilDockerManager(t *testing.T) {
 	executor := NewExecutor(nil, nil)
 	_, err := executor.ExecuteCommand(context.Background(), "test", &CommandTaskConfig{

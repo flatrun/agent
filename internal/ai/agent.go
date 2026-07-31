@@ -16,11 +16,21 @@ import (
 // shared tool set; the file is the whole definition, so it can be read,
 // edited, and versioned like any other deployment file.
 type Agent struct {
-	Name         string       `json:"name" yaml:"-"`
-	Description  string       `json:"description" yaml:"description"`
-	Scope        string       `json:"scope" yaml:"scope"`
-	Deployment   string       `json:"deployment,omitempty" yaml:"deployment"`
-	MaxSteps     int          `json:"max_steps,omitempty" yaml:"max_steps"`
+	Name        string `json:"name" yaml:"-"`
+	Description string `json:"description" yaml:"description"`
+	Scope       string `json:"scope" yaml:"scope"`
+	Deployment  string `json:"deployment,omitempty" yaml:"deployment"`
+	// Schedule is an optional cron expression. When set, the agent runs on that
+	// schedule without a human present.
+	Schedule string `json:"schedule,omitempty" yaml:"schedule"`
+	// Permissions is the grant a scheduled (headless) run executes under: the
+	// runtime auto-approves tools these permissions cover and denies the rest.
+	// Empty means read-only, since a cron run has no human to approve a change.
+	Permissions []string `json:"permissions,omitempty" yaml:"permissions"`
+	// MaxSteps raises the per-turn tool budget within a hard ceiling.
+	MaxSteps int `json:"max_steps,omitempty" yaml:"max_steps"`
+	// Policy is the governance policy: which tools run freely, which always ask,
+	// and which the model never sees.
 	Policy       *AgentPolicy `json:"policy,omitempty" yaml:"policy"`
 	Instructions string       `json:"-" yaml:"-"`
 }

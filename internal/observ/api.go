@@ -3,6 +3,7 @@ package observ
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -84,6 +85,22 @@ func HandlerWithAlerts(store *Store, history *MetricsDB, health healthReporter, 
 			}
 		}
 		writeJSON(w, TimeSeriesResponse{Deployment: deployment, Metrics: buildTimeSeries(chartsFrom(since), deployment, since)})
+	})
+	mux.HandleFunc("/metrics/host", func(w http.ResponseWriter, r *http.Request) {
+		since := time.Now().Add(-15 * time.Minute)
+		if v := r.URL.Query().Get("since"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				since = time.Now().Add(-d)
+			}
+		}
+		all := buildTimeSeries(chartsFrom(since), "", since)
+		host := make(map[string]MetricSeries, len(all))
+		for metric, series := range all {
+			if strings.HasPrefix(metric, "system.") {
+				host[metric] = series
+			}
+		}
+		writeJSON(w, TimeSeriesResponse{Metrics: host})
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if health == nil {

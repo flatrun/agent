@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -265,6 +266,62 @@ func (d *Discovery) CreateDeployment(name string, composeContent string, fileMou
 
 	composePath := filepath.Join(dirPath, "docker-compose.yml")
 	return os.WriteFile(composePath, []byte(composeContent), 0644)
+}
+
+// CreateDeploymentFromSource creates a deployment whose files come from a fetched
+// source tree rather than a single compose string. The whole tree is copied into
+// the deployment directory (so code, not just compose, is preserved), then the
+// transformed compose content is written back over the source's own compose file
+// under composeName, keeping the source's layout. Bind mount directories are
+// created as for a plain compose deployment.
+func (d *Discovery) CreateDeploymentFromSource(name, srcDir, composeContent, composeName string) error {
+	dirPath := filepath.Join(d.basePath, name)
+
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return err
+	}
+
+	if err := copyTree(srcDir, dirPath); err != nil {
+		return fmt.Errorf("failed to copy source into deployment: %w", err)
+	}
+
+	composeContent = d.ensureComposeName(name, composeContent)
+
+	if err := d.createBindMountDirs(dirPath, composeContent, nil); err != nil {
+		return fmt.Errorf("failed to create mount directories: %w", err)
+	}
+
+	if composeName == "" {
+		composeName = "docker-compose.yml"
+	}
+	composePath := filepath.Join(dirPath, filepath.Base(composeName))
+	return os.WriteFile(composePath, []byte(composeContent), 0644)
+}
+
+// copyTree recursively copies the contents of src into dst, creating dst
+// subdirectories as needed. File modes are preserved.
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm()|0700)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
 }
 
 // createBindMountDirs parses compose content and creates bind mount directories
@@ -579,6 +636,8 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 		return err
 	}
 
+	d.pruneComposeBackups(composePath, maxComposeBackups)
+
 	metadataPath := filepath.Join(dirPath, "service.yml")
 	if _, err := os.Stat(metadataPath); err == nil {
 		if newMeta := d.generateMetadataFromCompose(composePath, name); newMeta != nil {
@@ -600,6 +659,30 @@ func (d *Discovery) UpdateComposeFile(name string, content string) error {
 	}
 
 	return nil
+}
+
+// maxComposeBackups bounds how many timestamped compose backups are retained
+// after a rewrite. The most recent ones are kept so a rollback copy still exists
+// while older backups no longer accumulate in the deployment directory.
+const maxComposeBackups = 5
+
+// pruneComposeBackups keeps the newest `keep` `<compose>.bak.<ts>` files next to
+// composePath and removes the rest. The timestamp suffix is written with a
+// lexicographically ordered layout, so a sorted glob is chronological.
+func (d *Discovery) pruneComposeBackups(composePath string, keep int) {
+	if keep < 0 {
+		keep = 0
+	}
+
+	matches, err := filepath.Glob(composePath + ".bak.*")
+	if err != nil || len(matches) <= keep {
+		return
+	}
+
+	sort.Strings(matches)
+	for _, stale := range matches[:len(matches)-keep] {
+		_ = os.Remove(stale)
+	}
 }
 
 func (d *Discovery) SaveMetadata(name string, metadata *models.ServiceMetadata) error {

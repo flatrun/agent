@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/flatrun/agent/internal/ai"
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/pkg/models"
 )
 
@@ -332,5 +334,79 @@ func TestRunAgentNotFound(t *testing.T) {
 	resp, _ := doJSON(t, http.MethodPost, ts.URL+"/api/ai/agents/ghost/run", nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestAgentActor_NoGrantIsReadOnly(t *testing.T) {
+	actor := agentActor(&ai.Agent{Name: "a", Scope: ai.SessionScopeSystem})
+	if actor.Role == auth.RoleAdmin {
+		t.Fatal("a headless agent actor must never be admin")
+	}
+	if actor.HasPermission(auth.PermSettingsWrite) || actor.HasPermission(auth.PermDeploymentsWrite) {
+		t.Error("no grant must not allow any write permission")
+	}
+}
+
+func TestAgentActor_GrantAllowsOnlyWhatItLists(t *testing.T) {
+	actor := agentActor(&ai.Agent{Name: "a", Scope: ai.SessionScopeSystem,
+		Permissions: []string{string(auth.PermSettingsWrite)}})
+	if !actor.HasPermission(auth.PermSettingsWrite) {
+		t.Error("granted settings:write should be allowed")
+	}
+	if actor.HasPermission(auth.PermDeploymentsWrite) {
+		t.Error("an ungranted permission must stay denied")
+	}
+}
+
+func TestAgentActor_DeploymentScopeGrantsOnlyItsOwn(t *testing.T) {
+	write := agentActor(&ai.Agent{Name: "a", Scope: ai.SessionScopeDeployment, Deployment: "shop",
+		Permissions: []string{string(auth.PermDeploymentsWrite)}})
+	if !write.CanAccessDeployment("shop", auth.AccessLevelWrite) {
+		t.Error("a deployment write grant should allow writing its own deployment")
+	}
+	if write.CanAccessDeployment("other", auth.AccessLevelWrite) {
+		t.Error("the grant must not reach another deployment")
+	}
+	read := agentActor(&ai.Agent{Name: "a", Scope: ai.SessionScopeDeployment, Deployment: "shop"})
+	if read.CanAccessDeployment("shop", auth.AccessLevelWrite) {
+		t.Error("no grant must not allow writing the deployment")
+	}
+}
+
+func TestRunAgentHeadless_AutoApprovesWithinGrant(t *testing.T) {
+	s, tmpDir, _ := setupPlanTestServer(t)
+	s.aiAgents = ai.NewAgentStore(tmpDir)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+	writeAgentFile(t, tmpDir, "fixer.md",
+		"---\nscope: deployment\ndeployment: myapp\nschedule: \"0 3 * * *\"\npermissions:\n  - deployments:write\n---\nWrite conf/app.conf.")
+	s.aiProvider = &scriptedProvider{responses: []*ai.Response{
+		{ToolCalls: []ai.ToolCall{{ID: "c1", Name: "write_deployment_file",
+			Arguments: `{"path":"conf/app.conf","content":"key = value\n"}`}}, Model: "scripted"},
+		{Content: "Done.", Model: "scripted"},
+	}}
+	if _, err := s.runAgentHeadless(context.Background(), "fixer"); err != nil {
+		t.Fatalf("headless run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "myapp", "conf", "app.conf")); err != nil {
+		t.Fatalf("a granted headless run should write the file without pausing: %v", err)
+	}
+}
+
+func TestRunAgentHeadless_FailsClosedWithoutGrant(t *testing.T) {
+	s, tmpDir, _ := setupPlanTestServer(t)
+	s.aiAgents = ai.NewAgentStore(tmpDir)
+	createTestDeployment(t, tmpDir, "myapp", &models.ServiceMetadata{Name: "myapp"})
+	writeAgentFile(t, tmpDir, "fixer.md",
+		"---\nscope: deployment\ndeployment: myapp\n---\nWrite conf/app.conf.")
+	s.aiProvider = &scriptedProvider{responses: []*ai.Response{
+		{ToolCalls: []ai.ToolCall{{ID: "c1", Name: "write_deployment_file",
+			Arguments: `{"path":"conf/app.conf","content":"key = value\n"}`}}, Model: "scripted"},
+		{Content: "Could not write.", Model: "scripted"},
+	}}
+	if _, err := s.runAgentHeadless(context.Background(), "fixer"); err != nil {
+		t.Fatalf("headless run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "myapp", "conf", "app.conf")); !os.IsNotExist(err) {
+		t.Fatal("a headless run without the write grant must not write the file")
 	}
 }

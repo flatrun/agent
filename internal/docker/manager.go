@@ -356,6 +356,13 @@ func (m *Manager) CreateDeployment(name string, composeContent string, fileMount
 	return m.discovery.CreateDeployment(name, composeContent, fileMounts)
 }
 
+func (m *Manager) CreateDeploymentFromSource(name, srcDir, composeContent, composeName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.discovery.CreateDeploymentFromSource(name, srcDir, composeContent, composeName)
+}
+
 func (m *Manager) ApplyMountOwnership(name string, mounts []MountOwnership) error {
 	deploymentPath := filepath.Join(m.basePath, name)
 	return m.discovery.ApplyMountOwnership(deploymentPath, mounts)

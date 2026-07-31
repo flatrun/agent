@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/flatrun/agent/pkg/models"
@@ -647,6 +648,93 @@ func TestUpdateComposeFile_SyncsMetadata(t *testing.T) {
 	}
 	if !updated.Networking.Expose {
 		t.Error("Expose should be preserved as true")
+	}
+}
+
+func TestCreateDeploymentFromSource(t *testing.T) {
+	tmpDir := t.TempDir()
+	d := NewDiscovery(tmpDir)
+
+	// A fetched source tree: a compose file plus application code.
+	srcDir := filepath.Join(t.TempDir(), "src")
+	if err := os.MkdirAll(filepath.Join(srcDir, "app"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for rel, content := range map[string]string{
+		"docker-compose.yml": "services:\n  app:\n    image: nginx\n",
+		"app/index.html":     "<h1>hi</h1>",
+	} {
+		if err := os.WriteFile(filepath.Join(srcDir, rel), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	transformed := "services:\n  app:\n    image: nginx\n    container_name: myapp-app\n"
+	if err := d.CreateDeploymentFromSource("myapp", srcDir, transformed, "docker-compose.yml"); err != nil {
+		t.Fatalf("CreateDeploymentFromSource failed: %v", err)
+	}
+
+	deployDir := filepath.Join(tmpDir, "myapp")
+
+	// The application code comes across.
+	if _, err := os.Stat(filepath.Join(deployDir, "app", "index.html")); err != nil {
+		t.Errorf("source code was not copied into the deployment: %v", err)
+	}
+
+	// The compose file holds the transformed content, not the source's original.
+	got, err := os.ReadFile(filepath.Join(deployDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("compose file missing: %v", err)
+	}
+	if !strings.Contains(string(got), "container_name: myapp-app") {
+		t.Errorf("compose file does not hold the transformed content:\n%s", got)
+	}
+}
+
+func TestUpdateComposeFile_PrunesOldBackups(t *testing.T) {
+	tmpDir := t.TempDir()
+	deployDir := filepath.Join(tmpDir, "myapp")
+	if err := os.MkdirAll(deployDir, 0755); err != nil {
+		t.Fatalf("Failed to create deploy dir: %v", err)
+	}
+
+	composePath := filepath.Join(deployDir, "docker-compose.yml")
+	if err := os.WriteFile(composePath, []byte("services:\n  app:\n    image: myapp:latest\n"), 0644); err != nil {
+		t.Fatalf("Failed to write compose: %v", err)
+	}
+
+	// Seed backups using the exact production filename shape written by
+	// UpdateComposeFile (discovery.go: composePath + ".bak." + yyyymmddhhmmss).
+	// Older timestamps sort earlier, so the two oldest should be pruned.
+	seeded := []string{
+		"20200101000001", "20200101000002", "20200101000003",
+		"20200101000004", "20200101000005", "20200101000006",
+	}
+	for _, ts := range seeded {
+		if err := os.WriteFile(composePath+".bak."+ts, []byte("old"), 0644); err != nil {
+			t.Fatalf("Failed to seed backup %s: %v", ts, err)
+		}
+	}
+
+	d := NewDiscovery(tmpDir)
+	if err := d.UpdateComposeFile("myapp", "services:\n  app:\n    image: myapp:v2\n"); err != nil {
+		t.Fatalf("UpdateComposeFile failed: %v", err)
+	}
+
+	backups, err := filepath.Glob(composePath + ".bak.*")
+	if err != nil {
+		t.Fatalf("Glob failed: %v", err)
+	}
+	if len(backups) != maxComposeBackups {
+		t.Fatalf("backup count = %d, want %d", len(backups), maxComposeBackups)
+	}
+
+	// The two oldest seeded backups must be gone; the newest seeded ones remain.
+	if _, err := os.Stat(composePath + ".bak.20200101000001"); !os.IsNotExist(err) {
+		t.Error("oldest backup should have been pruned")
+	}
+	if _, err := os.Stat(composePath + ".bak.20200101000006"); err != nil {
+		t.Errorf("newest seeded backup should be retained: %v", err)
 	}
 }
 
