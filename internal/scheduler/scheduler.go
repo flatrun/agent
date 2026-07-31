@@ -13,6 +13,7 @@ import (
 type TaskExecutor interface {
 	ExecuteBackup(ctx context.Context, deploymentName string, config *BackupTaskConfig) (string, error)
 	ExecuteCommand(ctx context.Context, deploymentName string, config *CommandTaskConfig) (string, error)
+	ExecuteAgent(ctx context.Context, config *AgentTaskConfig) (string, error)
 }
 
 type Manager struct {
@@ -135,6 +136,12 @@ func (m *Manager) executeTask(task ScheduledTask) {
 		} else {
 			execErr = fmt.Errorf("command config is nil")
 		}
+	case TaskTypeAgent:
+		if task.Config.AgentConfig != nil {
+			output, execErr = m.executor.ExecuteAgent(ctx, task.Config.AgentConfig)
+		} else {
+			execErr = fmt.Errorf("agent config is nil")
+		}
 	default:
 		execErr = fmt.Errorf("unknown task type: %s", task.Type)
 	}
@@ -238,6 +245,62 @@ func (m *Manager) UpdateTask(id int64, req *UpdateTaskRequest) (*ScheduledTask, 
 
 func (m *Manager) DeleteTask(id int64) error {
 	return m.db.DeleteTask(id)
+}
+
+// findAgentTask returns the scheduled task backing an agent's schedule, or nil.
+// An agent maps to at most one task, keyed by its name in the agent config.
+func (m *Manager) findAgentTask(agentName string) (*ScheduledTask, error) {
+	tasks, err := m.db.GetAllTasks()
+	if err != nil {
+		return nil, err
+	}
+	for i := range tasks {
+		t := tasks[i]
+		if t.Type == TaskTypeAgent && t.Config.AgentConfig != nil && t.Config.AgentConfig.AgentName == agentName {
+			return &t, nil
+		}
+	}
+	return nil, nil
+}
+
+// SyncAgentTask makes the scheduler reflect an agent's schedule: it creates the
+// backing task, updates its cron when it changed, or does nothing when already
+// in sync. Called whenever an agent with a schedule is written.
+func (m *Manager) SyncAgentTask(agentName, cronExpr, deployment string) error {
+	if err := m.ValidateCronExpr(cronExpr); err != nil {
+		return err
+	}
+	existing, err := m.findAgentTask(agentName)
+	if err != nil {
+		return err
+	}
+	enabled := true
+	if existing != nil {
+		if existing.CronExpr == cronExpr && existing.Enabled {
+			return nil
+		}
+		_, err := m.UpdateTask(existing.ID, &UpdateTaskRequest{CronExpr: &cronExpr, Enabled: &enabled})
+		return err
+	}
+	_, err = m.CreateTask(&CreateTaskRequest{
+		Name:           "agent:" + agentName,
+		Type:           TaskTypeAgent,
+		DeploymentName: deployment,
+		CronExpr:       cronExpr,
+		Enabled:        enabled,
+		Config:         TaskConfig{AgentConfig: &AgentTaskConfig{AgentName: agentName}},
+	})
+	return err
+}
+
+// RemoveAgentTask drops an agent's scheduled task, if any. Called when an agent
+// loses its schedule or is deleted.
+func (m *Manager) RemoveAgentTask(agentName string) error {
+	existing, err := m.findAgentTask(agentName)
+	if err != nil || existing == nil {
+		return err
+	}
+	return m.db.DeleteTask(existing.ID)
 }
 
 func (m *Manager) GetTask(id int64) (*ScheduledTask, error) {
