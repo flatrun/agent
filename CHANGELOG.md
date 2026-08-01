@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0-beta.2] - 2026-08-01
+
+Second beta of the Albacore release, continuing the deployment lifecycle and self-healing work on top of beta.1. Some Albacore items remain in progress and are not in this beta.
+
+### Added
+- Deploy from a git repository: the source is fetched behind a provider interface with a registry (so upload and webhook delivery can register the same way), fetched into a temporary directory and required to contain a compose file before anything is created, with private repositories authenticating from a token held in the credential manager and scrubbed from logs
+- Channel-aware updates: an opt-in prerelease channel so `update` can see betas, reading the full releases list with proper semver ordering, exposed over the API and surfaced as an Administration > Updates view showing the current version, the versions available to install, each version's changelog, and a one-click update that reports the restart
+- Host metrics: host CPU, memory and disk collected as alertable time series using working-set memory, so a saturated machine has a signal where before there were only per-container percentages against each container's own limit
+- Scheduled agents: an agent file can declare a cron schedule and a permission grant, running unattended under an actor carrying only those permissions, auto-approving the granted tools and denying the rest, failing closed so a scheduled run can never quietly do more than it was trusted to (no grant means read-only)
+- Agent run history listed on its own, since each run is already a session tagged with its agent
+- Agent governance policy enforcing step budgets and dry runs
+
+### Changed
+- A firing alert carries a snapshot of the containers consuming the most of the resource, so the notification and the stored event name what was responsible; a rule can deliver to a chosen subset of notification targets, and can opt into restarting the offending deployment under the self-heal guardrails (managed deployments only, with a cooldown so it can't flap into a restart loop), notify-only by default
+- Compose-file backups are pruned to the five most recent on each successful rewrite, so a frequently-updated deployment stops accumulating timestamped backups while one rollback copy remains
+
 ## [0.4.0-beta.1] - 2026-07-29
 
 First beta of the Albacore release: full deployment lifecycle and self-healing operations. Some Albacore items remain in progress and are not in this beta.
