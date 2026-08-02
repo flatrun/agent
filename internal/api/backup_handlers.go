@@ -91,10 +91,7 @@ func (s *Server) createBackup(c *gin.Context) {
 		return
 	}
 
-	var spec *backup.BackupSpec
-	if deployment.Metadata != nil && deployment.Metadata.Backup != nil {
-		spec = deployment.Metadata.Backup
-	}
+	spec := s.effectiveBackupSpec(deployment)
 
 	jobID := s.backupManager.StartBackupJob(req.DeploymentName, spec)
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Backup job started"})
@@ -113,10 +110,7 @@ func (s *Server) createDeploymentBackup(c *gin.Context) {
 		return
 	}
 
-	var spec *backup.BackupSpec
-	if deployment.Metadata != nil && deployment.Metadata.Backup != nil {
-		spec = deployment.Metadata.Backup
-	}
+	spec := s.effectiveBackupSpec(deployment)
 
 	jobID := s.backupManager.StartBackupJob(deploymentName, spec)
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Backup job started"})
@@ -209,10 +203,7 @@ func (s *Server) getDeploymentBackupConfig(c *gin.Context) {
 		return
 	}
 
-	var spec *backup.BackupSpec
-	if deployment.Metadata != nil && deployment.Metadata.Backup != nil {
-		spec = deployment.Metadata.Backup
-	}
+	spec := s.effectiveBackupSpec(deployment)
 
 	c.JSON(http.StatusOK, gin.H{"backup_config": spec})
 }

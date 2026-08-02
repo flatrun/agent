@@ -303,12 +303,18 @@ func (m *Manager) backupDatabases(ctx context.Context, deploymentName string, da
 }
 
 func (m *Manager) dumpMySQL(ctx context.Context, deploymentName string, db *DatabaseSpec, dbDir string) (string, error) {
-	containerName := fmt.Sprintf("%s-%s", deploymentName, db.Service)
-	if db.Service == deploymentName || db.Service == "" {
-		containerName = deploymentName
+	containerName := db.Container
+	if containerName == "" {
+		containerName = fmt.Sprintf("%s-%s", deploymentName, db.Service)
+		if db.Service == deploymentName || db.Service == "" {
+			containerName = deploymentName
+		}
 	}
 
-	dumpFile := filepath.Join(dbDir, fmt.Sprintf("%s_mysql.sql", db.Service))
+	label := db.Service
+	if label == "" {
+		label = deploymentName
+	}
 
 	host := db.Host
 	if host == "" {
@@ -324,15 +330,19 @@ func (m *Manager) dumpMySQL(ctx context.Context, deploymentName string, db *Data
 	}
 
 	args := []string{"exec"}
-
 	if db.Password != "" {
 		args = append(args, "-e", "MYSQL_PWD="+db.Password)
 	}
+	args = append(args, containerName, "mysqldump", "-h", host, "-u", user,
+		"--single-transaction", "--routines", "--triggers")
 
-	args = append(args, containerName, "mysqldump",
-		"-h", host,
-		"-u", user,
-		"--single-transaction", "--routines", "--triggers", database)
+	dumpFile := filepath.Join(dbDir, fmt.Sprintf("%s_mysql.sql", label))
+	if db.AllDatabases {
+		args = append(args, "--all-databases")
+		dumpFile = filepath.Join(dbDir, fmt.Sprintf("%s_mysql_all.sql", label))
+	} else {
+		args = append(args, database)
+	}
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := cmd.Output()
@@ -348,12 +358,18 @@ func (m *Manager) dumpMySQL(ctx context.Context, deploymentName string, db *Data
 }
 
 func (m *Manager) dumpPostgres(ctx context.Context, deploymentName string, db *DatabaseSpec, dbDir string) (string, error) {
-	containerName := fmt.Sprintf("%s-%s", deploymentName, db.Service)
-	if db.Service == deploymentName || db.Service == "" {
-		containerName = deploymentName
+	containerName := db.Container
+	if containerName == "" {
+		containerName = fmt.Sprintf("%s-%s", deploymentName, db.Service)
+		if db.Service == deploymentName || db.Service == "" {
+			containerName = deploymentName
+		}
 	}
 
-	dumpFile := filepath.Join(dbDir, fmt.Sprintf("%s_postgres.sql", db.Service))
+	label := db.Service
+	if label == "" {
+		label = deploymentName
+	}
 
 	user := db.User
 	if user == "" {
@@ -364,15 +380,18 @@ func (m *Manager) dumpPostgres(ctx context.Context, deploymentName string, db *D
 		database = deploymentName
 	}
 
-	args := []string{
-		"exec",
-	}
-
+	args := []string{"exec"}
 	if db.Password != "" {
 		args = append(args, "-e", fmt.Sprintf("PGPASSWORD=%s", db.Password))
 	}
 
-	args = append(args, containerName, "pg_dump", "-U", user, database)
+	dumpFile := filepath.Join(dbDir, fmt.Sprintf("%s_postgres.sql", label))
+	if db.AllDatabases {
+		args = append(args, containerName, "pg_dumpall", "-U", user)
+		dumpFile = filepath.Join(dbDir, fmt.Sprintf("%s_postgres_all.sql", label))
+	} else {
+		args = append(args, containerName, "pg_dump", "-U", user, database)
+	}
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	output, err := cmd.Output()
