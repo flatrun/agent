@@ -78,7 +78,72 @@ func (s *Server) detectBackupDatabases(d *models.Deployment) []models.DatabaseBa
 			Password:     password,
 		})
 	}
+
+	// Per-app slice: a deployment using the shared database dumps just its own
+	// database from the shared server, so its (typically more frequent) backups
+	// are self-contained rather than depending on the shared database's own,
+	// possibly less frequent, global backup.
+	specs = append(specs, s.detectSharedDatabaseSlices(d, env)...)
 	return specs
+}
+
+func (s *Server) detectSharedDatabaseSlices(d *models.Deployment, env map[string]string) []models.DatabaseBackupSpec {
+	if d.Metadata == nil {
+		return nil
+	}
+	shared := s.config.Infrastructure.Database
+	if shared.Container == "" {
+		return nil
+	}
+
+	var specs []models.DatabaseBackupSpec
+	for _, dbc := range d.Metadata.Databases {
+		if !dbc.IsShared && dbc.Mode != "shared" {
+			continue
+		}
+		dbName := ""
+		if dbc.DatabaseName != "" {
+			dbName = dbc.DatabaseName
+		} else if dbc.EnvPrefix != "" {
+			dbName = env[dbc.EnvPrefix+"_DATABASE"]
+		}
+		if dbName == "" {
+			dbName = env["DB_DATABASE"]
+		}
+		if dbName == "" {
+			continue
+		}
+		dbType := normalizeDBType(dbc.Type)
+		if dbType == "" {
+			dbType = normalizeDBType(shared.Type)
+		}
+		if dbType == "" {
+			continue
+		}
+		label := dbc.Alias
+		if label == "" {
+			label = "app"
+		}
+		specs = append(specs, models.DatabaseBackupSpec{
+			Service:   label,
+			Type:      dbType,
+			Container: shared.Container,
+			Database:  dbName,
+			User:      shared.RootUser,
+			Password:  shared.RootPassword,
+		})
+	}
+	return specs
+}
+
+func normalizeDBType(t string) string {
+	switch strings.ToLower(t) {
+	case "mysql", "mariadb":
+		return "mysql"
+	case "postgres", "postgresql":
+		return "postgres"
+	}
+	return ""
 }
 
 func dbTypeFromImage(image string) string {

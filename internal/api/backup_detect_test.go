@@ -43,3 +43,30 @@ func TestDbTypeFromImage(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectBackupDatabases_SharedAppSlice(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{config: &config.Config{
+		DeploymentsPath: dir,
+		Infrastructure: config.InfrastructureConfig{Database: config.SharedDatabaseConfig{
+			Enabled: true, Type: "postgres", Container: "shared-pg", RootUser: "postgres", RootPassword: "rootpw",
+		}},
+	}}
+	name := "wordpress"
+	dep := filepath.Join(dir, name)
+	os.MkdirAll(dep, 0o755)
+	os.WriteFile(filepath.Join(dep, "docker-compose.yml"), []byte("services:\n  app:\n    image: wordpress:6\n"), 0o644)
+	os.WriteFile(filepath.Join(dep, ".env"), []byte("DB_DATABASE=wordpress_db\nDB_PASSWORD=apppw\n"), 0o600)
+
+	specs := srv.detectBackupDatabases(&models.Deployment{
+		Name: name, Path: dep,
+		Metadata: &models.ServiceMetadata{Databases: []models.DatabaseConfig{{Alias: "primary", Type: "postgres", Mode: "shared", IsShared: true}}},
+	})
+	if len(specs) != 1 {
+		t.Fatalf("want 1 slice, got %d: %#v", len(specs), specs)
+	}
+	s := specs[0]
+	if s.Container != "shared-pg" || s.Database != "wordpress_db" || s.User != "postgres" || s.Password != "rootpw" || s.AllDatabases {
+		t.Fatalf("unexpected slice: %#v", s)
+	}
+}
