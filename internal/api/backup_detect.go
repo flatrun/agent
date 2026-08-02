@@ -34,7 +34,93 @@ func (s *Server) effectiveBackupSpec(d *models.Deployment) *backup.BackupSpec {
 		out = *spec
 	}
 	out.Databases = detected
+	// A database server's live data directory is captured by its dump, so drop
+	// it from the file copy: it is redundant and, taken hot, potentially
+	// inconsistent. Other data (app files, config) is still copied.
+	out.ExcludePatterns = mergeUnique(out.ExcludePatterns, s.dbServerDataDirs(d))
 	return &out
+}
+
+// dbServerDataDirs returns the bind-mount directory names of the deployment's
+// own database services, so the live database files can be excluded from the
+// file backup in favour of the logical dump.
+func (s *Server) dbServerDataDirs(d *models.Deployment) []string {
+	content, err := os.ReadFile(filepath.Join(d.Path, "docker-compose.yml"))
+	if err != nil {
+		return nil
+	}
+	compose, err := docker.ParseComposeYAML(string(content))
+	if err != nil {
+		return nil
+	}
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	seen := map[string]bool{}
+	var dirs []string
+	for _, raw := range services {
+		svc, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		image, _ := svc["image"].(string)
+		if dbTypeFromImage(image) == "" {
+			continue
+		}
+		for _, host := range serviceBindHostPaths(svc) {
+			base := filepath.Base(host)
+			if base == "." || base == "/" || base == "" || seen[base] {
+				continue
+			}
+			seen[base] = true
+			dirs = append(dirs, base)
+		}
+	}
+	return dirs
+}
+
+func serviceBindHostPaths(svc map[string]interface{}) []string {
+	vols, ok := svc["volumes"].([]interface{})
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, v := range vols {
+		switch vv := v.(type) {
+		case string:
+			host := vv
+			if i := strings.Index(vv, ":"); i >= 0 {
+				host = vv[:i]
+			}
+			if strings.HasPrefix(host, ".") || strings.Contains(host, "/") {
+				out = append(out, host)
+			}
+		case map[string]interface{}:
+			if t, _ := vv["type"].(string); t == "bind" {
+				if src, _ := vv["source"].(string); src != "" {
+					out = append(out, src)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func mergeUnique(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range [][]string{a, b} {
+		for _, s := range list {
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // detectBackupDatabases finds database-server services in a deployment's compose

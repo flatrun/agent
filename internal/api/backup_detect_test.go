@@ -70,3 +70,28 @@ func TestDetectBackupDatabases_SharedAppSlice(t *testing.T) {
 		t.Fatalf("unexpected slice: %#v", s)
 	}
 }
+
+func TestEffectiveBackupSpec_ExcludesDBDataDir(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{config: &config.Config{DeploymentsPath: dir}}
+	name := "pg"
+	dep := filepath.Join(dir, name)
+	os.MkdirAll(dep, 0o755)
+	compose := "name: pg\nservices:\n  postgres:\n    image: postgres:16\n    volumes:\n      - ./data:/var/lib/postgresql/data\n    environment:\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}\n"
+	os.WriteFile(filepath.Join(dep, "docker-compose.yml"), []byte(compose), 0o644)
+	os.WriteFile(filepath.Join(dep, ".env"), []byte("POSTGRES_PASSWORD=pw\n"), 0o600)
+
+	spec := srv.effectiveBackupSpec(&models.Deployment{Name: name, Path: dep})
+	if spec == nil || len(spec.Databases) != 1 {
+		t.Fatalf("expected a detected database: %#v", spec)
+	}
+	found := false
+	for _, e := range spec.ExcludePatterns {
+		if e == "data" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'data' excluded, got %#v", spec.ExcludePatterns)
+	}
+}

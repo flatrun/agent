@@ -100,7 +100,11 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		backup.Components = append(backup.Components, "metadata")
 	}
 
-	if err := m.backupMountedData(deploymentPath, tempDir, &metadata); err != nil {
+	var excludes []string
+	if spec != nil {
+		excludes = spec.ExcludePatterns
+	}
+	if err := m.backupMountedData(deploymentPath, tempDir, &metadata, excludes); err != nil {
 		log.Printf("Backup: mounted data warning: %v", err)
 	}
 	if len(metadata.Components.MountedData) > 0 {
@@ -217,7 +221,7 @@ func (m *Manager) backupMetadataFile(deploymentPath, tempDir string, metadata *B
 	return nil
 }
 
-func (m *Manager) backupMountedData(deploymentPath, tempDir string, metadata *BackupMetadata) error {
+func (m *Manager) backupMountedData(deploymentPath, tempDir string, metadata *BackupMetadata, excludes []string) error {
 	dataDir := filepath.Join(tempDir, "data")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create data backup directory: %w", err)
@@ -225,6 +229,10 @@ func (m *Manager) backupMountedData(deploymentPath, tempDir string, metadata *Ba
 
 	commonDataDirs := []string{"data", "uploads", "storage", "config", "logs"}
 	for _, dir := range commonDataDirs {
+		if matchesExclude(dir, excludes) {
+			log.Printf("Backup: skipping %s (excluded, e.g. a database's live files captured by its dump)", dir)
+			continue
+		}
 		srcPath := filepath.Join(deploymentPath, dir)
 		if info, err := os.Stat(srcPath); err == nil && info.IsDir() {
 			destPath := filepath.Join(dataDir, dir)
@@ -237,6 +245,20 @@ func (m *Manager) backupMountedData(deploymentPath, tempDir string, metadata *Ba
 	}
 
 	return nil
+}
+
+// matchesExclude reports whether a mounted-data directory name matches any
+// exclude pattern (glob or exact).
+func matchesExclude(name string, patterns []string) bool {
+	for _, p := range patterns {
+		if p == name {
+			return true
+		}
+		if ok, err := filepath.Match(p, name); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) backupContainerData(ctx context.Context, deploymentName string, paths []ContainerPath, tempDir string, metadata *BackupMetadata) error {
