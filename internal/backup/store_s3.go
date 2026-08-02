@@ -181,6 +181,69 @@ func (s *S3Store) WithBucket(bucket string) *S3Store {
 // Bucket returns the bucket this store is scoped to.
 func (s *S3Store) Bucket() string { return s.cfg.Bucket }
 
+// ListObjectsPage returns one page of objects and a continuation token for the
+// next page (empty when there are no more), so a browser can page through a
+// bucket of any size instead of loading it whole.
+func (s *S3Store) ListObjectsPage(ctx context.Context, prefix, token string, limit int32) ([]ObjectInfo, string, error) {
+	in := &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.cfg.Bucket),
+		Prefix: aws.String(s.fullKey(prefix)),
+	}
+	if limit > 0 {
+		in.MaxKeys = aws.Int32(limit)
+	}
+	if token != "" {
+		in.ContinuationToken = aws.String(token)
+	}
+
+	out, err := s.client.ListObjectsV2(ctx, in)
+	if err != nil {
+		return nil, "", fmt.Errorf("s3 list page: %w", err)
+	}
+	objects := make([]ObjectInfo, 0, len(out.Contents))
+	for _, o := range out.Contents {
+		objects = append(objects, ObjectInfo{
+			Key:     s.relKey(aws.ToString(o.Key)),
+			Size:    aws.ToInt64(o.Size),
+			ModTime: aws.ToTime(o.LastModified),
+		})
+	}
+	next := ""
+	if aws.ToBool(out.IsTruncated) {
+		next = aws.ToString(out.NextContinuationToken)
+	}
+	return objects, next, nil
+}
+
+// BucketStats returns the object count and total size of the store's bucket.
+// Counting stops at limit (when > 0), reporting truncated=true, so the bucket
+// list stays responsive on very large buckets.
+func (s *S3Store) BucketStats(ctx context.Context, limit int) (count int, size int64, truncated bool, err error) {
+	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.cfg.Bucket)})
+	for paginator.HasMorePages() {
+		page, perr := paginator.NextPage(ctx)
+		if perr != nil {
+			return count, size, truncated, fmt.Errorf("s3 stats: %w", perr)
+		}
+		for _, o := range page.Contents {
+			count++
+			size += aws.ToInt64(o.Size)
+			if limit > 0 && count >= limit {
+				return count, size, true, nil
+			}
+		}
+	}
+	return count, size, false, nil
+}
+
+// DeleteBucket removes the store's bucket. S3 requires it to be empty.
+func (s *S3Store) DeleteBucket(ctx context.Context) error {
+	if _, err := s.client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(s.cfg.Bucket)}); err != nil {
+		return fmt.Errorf("s3 delete bucket %q: %w", s.cfg.Bucket, err)
+	}
+	return nil
+}
+
 // ListObjects returns every object under prefix, unlike List which is scoped to
 // backup archives (.tar.gz). It backs the object browser, where a store's full
 // contents are shown.
