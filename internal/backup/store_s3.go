@@ -154,6 +154,31 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 	return out, nil
 }
 
+// ListObjects returns every object under prefix, unlike List which is scoped to
+// backup archives (.tar.gz). It backs the object browser, where a store's full
+// contents are shown.
+func (s *S3Store) ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	var out []ObjectInfo
+	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.cfg.Bucket),
+		Prefix: aws.String(s.fullKey(prefix)),
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("s3 list %s: %w", prefix, err)
+		}
+		for _, obj := range page.Contents {
+			out = append(out, ObjectInfo{
+				Key:     s.relKey(aws.ToString(obj.Key)),
+				Size:    aws.ToInt64(obj.Size),
+				ModTime: aws.ToTime(obj.LastModified),
+			})
+		}
+	}
+	return out, nil
+}
+
 func (s *S3Store) Delete(ctx context.Context, key string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.cfg.Bucket),

@@ -67,6 +67,10 @@ func setupObjectStoreTestServer(t *testing.T) (*Server, *gin.Engine, func()) {
 	protected.DELETE("/storage-credentials/:id", mw.RequirePermission(auth.PermBackupsDelete), server.deleteStorageCredential)
 	protected.GET("/backup-destinations", mw.RequirePermission(auth.PermBackupsRead), server.listBackupDestinations)
 	protected.POST("/object-stores/provision-managed", mw.RequirePermission(auth.PermBackupsWrite), server.provisionManagedObjectStore)
+	protected.GET("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsRead), server.listStoreObjects)
+	protected.POST("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsWrite), server.uploadStoreObject)
+	protected.GET("/object-stores/:name/objects/download", mw.RequirePermission(auth.PermBackupsRead), server.downloadStoreObject)
+	protected.DELETE("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsWrite), server.deleteStoreObject)
 
 	cleanup := func() {
 		authManager.Close()
@@ -272,6 +276,17 @@ func TestProvisionManagedObjectStore_UnreachableLeavesNoState(t *testing.T) {
 	}
 	if len(server.config.Backup.Destinations) != 0 {
 		t.Fatalf("failed provision left a destination behind: %#v", server.config.Backup.Destinations)
+	}
+}
+
+func TestListStoreObjects_UnknownStore404(t *testing.T) {
+	_, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	token := objStoreLogin(t, router)
+
+	res := osReq(t, router, http.MethodGet, "/api/object-stores/nope/objects", token, nil)
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown store, got %d %s", res.Code, res.Body.String())
 	}
 }
 
