@@ -154,6 +154,33 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 	return out, nil
 }
 
+// ListBuckets returns the names of every bucket reachable with the store's
+// credentials. A store is configured with one bucket, but the server it points
+// at (a self-hosted MinIO, say) can host many.
+func (s *S3Store) ListBuckets(ctx context.Context) ([]string, error) {
+	out, err := s.client.ListBuckets(ctx, &s3.ListBucketsInput{})
+	if err != nil {
+		return nil, fmt.Errorf("s3 list buckets: %w", err)
+	}
+	names := make([]string, 0, len(out.Buckets))
+	for _, b := range out.Buckets {
+		names = append(names, aws.ToString(b.Name))
+	}
+	return names, nil
+}
+
+// WithBucket returns a view of the store scoped to another bucket at its root
+// (no prefix), so the object browser can work across buckets on the same server.
+func (s *S3Store) WithBucket(bucket string) *S3Store {
+	cfg := s.cfg
+	cfg.Bucket = bucket
+	cfg.Prefix = ""
+	return &S3Store{client: s.client, cfg: cfg}
+}
+
+// Bucket returns the bucket this store is scoped to.
+func (s *S3Store) Bucket() string { return s.cfg.Bucket }
+
 // ListObjects returns every object under prefix, unlike List which is scoped to
 // backup archives (.tar.gz). It backs the object browser, where a store's full
 // contents are shown.

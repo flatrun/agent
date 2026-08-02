@@ -65,7 +65,7 @@ func copyObject(ctx context.Context, src, dst *backup.S3Store, key string) (int6
 // the same size is skipped, so re-running only moves what changed. This backs
 // offsite copies (managed to external) and local caches (external to managed).
 func (s *Server) replicateStore(c *gin.Context) {
-	src, ok := s.storeS3ByName(c)
+	src, _, ok := s.storeS3ByName(c)
 	if !ok {
 		return
 	}

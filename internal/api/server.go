@@ -750,6 +750,8 @@ func (s *Server) setupRoutes() {
 
 			// Object stores
 			protected.POST("/object-stores/provision-managed", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.provisionManagedObjectStore)
+			protected.GET("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStoreBuckets)
+			protected.POST("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.createStoreBucket)
 			protected.GET("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStoreObjects)
 			protected.POST("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.uploadStoreObject)
 			protected.GET("/object-stores/:name/objects/download", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.downloadStoreObject)
