@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/flatrun/agent/internal/backup"
@@ -12,6 +13,12 @@ import (
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
+
+// managedStorePort is the fallback S3 API port used when a managed
+// destination's stored endpoint carries none. A managed object store is reached
+// over the shared object-storage network (see objectStorageNetworkName); the
+// agent, a host process, dials the container's address on that network.
+const managedStorePort = "9000"
 
 // buildStore resolves a destination plus its referenced credential into a
 // ready-to-use remote Store.
@@ -25,9 +32,15 @@ func (s *Server) buildStore(dest config.BackupDestination) (backup.Store, error)
 		if cred.Kind != models.CredentialKindS3 {
 			return nil, fmt.Errorf("destination %q: credential %q is not an s3 credential", dest.Name, dest.CredentialID)
 		}
+		endpoint := dest.Endpoint
+		if dest.Kind == "managed" && dest.Deployment != "" {
+			if resolved, err := s.resolveManagedEndpoint(dest); err == nil && resolved != "" {
+				endpoint = resolved
+			}
+		}
 		return backup.NewS3Store(backup.S3Config{
 			Name:         dest.Name,
-			Endpoint:     dest.Endpoint,
+			Endpoint:     endpoint,
 			Region:       dest.Region,
 			Bucket:       dest.Bucket,
 			Prefix:       dest.Prefix,
@@ -38,6 +51,32 @@ func (s *Server) buildStore(dest config.BackupDestination) (backup.Store, error)
 	default:
 		return nil, fmt.Errorf("destination %q: unknown type %q", dest.Name, dest.Type)
 	}
+}
+
+// resolveManagedEndpoint returns the address a managed store is reachable at
+// right now. A managed object store only exposes its port on an internal
+// compose network and its container IP changes across recreates, so the
+// endpoint is resolved live from the deployment rather than trusted from
+// stored config. The scheme and port of the stored endpoint are preserved.
+func (s *Server) resolveManagedEndpoint(dest config.BackupDestination) (string, error) {
+	if s.manager == nil {
+		return "", fmt.Errorf("docker manager unavailable")
+	}
+	ip, err := s.manager.ContainerPrimaryIP(dest.Deployment, objectStorageNetworkName(s.config))
+	if err != nil {
+		return "", err
+	}
+
+	u, err := url.Parse(dest.Endpoint)
+	if err != nil || u.Host == "" {
+		return "http://" + ip + ":" + managedStorePort, nil
+	}
+	port := u.Port()
+	if port == "" {
+		port = managedStorePort
+	}
+	u.Host = ip + ":" + port
+	return u.String(), nil
 }
 
 // applyBackupDestinations rebuilds the backup manager's remote stores from the

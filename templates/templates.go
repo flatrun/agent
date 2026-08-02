@@ -24,6 +24,7 @@ var Categories = []Category{
 	{ID: "framework", Name: "Frameworks", Icon: "pi pi-code", Priority: 90},
 	{ID: "runtime", Name: "Runtimes", Icon: "pi pi-cog", Priority: 80},
 	{ID: "infrastructure", Name: "Infrastructure", Icon: "pi pi-server", Priority: 70},
+	{ID: "storage", Name: "Storage", Icon: "pi pi-box", Priority: 65},
 	{ID: "database", Name: "Databases", Icon: "pi pi-database", Priority: 60},
 	{ID: "basic", Name: "Basic", Icon: "pi pi-file", Priority: 50},
 }

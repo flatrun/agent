@@ -118,12 +118,27 @@ type Server struct {
 	statsAt    time.Time
 }
 
+// objectStorageNetworkName resolves the shared network self-hosted object
+// stores join. It reuses the database network unless a dedicated one is
+// configured, so object storage rides the same data-backend network as
+// databases by default.
+func objectStorageNetworkName(cfg *config.Config) string {
+	if n := cfg.Infrastructure.DefaultObjectStorageNetwork; n != "" {
+		return n
+	}
+	return cfg.Infrastructure.DefaultDatabaseNetwork
+}
+
 func New(cfg *config.Config, configPath string) *Server {
 	if cfg.Logging.Level == "debug" {
 		gin.SetMode(gin.DebugMode)
 	} else {
 		gin.SetMode(gin.ReleaseMode)
 	}
+
+	// Exposed to compose substitution so an object-store template joins the
+	// configured network (${FLATRUN_OBJECT_NETWORK:-database}) on every up.
+	os.Setenv("FLATRUN_OBJECT_NETWORK", objectStorageNetworkName(cfg))
 
 	router := gin.Default()
 
@@ -733,6 +748,9 @@ func (s *Server) setupRoutes() {
 			protected.GET("/backup-destinations", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackupDestinations)
 			protected.POST("/backup-destinations/test", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.testBackupDestination)
 
+			// Object stores
+			protected.POST("/object-stores/provision-managed", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.provisionManagedObjectStore)
+
 			// Scheduler endpoints
 			protected.GET("/scheduler/tasks", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.listScheduledTasks)
 			protected.GET("/scheduler/tasks/:id", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.getScheduledTask)
@@ -1197,6 +1215,19 @@ func (s *Server) createDeployment(c *gin.Context) {
 		s.processTemplateFiles(req.Name, req.TemplateID, allEnvVars)
 		s.processTemplateEnv(req.Name, req.TemplateID, req.ComposeContent, allEnvVars)
 		s.applyTemplateMountOwnership(req.Name, req.TemplateID)
+
+		// An object store joins the shared object-storage network; ensure it
+		// exists so the container can start (it is declared external).
+		if md, err := s.loadTemplateMetadata(req.TemplateID); err == nil && md.ObjectStore != nil {
+			if objNet := objectStorageNetworkName(s.config); objNet != "" && s.networksManager != nil {
+				if err := s.networksManager.EnsureNetwork(objNet); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error": fmt.Sprintf("Failed to ensure object storage network %q exists: %v", objNet, err),
+					})
+					return
+				}
+			}
+		}
 	}
 
 	// Seeding reads the images, so it runs before the deployment is started and
@@ -3341,17 +3372,30 @@ type TemplateFile struct {
 }
 
 type TemplateMetadata struct {
-	Name          string          `yaml:"name"`
-	Description   string          `yaml:"description"`
-	Icon          string          `yaml:"icon"`
-	Logo          string          `yaml:"logo"`
-	Category      string          `yaml:"category"`
-	Type          string          `yaml:"type"`
-	Priority      int             `yaml:"priority"`
-	ContainerPort int             `yaml:"container_port"`
-	Mounts        []TemplateMount `yaml:"mounts"`
-	Files         []TemplateFile  `yaml:"files"`
-	Env           TemplateEnv     `yaml:"env"`
+	Name          string               `yaml:"name"`
+	Description   string               `yaml:"description"`
+	Icon          string               `yaml:"icon"`
+	Logo          string               `yaml:"logo"`
+	Category      string               `yaml:"category"`
+	Type          string               `yaml:"type"`
+	ObjectStore   *TemplateObjectStore `yaml:"object_store"`
+	Priority      int                  `yaml:"priority"`
+	ContainerPort int                  `yaml:"container_port"`
+	Mounts        []TemplateMount      `yaml:"mounts"`
+	Files         []TemplateFile       `yaml:"files"`
+	Env           TemplateEnv          `yaml:"env"`
+}
+
+// TemplateObjectStore is a template's declaration that it runs an S3-compatible
+// object store, and how to bootstrap it: which generated env vars carry the
+// root credentials and which port serves the S3 API. Declaring this keeps the
+// agent free of any per-image (MinIO, Garage, ...) knowledge.
+type TemplateObjectStore struct {
+	AccessKeyEnv string `json:"access_key_env" yaml:"access_key_env"`
+	SecretKeyEnv string `json:"secret_key_env" yaml:"secret_key_env"`
+	APIPort      int    `json:"api_port" yaml:"api_port"`
+	Region       string `json:"region,omitempty" yaml:"region,omitempty"`
+	UsePathStyle bool   `json:"use_path_style" yaml:"use_path_style"`
 }
 
 // TemplateEnv describes how a platform's environment file is produced. The
@@ -3398,17 +3442,18 @@ func templateMountHostPath(m TemplateMount) string {
 }
 
 type Template struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name" yaml:"name"`
-	Description   string          `json:"description" yaml:"description"`
-	Icon          string          `json:"icon" yaml:"icon"`
-	Logo          string          `json:"logo" yaml:"logo"`
-	Category      string          `json:"category" yaml:"category"`
-	Priority      int             `json:"priority" yaml:"priority"`
-	ContainerPort int             `json:"container_port" yaml:"container_port"`
-	Mounts        []TemplateMount `json:"mounts" yaml:"mounts"`
-	Files         []TemplateFile  `json:"files" yaml:"files"`
-	Content       string          `json:"content"`
+	ID            string               `json:"id"`
+	Name          string               `json:"name" yaml:"name"`
+	Description   string               `json:"description" yaml:"description"`
+	Icon          string               `json:"icon" yaml:"icon"`
+	Logo          string               `json:"logo" yaml:"logo"`
+	Category      string               `json:"category" yaml:"category"`
+	ObjectStore   *TemplateObjectStore `json:"object_store,omitempty" yaml:"object_store,omitempty"`
+	Priority      int                  `json:"priority" yaml:"priority"`
+	ContainerPort int                  `json:"container_port" yaml:"container_port"`
+	Mounts        []TemplateMount      `json:"mounts" yaml:"mounts"`
+	Files         []TemplateFile       `json:"files" yaml:"files"`
+	Content       string               `json:"content"`
 }
 
 func (s *Server) listTemplates(c *gin.Context) {
@@ -3491,6 +3536,7 @@ func (s *Server) listTemplates(c *gin.Context) {
 				Icon:          metadata.Icon,
 				Logo:          metadata.Logo,
 				Category:      metadata.Category,
+				ObjectStore:   metadata.ObjectStore,
 				Priority:      metadata.Priority,
 				ContainerPort: metadata.ContainerPort,
 				Mounts:        metadata.Mounts,

@@ -180,11 +180,16 @@ type HealthConfig struct {
 }
 
 type InfrastructureConfig struct {
-	DefaultProxyNetwork    string               `yaml:"default_proxy_network" json:"default_proxy_network"`
-	DefaultDatabaseNetwork string               `yaml:"default_database_network" json:"default_database_network"`
-	Database               SharedDatabaseConfig `yaml:"database" json:"database"`
-	Redis                  SharedRedisConfig    `yaml:"redis" json:"redis"`
-	PowerDNS               PowerDNSConfig       `yaml:"powerdns" json:"powerdns"`
+	DefaultProxyNetwork    string `yaml:"default_proxy_network" json:"default_proxy_network"`
+	DefaultDatabaseNetwork string `yaml:"default_database_network" json:"default_database_network"`
+	// DefaultObjectStorageNetwork is the shared network self-hosted object
+	// stores join so apps can reach them by name. Empty reuses the database
+	// network (object storage is a data backend like a database); set it to run
+	// object stores on a dedicated network instead.
+	DefaultObjectStorageNetwork string               `yaml:"default_object_storage_network" json:"default_object_storage_network"`
+	Database                    SharedDatabaseConfig `yaml:"database" json:"database"`
+	Redis                       SharedRedisConfig    `yaml:"redis" json:"redis"`
+	PowerDNS                    PowerDNSConfig       `yaml:"powerdns" json:"powerdns"`
 }
 
 type PowerDNSConfig struct {

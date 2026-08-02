@@ -63,6 +63,27 @@ func NewS3Store(cfg S3Config) (*S3Store, error) {
 
 func (s *S3Store) Name() string { return s.cfg.Name }
 
+// EnsureBucket creates the store's bucket when it does not already exist. A
+// freshly deployed object store starts empty, so a managed store needs its
+// bucket made before the first backup can be mirrored to it.
+func (s *S3Store) EnsureBucket(ctx context.Context) error {
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.cfg.Bucket)})
+	if err == nil {
+		return nil
+	}
+
+	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(s.cfg.Bucket)})
+	if err != nil {
+		var owned *s3types.BucketAlreadyOwnedByYou
+		var exists *s3types.BucketAlreadyExists
+		if errors.As(err, &owned) || errors.As(err, &exists) {
+			return nil
+		}
+		return fmt.Errorf("create bucket %q: %w", s.cfg.Bucket, err)
+	}
+	return nil
+}
+
 // fullKey prepends the destination prefix to a relative backup key.
 func (s *S3Store) fullKey(key string) string {
 	if s.cfg.Prefix == "" {
