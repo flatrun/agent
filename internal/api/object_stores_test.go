@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flatrun/agent/internal/auth"
@@ -71,6 +72,7 @@ func setupObjectStoreTestServer(t *testing.T) (*Server, *gin.Engine, func()) {
 	protected.POST("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsWrite), server.uploadStoreObject)
 	protected.GET("/object-stores/:name/objects/download", mw.RequirePermission(auth.PermBackupsRead), server.downloadStoreObject)
 	protected.DELETE("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsWrite), server.deleteStoreObject)
+	protected.POST("/object-stores/:name/attach", mw.RequirePermission(auth.PermDeploymentsWrite), server.attachStoreToDeployment)
 
 	cleanup := func() {
 		authManager.Close()
@@ -287,6 +289,55 @@ func TestListStoreObjects_UnknownStore404(t *testing.T) {
 	res := osReq(t, router, http.MethodGet, "/api/object-stores/nope/objects", token, nil)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for an unknown store, got %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestAttachStoreToDeployment_WritesEnvAndWiresCompose(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	token := objStoreLogin(t, router)
+
+	cred, err := server.credentialsManager.CreateGenericCredential("app-keys", models.CredentialKindS3, map[string]string{
+		"access_key_id": "AKIATEST", "secret_access_key": "shh",
+	})
+	if err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	server.config.Backup.Destinations = []config.BackupDestination{{
+		Name: "r2", Type: "s3", Kind: "external", Endpoint: "https://s3.example.com",
+		Region: "us-east-1", Bucket: "assets", CredentialID: cred.ID, UsePathStyle: true,
+	}}
+
+	app := "webapp"
+	appDir := filepath.Join(server.config.DeploymentsPath, app)
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	compose := "services:\n  app:\n    image: node:20-alpine\n"
+	if err := os.WriteFile(filepath.Join(appDir, "docker-compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	res := osReq(t, router, http.MethodPost, "/api/object-stores/r2/attach", token, map[string]any{
+		"deployment": app,
+	})
+	if res.Code != http.StatusOK {
+		t.Fatalf("attach: %d %s", res.Code, res.Body.String())
+	}
+
+	env, err := os.ReadFile(filepath.Join(appDir, ".env.flatrun"))
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	for _, want := range []string{"S3_ENDPOINT=https://s3.example.com", "S3_BUCKET=assets", "S3_ACCESS_KEY_ID=AKIATEST", "S3_SECRET_ACCESS_KEY=shh"} {
+		if !strings.Contains(string(env), want) {
+			t.Fatalf("env missing %q:\n%s", want, env)
+		}
+	}
+
+	updated, _ := os.ReadFile(filepath.Join(appDir, "docker-compose.yml"))
+	if !strings.Contains(string(updated), "env_file") || !strings.Contains(string(updated), ".env.flatrun") {
+		t.Fatalf("compose not wired to env file:\n%s", updated)
 	}
 }
 

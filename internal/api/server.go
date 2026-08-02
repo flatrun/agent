@@ -754,6 +754,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.uploadStoreObject)
 			protected.GET("/object-stores/:name/objects/download", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.downloadStoreObject)
 			protected.DELETE("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.deleteStoreObject)
+			protected.POST("/object-stores/:name/attach", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.attachStoreToDeployment)
 
 			// Scheduler endpoints
 			protected.GET("/scheduler/tasks", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.listScheduledTasks)
