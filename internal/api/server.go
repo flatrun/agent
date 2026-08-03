@@ -49,6 +49,7 @@ import (
 	"github.com/flatrun/agent/internal/source"
 	"github.com/flatrun/agent/internal/ssl"
 	"github.com/flatrun/agent/internal/system"
+	"github.com/flatrun/agent/internal/templatesource"
 	"github.com/flatrun/agent/internal/traffic"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
@@ -88,6 +89,7 @@ type Server struct {
 	infraManager       *infra.Manager
 	credentialsManager *credentials.Manager
 	sourceRegistry     *source.Registry
+	templateSyncer     *templatesource.Syncer
 	securityManager    *security.Manager
 	trafficManager     *traffic.Manager
 	dashboards         *dashboards.Store
@@ -175,12 +177,14 @@ func New(cfg *config.Config, configPath string) *Server {
 	manager := docker.NewManager(cfg.DeploymentsPath)
 	manager.SetCleanupTimeout(cfg.Cleanup.Timeout)
 
-	// Deploys read template copies from disk, so sync them with the
-	// binary's embedded set before anything can deploy.
+	// Deploys read template copies from disk. Seed the embedded infra and
+	// welcome content, then pull the app catalog from its external source into
+	// the same on-disk cache.
 	builtinTemplatesDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "templates")
 	if err := os.MkdirAll(builtinTemplatesDir, 0755); err == nil {
 		ensureBuiltinTemplates(builtinTemplatesDir)
 	}
+	templateSyncer := newTemplateSyncer(cfg)
 	certsDiscovery := certs.NewDiscovery(cfg.DeploymentsPath)
 	networksManager := networks.NewManager()
 	pluginsDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins")
@@ -350,6 +354,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		infraManager:       infraManager,
 		credentialsManager: credentialsManager,
 		sourceRegistry:     source.NewRegistry(source.GitProvider{}),
+		templateSyncer:     templateSyncer,
 		securityManager:    securityManager,
 		trafficManager:     trafficManager,
 		dashboards:         dashboards.NewStore(cfg.DeploymentsPath),
@@ -373,6 +378,8 @@ func New(cfg *config.Config, configPath string) *Server {
 	s.mcpHandler = s.newMCPHandler()
 
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
+
+	s.startTemplateSyncLoop(context.Background(), time.Duration(cfg.Templates.SyncInterval)*time.Second)
 
 	if provider, aiErr := ai.New(&cfg.AI); aiErr == nil {
 		s.aiProvider = provider
@@ -3257,6 +3264,64 @@ func marketplaceAPIBase() string {
 	return "https://api.flatrun.dev/api/v1"
 }
 
+// newTemplateSyncer builds the app-template catalog syncer from config: the
+// marketplace source first (authoritative when enabled), GitHub as the fallback,
+// writing into the on-disk template cache.
+func newTemplateSyncer(cfg *config.Config) *templatesource.Syncer {
+	cacheDir := cfg.Templates.CacheDir
+	if cacheDir == "" {
+		cacheDir = filepath.Join(cfg.DeploymentsPath, ".flatrun", "templates")
+	}
+	marketplaceURL := cfg.Templates.Marketplace.URL
+	if marketplaceURL == "" {
+		marketplaceURL = marketplaceAPIBase()
+	}
+	githubEnabled := cfg.Templates.GitHub.Enabled == nil || *cfg.Templates.GitHub.Enabled
+
+	resolver := templatesource.NewResolver(
+		templatesource.MarketplaceSource{
+			BaseURL: marketplaceURL,
+			Enabled: cfg.Templates.Marketplace.Enabled,
+		},
+		templatesource.GitHubSource{
+			Repo:    cfg.Templates.GitHub.Repo,
+			Ref:     cfg.Templates.GitHub.Ref,
+			Enabled: githubEnabled,
+		},
+	)
+	return &templatesource.Syncer{Resolver: resolver, CacheDir: cacheDir}
+}
+
+// startTemplateSyncLoop pulls the app catalog once in the background, then, when
+// interval > 0, keeps refreshing it. It runs off the request path so a slow or
+// unreachable source never delays startup; the on-disk cache from the last run
+// keeps serving deploys until the fetch completes.
+func (s *Server) startTemplateSyncLoop(ctx context.Context, interval time.Duration) {
+	sync := func() {
+		if src, n, err := s.templateSyncer.Sync(ctx); err != nil {
+			log.Printf("Warning: template sync failed: %v", err)
+		} else if n > 0 {
+			log.Printf("Synced %d app templates from %s", n, src)
+		}
+	}
+	go func() {
+		sync()
+		if interval <= 0 {
+			return
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sync()
+			}
+		}
+	}()
+}
+
 func (s *Server) proxyMarketplace(c *gin.Context) {
 	upstream, err := url.Parse(marketplaceAPIBase())
 	if err != nil {
@@ -3594,9 +3659,18 @@ func (s *Server) refreshTemplates(c *gin.Context) {
 		}
 	}
 
+	src, synced, err := s.templateSyncer.Sync(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error": fmt.Sprintf("template sync failed: %v", err),
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Templates refreshed",
-		"count":   len(builtinList),
+		"source":  src,
+		"count":   len(builtinList) + synced,
 	})
 }
 

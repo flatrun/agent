@@ -13,7 +13,9 @@ import (
 // through the list API, which is what the picker forwards to auto-register it.
 func TestListTemplates_ObjectStoreCarriesContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	srv := &Server{config: &config.Config{DeploymentsPath: t.TempDir()}}
+	dir := t.TempDir()
+	srv := &Server{config: &config.Config{DeploymentsPath: dir}}
+	seedRepoTemplate(t, dir, "minio")
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -48,7 +50,9 @@ func TestListTemplates_ObjectStoreCarriesContract(t *testing.T) {
 // default catalog listing, not only under type=all.
 func TestListTemplates_ObjectStoreVisibleInDefault(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	srv := &Server{config: &config.Config{DeploymentsPath: t.TempDir()}}
+	dir := t.TempDir()
+	srv := &Server{config: &config.Config{DeploymentsPath: dir}}
+	seedRepoTemplate(t, dir, "minio")
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

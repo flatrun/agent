@@ -13,19 +13,21 @@ func TestList(t *testing.T) {
 		t.Fatalf("List() error = %v", err)
 	}
 
-	if len(templates) == 0 {
-		t.Fatal("List() returned empty list, expected at least one template")
-	}
-
-	expectedTemplates := []string{"static", "wordpress", "laravel", "ghost", "nextjs", "astro", "node", "php"}
 	templateMap := make(map[string]bool)
 	for _, tmpl := range templates {
 		templateMap[tmpl] = true
 	}
 
-	for _, expected := range expectedTemplates {
+	for _, expected := range []string{"infra/postgres", "infra/mysql", "infra/mariadb", "infra/redis", "infra/nginx"} {
 		if !templateMap[expected] {
-			t.Errorf("List() missing expected template %q", expected)
+			t.Errorf("List() missing expected infra template %q", expected)
+		}
+	}
+
+	// App templates now live outside the binary and must not be embedded.
+	for _, gone := range []string{"wordpress", "laravel", "static", "ghost"} {
+		if templateMap[gone] {
+			t.Errorf("List() unexpectedly still embeds app template %q", gone)
 		}
 	}
 }
@@ -39,25 +41,21 @@ func TestGetMetadata(t *testing.T) {
 		wantErr      bool
 	}{
 		{
-			name:         "static template",
-			templateID:   "static",
-			wantName:     "Static Site",
-			wantPriority: 100,
-			wantErr:      false,
-		},
-		{
-			name:         "wordpress template",
-			templateID:   "wordpress",
-			wantName:     "WordPress",
-			wantPriority: 100,
-			wantErr:      false,
-		},
-		{
-			name:         "laravel template",
-			templateID:   "laravel",
-			wantName:     "Laravel",
+			name:         "postgres infra template",
+			templateID:   "infra/postgres",
+			wantName:     "PostgreSQL",
 			wantPriority: 80,
-			wantErr:      false,
+		},
+		{
+			name:         "nginx infra template",
+			templateID:   "infra/nginx",
+			wantName:     "Nginx",
+			wantPriority: 100,
+		},
+		{
+			name:       "app template no longer embedded",
+			templateID: "wordpress",
+			wantErr:    true,
 		},
 		{
 			name:       "non-existent template",
@@ -73,7 +71,6 @@ func TestGetMetadata(t *testing.T) {
 				t.Errorf("GetMetadata() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
 			if tt.wantErr {
 				return
 			}
@@ -85,11 +82,9 @@ func TestGetMetadata(t *testing.T) {
 			if err := yaml.Unmarshal(data, &metadata); err != nil {
 				t.Fatalf("Failed to parse metadata: %v", err)
 			}
-
 			if metadata.Name != tt.wantName {
 				t.Errorf("GetMetadata() name = %q, want %q", metadata.Name, tt.wantName)
 			}
-
 			if metadata.Priority != tt.wantPriority {
 				t.Errorf("GetMetadata() priority = %d, want %d", metadata.Priority, tt.wantPriority)
 			}
@@ -99,38 +94,24 @@ func TestGetMetadata(t *testing.T) {
 
 func TestGetCompose(t *testing.T) {
 	tests := []struct {
-		name           string
-		templateID     string
-		wantContains   []string
-		wantNotContain []string
-		wantErr        bool
+		name         string
+		templateID   string
+		wantContains []string
+		wantErr      bool
 	}{
 		{
-			name:       "static template",
-			templateID: "static",
+			name:       "postgres infra template",
+			templateID: "infra/postgres",
 			wantContains: []string{
 				"name: ${NAME}",
-				"nginx:alpine",
-				"expose:",
+				"postgres:",
 				"networks:",
-				"proxy:",
 			},
-			wantNotContain: []string{
-				"ports:",
-			},
-			wantErr: false,
 		},
 		{
-			name:       "wordpress template",
+			name:       "app template no longer embedded",
 			templateID: "wordpress",
-			wantContains: []string{
-				"name: ${NAME}",
-				"wordpress:",
-				"WORDPRESS_DB_HOST",
-				"expose:",
-				"networks:",
-			},
-			wantErr: false,
+			wantErr:    true,
 		},
 		{
 			name:       "non-existent template",
@@ -146,7 +127,6 @@ func TestGetCompose(t *testing.T) {
 				t.Errorf("GetCompose() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
 			if tt.wantErr {
 				return
 			}
@@ -157,51 +137,16 @@ func TestGetCompose(t *testing.T) {
 					t.Errorf("GetCompose() content missing %q", want)
 				}
 			}
-
-			for _, notWant := range tt.wantNotContain {
-				if strings.Contains(content, notWant) {
-					t.Errorf("GetCompose() content should not contain %q", notWant)
-				}
-			}
 		})
 	}
 }
 
-func TestStaticTemplateHasFiles(t *testing.T) {
-	data, err := GetMetadata("static")
+func TestGetWelcomePage(t *testing.T) {
+	data, err := GetWelcomePage()
 	if err != nil {
-		t.Fatalf("GetMetadata() error = %v", err)
+		t.Fatalf("GetWelcomePage() error = %v", err)
 	}
-
-	var metadata struct {
-		Files []struct {
-			Path    string `yaml:"path"`
-			Content string `yaml:"content"`
-		} `yaml:"files"`
-	}
-
-	if err := yaml.Unmarshal(data, &metadata); err != nil {
-		t.Fatalf("Failed to parse metadata: %v", err)
-	}
-
-	if len(metadata.Files) == 0 {
-		t.Fatal("Static template should have files defined")
-	}
-
-	foundIndex := false
-	for _, f := range metadata.Files {
-		if f.Path == "html/index.html" {
-			foundIndex = true
-			if !strings.Contains(f.Content, "${NAME}") {
-				t.Error("index.html should contain ${NAME} placeholder")
-			}
-			if !strings.Contains(f.Content, "flatrun") {
-				t.Error("index.html should contain FlatRun branding")
-			}
-		}
-	}
-
-	if !foundIndex {
-		t.Error("Static template should have html/index.html file")
+	if len(data) == 0 {
+		t.Fatal("GetWelcomePage() returned empty content")
 	}
 }

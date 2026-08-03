@@ -918,6 +918,7 @@ func TestGenerateDeploymentComposePreservesDefaultTemplate(t *testing.T) {
 		},
 	}
 	s := &Server{config: cfg}
+	seedRepoTemplate(t, cfg.DeploymentsPath, "static")
 
 	result, err := s.generateDeploymentCompose("default-app", "", "", 0, false, "", nil)
 	if err != nil {
