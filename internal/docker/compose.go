@@ -420,8 +420,16 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, ar
 	for _, opt := range opts {
 		opt(&ro)
 	}
+
+	// Expose the agent's own uid/gid to compose substitution so a template can
+	// run its container as the user that owns the deployment directory, keeping
+	// bind-mounted data host-manageable (deletable) instead of root-owned.
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("FLATRUN_UID=%d", os.Getuid()),
+		fmt.Sprintf("FLATRUN_GID=%d", os.Getgid()),
+	)
 	if len(ro.extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), ro.extraEnv...)
+		cmd.Env = append(cmd.Env, ro.extraEnv...)
 	}
 
 	if ro.lineSink != nil {

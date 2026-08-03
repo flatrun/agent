@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flatrun/agent/internal/auth"
@@ -65,6 +67,12 @@ func setupObjectStoreTestServer(t *testing.T) (*Server, *gin.Engine, func()) {
 	protected.PUT("/storage-credentials/:id", mw.RequirePermission(auth.PermBackupsWrite), server.updateStorageCredential)
 	protected.DELETE("/storage-credentials/:id", mw.RequirePermission(auth.PermBackupsDelete), server.deleteStorageCredential)
 	protected.GET("/backup-destinations", mw.RequirePermission(auth.PermBackupsRead), server.listBackupDestinations)
+	protected.POST("/object-stores/provision-managed", mw.RequirePermission(auth.PermBackupsWrite), server.provisionManagedObjectStore)
+	protected.GET("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsRead), server.listStoreObjects)
+	protected.POST("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsWrite), server.uploadStoreObject)
+	protected.GET("/object-stores/:name/objects/download", mw.RequirePermission(auth.PermBackupsRead), server.downloadStoreObject)
+	protected.DELETE("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsWrite), server.deleteStoreObject)
+	protected.POST("/object-stores/:name/attach", mw.RequirePermission(auth.PermDeploymentsWrite), server.attachStoreToDeployment)
 
 	cleanup := func() {
 		authManager.Close()
@@ -175,6 +183,161 @@ func TestStorageCredential_DeleteInUseConflicts(t *testing.T) {
 	del := osReq(t, router, http.MethodDelete, "/api/storage-credentials/"+id, token, nil)
 	if del.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for in-use credential, got %d %s", del.Code, del.Body.String())
+	}
+}
+
+func TestProvisionManagedObjectStore_RequiresApiPort(t *testing.T) {
+	_, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	token := objStoreLogin(t, router)
+
+	res := osReq(t, router, http.MethodPost, "/api/object-stores/provision-managed", token, map[string]any{
+		"deployment": "some-store",
+	})
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without an api_port, got %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestProvisionManagedObjectStore_MissingEnvReturns400(t *testing.T) {
+	_, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	token := objStoreLogin(t, router)
+
+	res := osReq(t, router, http.MethodPost, "/api/object-stores/provision-managed", token, map[string]any{
+		"deployment":     "no-such-store",
+		"access_key_env": "MINIO_ROOT_USER",
+		"secret_key_env": "MINIO_ROOT_PASSWORD",
+		"api_port":       9000,
+	})
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a deployment with no environment, got %d %s", res.Code, res.Body.String())
+	}
+}
+
+// Credentials must be read from whatever env file the template wrote. The MinIO
+// template writes .env (not .env.flatrun), so a deployment with only a .env must
+// still resolve credentials (getting past resolution to the reachability step,
+// 502, rather than failing at 400 for missing env).
+func TestProvisionManagedObjectStore_ReadsPlainEnvFile(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	token := objStoreLogin(t, router)
+
+	deployment := "minio-store"
+	deployDir := filepath.Join(server.config.DeploymentsPath, deployment)
+	if err := os.MkdirAll(deployDir, 0o755); err != nil {
+		t.Fatalf("mkdir deployment: %v", err)
+	}
+	env := "MINIO_ROOT_USER=flatrun\nMINIO_ROOT_PASSWORD=generated-secret\n"
+	if err := os.WriteFile(filepath.Join(deployDir, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+
+	res := osReq(t, router, http.MethodPost, "/api/object-stores/provision-managed", token, map[string]any{
+		"deployment":     deployment,
+		"access_key_env": "MINIO_ROOT_USER",
+		"secret_key_env": "MINIO_ROOT_PASSWORD",
+		"api_port":       9000,
+	})
+	if res.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 (creds resolved from .env, store unreachable), got %d %s", res.Code, res.Body.String())
+	}
+}
+
+// A store whose credentials resolve but that is not reachable (no docker in the
+// unit environment) must fail before any credential or destination is created,
+// so a failed provision leaves no orphaned state behind. This holds for the
+// template path (credentials read from named env vars).
+func TestProvisionManagedObjectStore_UnreachableLeavesNoState(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	token := objStoreLogin(t, router)
+
+	deployment := "my-store"
+	deployDir := filepath.Join(server.config.DeploymentsPath, deployment)
+	if err := os.MkdirAll(deployDir, 0o755); err != nil {
+		t.Fatalf("mkdir deployment: %v", err)
+	}
+	env := "MINIO_ROOT_USER=flatrun\nMINIO_ROOT_PASSWORD=generated-secret\n"
+	if err := os.WriteFile(filepath.Join(deployDir, ".env.flatrun"), []byte(env), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+
+	res := osReq(t, router, http.MethodPost, "/api/object-stores/provision-managed", token, map[string]any{
+		"deployment":     deployment,
+		"access_key_env": "MINIO_ROOT_USER",
+		"secret_key_env": "MINIO_ROOT_PASSWORD",
+		"api_port":       9000,
+	})
+	if res.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when the store is unreachable, got %d %s", res.Code, res.Body.String())
+	}
+	if creds := server.credentialsManager.ListGenericCredentials(models.CredentialKindS3); len(creds) != 0 {
+		t.Fatalf("failed provision left a credential behind: %#v", creds)
+	}
+	if len(server.config.Backup.Destinations) != 0 {
+		t.Fatalf("failed provision left a destination behind: %#v", server.config.Backup.Destinations)
+	}
+}
+
+func TestListStoreObjects_UnknownStore404(t *testing.T) {
+	_, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	token := objStoreLogin(t, router)
+
+	res := osReq(t, router, http.MethodGet, "/api/object-stores/nope/objects", token, nil)
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown store, got %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestAttachStoreToDeployment_WritesEnvAndWiresCompose(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	token := objStoreLogin(t, router)
+
+	cred, err := server.credentialsManager.CreateGenericCredential("app-keys", models.CredentialKindS3, map[string]string{
+		"access_key_id": "AKIATEST", "secret_access_key": "shh",
+	})
+	if err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	server.config.Backup.Destinations = []config.BackupDestination{{
+		Name: "r2", Type: "s3", Kind: "external", Endpoint: "https://s3.example.com",
+		Region: "us-east-1", Bucket: "assets", CredentialID: cred.ID, UsePathStyle: true,
+	}}
+
+	app := "webapp"
+	appDir := filepath.Join(server.config.DeploymentsPath, app)
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	compose := "services:\n  app:\n    image: node:20-alpine\n"
+	if err := os.WriteFile(filepath.Join(appDir, "docker-compose.yml"), []byte(compose), 0o644); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	res := osReq(t, router, http.MethodPost, "/api/object-stores/r2/attach", token, map[string]any{
+		"deployment": app,
+	})
+	if res.Code != http.StatusOK {
+		t.Fatalf("attach: %d %s", res.Code, res.Body.String())
+	}
+
+	env, err := os.ReadFile(filepath.Join(appDir, ".env.flatrun"))
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	for _, want := range []string{"S3_ENDPOINT=https://s3.example.com", "S3_BUCKET=assets", "S3_ACCESS_KEY_ID=AKIATEST", "S3_SECRET_ACCESS_KEY=shh"} {
+		if !strings.Contains(string(env), want) {
+			t.Fatalf("env missing %q:\n%s", want, env)
+		}
+	}
+
+	updated, _ := os.ReadFile(filepath.Join(appDir, "docker-compose.yml"))
+	if !strings.Contains(string(updated), "env_file") || !strings.Contains(string(updated), ".env.flatrun") {
+		t.Fatalf("compose not wired to env file:\n%s", updated)
 	}
 }
 

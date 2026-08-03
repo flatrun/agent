@@ -176,18 +176,25 @@ type ContainerBackupPath struct {
 }
 
 type DatabaseBackupSpec struct {
-	Service     string `yaml:"service" json:"service"`
-	Type        string `yaml:"type" json:"type"`
-	HostEnv     string `yaml:"host_env,omitempty" json:"host_env,omitempty"`
-	PortEnv     string `yaml:"port_env,omitempty" json:"port_env,omitempty"`
-	UserEnv     string `yaml:"user_env,omitempty" json:"user_env,omitempty"`
-	PasswordEnv string `yaml:"password_env,omitempty" json:"password_env,omitempty"`
-	DatabaseEnv string `yaml:"database_env,omitempty" json:"database_env,omitempty"`
-	Host        string `yaml:"host,omitempty" json:"host,omitempty"`
-	Port        int    `yaml:"port,omitempty" json:"port,omitempty"`
-	User        string `yaml:"user,omitempty" json:"user,omitempty"`
-	Password    string `yaml:"password,omitempty" json:"password,omitempty"`
-	Database    string `yaml:"database,omitempty" json:"database,omitempty"`
+	Service string `yaml:"service" json:"service"`
+	Type    string `yaml:"type" json:"type"`
+	// Container, when set, is the exact container to exec the dump in, overriding
+	// the name derived from the deployment and service.
+	Container string `yaml:"container,omitempty" json:"container,omitempty"`
+	// AllDatabases dumps the whole server (pg_dumpall / mysqldump --all-databases)
+	// with root credentials, used to back up a database-server deployment such as
+	// the shared infrastructure database.
+	AllDatabases bool   `yaml:"all_databases,omitempty" json:"all_databases,omitempty"`
+	HostEnv      string `yaml:"host_env,omitempty" json:"host_env,omitempty"`
+	PortEnv      string `yaml:"port_env,omitempty" json:"port_env,omitempty"`
+	UserEnv      string `yaml:"user_env,omitempty" json:"user_env,omitempty"`
+	PasswordEnv  string `yaml:"password_env,omitempty" json:"password_env,omitempty"`
+	DatabaseEnv  string `yaml:"database_env,omitempty" json:"database_env,omitempty"`
+	Host         string `yaml:"host,omitempty" json:"host,omitempty"`
+	Port         int    `yaml:"port,omitempty" json:"port,omitempty"`
+	User         string `yaml:"user,omitempty" json:"user,omitempty"`
+	Password     string `yaml:"password,omitempty" json:"password,omitempty"`
+	Database     string `yaml:"database,omitempty" json:"database,omitempty"`
 }
 
 type BackupHookSpec struct {

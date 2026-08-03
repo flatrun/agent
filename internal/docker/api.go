@@ -58,6 +58,42 @@ func (a *APIClient) FindContainer(ctx context.Context, project, service string) 
 	return containers[0].ID, nil
 }
 
+// ContainerPrimaryIP returns the IP address of a project's first running
+// container on the given docker network. The agent runs on the host, so a
+// service that only exposes ports on an internal compose network (a self-hosted
+// object store, say) is reached by dialing the container's address directly.
+// When network is empty, the first attached network with an address is used.
+func (a *APIClient) ContainerPrimaryIP(ctx context.Context, project, network string) (string, error) {
+	f := filters.NewArgs(
+		filters.Arg("label", fmt.Sprintf("%s=%s", composeProjectLabel, project)),
+		filters.Arg("status", "running"),
+	)
+
+	containers, err := a.cli.ContainerList(ctx, container.ListOptions{Filters: f})
+	if err != nil {
+		return "", fmt.Errorf("failed to list containers: %w", err)
+	}
+	if len(containers) == 0 {
+		return "", fmt.Errorf("no running container found for project %q", project)
+	}
+
+	ns := containers[0].NetworkSettings
+	if ns == nil {
+		return "", fmt.Errorf("container for project %q has no network settings", project)
+	}
+	if network != "" {
+		if n, ok := ns.Networks[network]; ok && n.IPAddress != "" {
+			return n.IPAddress, nil
+		}
+	}
+	for _, n := range ns.Networks {
+		if n.IPAddress != "" {
+			return n.IPAddress, nil
+		}
+	}
+	return "", fmt.Errorf("container for project %q has no network address yet", project)
+}
+
 func (a *APIClient) ExecInContainer(ctx context.Context, containerID string, command string) (string, error) {
 	execConfig := container.ExecOptions{
 		Cmd:          []string{"sh", "-c", command},

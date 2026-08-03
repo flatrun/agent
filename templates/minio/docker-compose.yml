@@ -3,6 +3,7 @@ services:
   minio:
     image: minio/minio:latest
     container_name: ${NAME}
+    user: "${FLATRUN_UID:-1000}:${FLATRUN_GID:-1000}"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-flatrun}
@@ -13,9 +14,10 @@ services:
       - "9000"
       - "9001"
     networks:
-      - proxy
+      - objstore
     restart: unless-stopped
 
 networks:
-  proxy:
+  objstore:
     external: true
+    name: ${FLATRUN_OBJECT_NETWORK:-database}

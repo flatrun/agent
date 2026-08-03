@@ -157,6 +157,66 @@ func ParseComposeYAML(content string) (map[string]interface{}, error) {
 	return compose, nil
 }
 
+// EnsureServiceEnvFile makes every service load envFile, so env written there
+// (e.g. an attached object store's connection details) actually reaches the
+// containers. An existing env_file (string or list form) is preserved and
+// envFile appended only when missing.
+func EnsureServiceEnvFile(content, envFile string) (string, error) {
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		return content, err
+	}
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return content, nil
+	}
+
+	changed := false
+	for name, raw := range services {
+		service, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		var files []string
+		switch ef := service["env_file"].(type) {
+		case string:
+			files = []string{ef}
+		case []interface{}:
+			for _, f := range ef {
+				if s, ok := f.(string); ok {
+					files = append(files, s)
+				}
+			}
+		}
+
+		found := false
+		for _, f := range files {
+			if f == envFile {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+
+		files = append(files, envFile)
+		service["env_file"] = files
+		services[name] = service
+		changed = true
+	}
+
+	if !changed {
+		return content, nil
+	}
+	out, err := yaml.Marshal(compose)
+	if err != nil {
+		return content, err
+	}
+	return string(out), nil
+}
+
 // ContainerNameForService returns the DNS-resolvable container name for a service in
 // a deployment, matching what EnsureContainerNames assigns. An explicit container_name in
 // the compose wins; otherwise the EnsureContainerNames rule applies (primary service ->
