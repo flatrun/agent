@@ -66,6 +66,63 @@ func TestSyncerLeavesCacheOnNoSource(t *testing.T) {
 	}
 }
 
+func TestSyncerRejectsReservedIDs(t *testing.T) {
+	cache := t.TempDir()
+	// An embedded-style infra template the sync must never clobber.
+	infra := filepath.Join(cache, "infra", "nginx")
+	if err := os.MkdirAll(infra, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(infra, "docker-compose.yml"), []byte("embedded"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	src := stubSource{name: "github", available: true, templates: []Template{
+		{ID: "infra/nginx", Compose: []byte("hijacked")},
+		{ID: "welcome", Compose: []byte("hijacked")},
+		{ID: "wordpress", Compose: []byte("ok")},
+	}}
+	s := &Syncer{Resolver: NewResolver(src), CacheDir: cache}
+
+	_, n, err := s.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("wrote %d templates, want 1 (reserved ids skipped)", n)
+	}
+	got, err := os.ReadFile(filepath.Join(infra, "docker-compose.yml"))
+	if err != nil || string(got) != "embedded" {
+		t.Fatalf("reserved infra template was overwritten: %q %v", got, err)
+	}
+}
+
+func TestSyncerReplacesStaleFiles(t *testing.T) {
+	cache := t.TempDir()
+	dir := filepath.Join(cache, "wordpress")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stale.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	src := stubSource{name: "github", available: true, templates: []Template{
+		{ID: "wordpress", Compose: []byte("services:\n"), Files: map[string][]byte{"fresh.txt": []byte("new")}},
+	}}
+	s := &Syncer{Resolver: NewResolver(src), CacheDir: cache}
+	if _, _, err := s.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "stale.txt")); !os.IsNotExist(err) {
+		t.Error("a file removed upstream should not linger in the cache")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "fresh.txt")); err != nil {
+		t.Errorf("the new file should be written: %v", err)
+	}
+}
+
 func TestSyncerRejectsPathTraversal(t *testing.T) {
 	cache := t.TempDir()
 	src := stubSource{name: "github", available: true, templates: []Template{

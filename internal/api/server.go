@@ -184,7 +184,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	if err := os.MkdirAll(builtinTemplatesDir, 0755); err == nil {
 		ensureBuiltinTemplates(builtinTemplatesDir)
 	}
-	templateSyncer := newTemplateSyncer(cfg)
+	templateSyncer := newTemplateSyncer(cfg, builtinTemplatesDir)
 	certsDiscovery := certs.NewDiscovery(cfg.DeploymentsPath)
 	networksManager := networks.NewManager()
 	pluginsDir := filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins")
@@ -379,7 +379,11 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
 
-	s.startTemplateSyncLoop(context.Background(), time.Duration(cfg.Templates.SyncInterval)*time.Second)
+	syncInterval := 3600
+	if cfg.Templates.SyncInterval != nil {
+		syncInterval = *cfg.Templates.SyncInterval
+	}
+	s.startTemplateSyncLoop(context.Background(), time.Duration(syncInterval)*time.Second)
 
 	if provider, aiErr := ai.New(&cfg.AI); aiErr == nil {
 		s.aiProvider = provider
@@ -3267,11 +3271,7 @@ func marketplaceAPIBase() string {
 // newTemplateSyncer builds the app-template catalog syncer from config: the
 // marketplace source first (authoritative when enabled), GitHub as the fallback,
 // writing into the on-disk template cache.
-func newTemplateSyncer(cfg *config.Config) *templatesource.Syncer {
-	cacheDir := cfg.Templates.CacheDir
-	if cacheDir == "" {
-		cacheDir = filepath.Join(cfg.DeploymentsPath, ".flatrun", "templates")
-	}
+func newTemplateSyncer(cfg *config.Config, cacheDir string) *templatesource.Syncer {
 	marketplaceURL := cfg.Templates.Marketplace.URL
 	if marketplaceURL == "" {
 		marketplaceURL = marketplaceAPIBase()

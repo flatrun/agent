@@ -17,6 +17,10 @@ import (
 // few KB; the cap bounds a hostile or corrupt archive.
 const maxTemplateFileBytes = 2 << 20 // 2 MiB
 
+// maxCatalogBytes caps the whole extracted catalog, so a repository with a huge
+// number of small files cannot exhaust memory.
+const maxCatalogBytes = 100 << 20 // 100 MiB
+
 // GitHubSource delivers the catalog from a GitHub repository (flatrun/templates)
 // by downloading its tarball and reading each directory that contains a
 // docker-compose.yml as one template. It shells out to nothing: the fetch is a
@@ -88,6 +92,7 @@ func (g GitHubSource) List(ctx context.Context) ([]Template, error) {
 	// tarball's top directory (<name>-<ref>/) stripped.
 	files := map[string][]byte{}
 	tr := tar.NewReader(gz)
+	var total int64
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -104,13 +109,14 @@ func (g GitHubSource) List(ctx context.Context) ([]Template, error) {
 			// Repo-root files (README, LICENSE, ...) are not template content.
 			continue
 		}
-		if hdr.Size > maxTemplateFileBytes {
+		if hdr.Size > maxTemplateFileBytes || total+hdr.Size > maxCatalogBytes {
 			continue
 		}
 		data, err := io.ReadAll(io.LimitReader(tr, maxTemplateFileBytes))
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", name, err)
 		}
+		total += int64(len(data))
 		files[name] = data
 	}
 

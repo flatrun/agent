@@ -52,11 +52,9 @@ type Config struct {
 // cache that the deploy and listing paths read. Infra and welcome content stay
 // embedded and are unaffected.
 type TemplatesConfig struct {
-	// CacheDir is where synced templates are stored; empty means
-	// {deployments_path}/.flatrun/templates.
-	CacheDir string `yaml:"cache_dir" json:"cache_dir"`
-	// SyncInterval is the background resync period in seconds; 0 disables it.
-	SyncInterval int                        `yaml:"sync_interval" json:"sync_interval"`
+	// SyncInterval is the background resync period in seconds. A pointer so an
+	// explicit 0, which disables the resync loop, is distinct from unset.
+	SyncInterval *int                       `yaml:"sync_interval" json:"sync_interval"`
 	GitHub       TemplatesGitHubConfig      `yaml:"github" json:"github"`
 	Marketplace  TemplatesMarketplaceConfig `yaml:"marketplace" json:"marketplace"`
 }
@@ -426,8 +424,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Templates.GitHub.Ref == "" {
 		cfg.Templates.GitHub.Ref = "main"
 	}
-	if cfg.Templates.SyncInterval == 0 {
-		cfg.Templates.SyncInterval = 3600
+	if cfg.Templates.SyncInterval == nil {
+		defaultInterval := 3600
+		cfg.Templates.SyncInterval = &defaultInterval
 	}
 	if cfg.Nginx.Image == "" {
 		cfg.Nginx.Image = "nginx:alpine"
