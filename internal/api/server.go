@@ -3670,7 +3670,7 @@ func (s *Server) refreshTemplates(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Templates refreshed",
 		"source":  src,
-		"count":   len(builtinList) + synced,
+		"count":   synced,
 	})
 }
 

@@ -3,6 +3,7 @@ package templatesource
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,7 @@ func (s *Syncer) Sync(ctx context.Context) (string, int, error) {
 	written := 0
 	for _, t := range templates {
 		if err := s.write(t); err != nil {
+			log.Printf("templatesource: skipping template %q: %v", t.ID, err)
 			continue
 		}
 		written++
