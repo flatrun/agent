@@ -44,6 +44,37 @@ type Config struct {
 	MCP             MCPConfig            `yaml:"mcp"`
 	Files           FilesConfig          `yaml:"files"`
 	Backup          BackupConfig         `yaml:"backup"`
+	Templates       TemplatesConfig      `yaml:"templates"`
+}
+
+// TemplatesConfig controls where the app template catalog is fetched from. The
+// catalog lives outside the binary: it is synced from a source into an on-disk
+// cache that the deploy and listing paths read. Infra and welcome content stay
+// embedded and are unaffected.
+type TemplatesConfig struct {
+	// SyncInterval is the background resync period in seconds. A pointer so an
+	// explicit 0, which disables the resync loop, is distinct from unset.
+	SyncInterval *int                       `yaml:"sync_interval" json:"sync_interval"`
+	GitHub       TemplatesGitHubConfig      `yaml:"github" json:"github"`
+	Marketplace  TemplatesMarketplaceConfig `yaml:"marketplace" json:"marketplace"`
+}
+
+// TemplatesGitHubConfig is the GitHub-repo source, the working default today.
+type TemplatesGitHubConfig struct {
+	// Enabled defaults to true when unset; an explicit false is honored.
+	Enabled *bool  `yaml:"enabled" json:"enabled"`
+	Repo    string `yaml:"repo" json:"repo"`
+	Ref     string `yaml:"ref" json:"ref"`
+}
+
+// TemplatesMarketplaceConfig is the marketplace-API source. Disabled by default
+// until the API is declared ready; enabling it makes the marketplace
+// authoritative ahead of GitHub with no code change.
+type TemplatesMarketplaceConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// URL is the marketplace API root; empty falls back to the agent's default
+	// marketplace endpoint.
+	URL string `yaml:"url" json:"url"`
 }
 
 // MCPConfig controls the built-in MCP server that exposes the assistant's tool
@@ -382,6 +413,20 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Infrastructure.Redis.Port == 0 && cfg.Infrastructure.Redis.Enabled {
 		cfg.Infrastructure.Redis.Port = 6379
+	}
+	if cfg.Templates.GitHub.Enabled == nil {
+		enabled := true
+		cfg.Templates.GitHub.Enabled = &enabled
+	}
+	if cfg.Templates.GitHub.Repo == "" {
+		cfg.Templates.GitHub.Repo = "flatrun/templates"
+	}
+	if cfg.Templates.GitHub.Ref == "" {
+		cfg.Templates.GitHub.Ref = "main"
+	}
+	if cfg.Templates.SyncInterval == nil {
+		defaultInterval := 3600
+		cfg.Templates.SyncInterval = &defaultInterval
 	}
 	if cfg.Nginx.Image == "" {
 		cfg.Nginx.Image = "nginx:alpine"

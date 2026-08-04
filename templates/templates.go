@@ -13,7 +13,6 @@ import (
 	"text/template"
 )
 
-//go:embed */metadata.yml */docker-compose.yml
 //go:embed infra/*/metadata.yml infra/*/docker-compose.yml
 //go:embed infra/nginx/nginx.conf infra/nginx/nginx.lua.conf infra/nginx/default.conf infra/nginx/lua/*
 //go:embed welcome/index.html
