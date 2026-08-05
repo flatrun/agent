@@ -172,8 +172,9 @@ func formatMetricValue(metric string, v float64) string {
 	switch metric {
 	case MetricCPUUsage, MetricHostCPU, MetricHostMemUtil, MetricHostDisk:
 		return fmt.Sprintf("%.1f%%", v)
-	case MetricMemoryUsage, MetricMemoryLimit, MetricNetworkRx, MetricNetworkTx,
-		MetricHostMemUsage, MetricHostMemLimit:
+	case MetricNetworkRx, MetricNetworkTx:
+		return formatBytes(v) + "/s"
+	case MetricMemoryUsage, MetricMemoryLimit, MetricHostMemUsage, MetricHostMemLimit:
 		return formatBytes(v)
 	}
 	return fmt.Sprintf("%.2f", v)

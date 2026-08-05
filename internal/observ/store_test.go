@@ -28,6 +28,46 @@ func TestStoreRecordExpandsSemconvSeries(t *testing.T) {
 	}
 }
 
+func TestStoreNetworkCounterBecomesRate(t *testing.T) {
+	s := NewStore(10)
+	key := SeriesKey{Deployment: "shop", Container: "shop-web", Metric: MetricNetworkRx}
+	t0 := time.Unix(1_700_000_000, 0)
+
+	// First reading has nothing to diff against, so its rate is 0.
+	s.Record(ContainerSample{Deployment: "shop", Container: "shop-web", NetworkRx: 1000}, t0)
+	if got := lastValue(t, s, key); got != 0 {
+		t.Errorf("first network rate = %v, want 0", got)
+	}
+
+	// 2000 more bytes over 5s is 400 B/s, regardless of how large the total is.
+	s.Record(ContainerSample{Deployment: "shop", Container: "shop-web", NetworkRx: 3000}, t0.Add(5*time.Second))
+	if got := lastValue(t, s, key); got != 400 {
+		t.Errorf("network rate = %v, want 400", got)
+	}
+
+	// An idle container whose total does not move reports 0, not the huge total.
+	s.Record(ContainerSample{Deployment: "shop", Container: "shop-web", NetworkRx: 3000}, t0.Add(10*time.Second))
+	if got := lastValue(t, s, key); got != 0 {
+		t.Errorf("idle network rate = %v, want 0", got)
+	}
+
+	// A counter reset (a restarted container reporting a smaller total) reports 0,
+	// not a negative or spiked rate.
+	s.Record(ContainerSample{Deployment: "shop", Container: "shop-web", NetworkRx: 100}, t0.Add(15*time.Second))
+	if got := lastValue(t, s, key); got != 0 {
+		t.Errorf("post-reset network rate = %v, want 0", got)
+	}
+}
+
+func lastValue(t *testing.T, s *Store, key SeriesKey) float64 {
+	t.Helper()
+	samples := s.Range(key, time.Unix(0, 0))
+	if len(samples) == 0 {
+		t.Fatalf("no samples for %+v", key)
+	}
+	return samples[len(samples)-1].Value
+}
+
 func TestStoreRingEvictsOldest(t *testing.T) {
 	s := NewStore(3)
 	key := SeriesKey{Deployment: "d", Container: "c", Metric: MetricCPUUsage}
