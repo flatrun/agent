@@ -27,6 +27,9 @@ func resolveLogSource(meta *models.ServiceMetadata, id string) (models.LogSource
 
 var errLogPathEscapes = errors.New("log source path escapes the deployment directory")
 
+// readAllCap bounds how much a tail<=0 ("all") read pulls into memory.
+var readAllCap int64 = 5 << 20 // 5 MiB
+
 func resolveLogFilePath(deploymentPath, relPath string) (string, error) {
 	if relPath == "" {
 		return "", errors.New("empty log source path")
@@ -63,11 +66,27 @@ func readFileTail(path string, n int) (string, error) {
 	}
 
 	if n <= 0 {
+		// "All" is still bounded: reading a multi-gigabyte log whole would exhaust
+		// memory, so cap it to the last readAllCap bytes and drop the partial first
+		// line the cap may cut.
+		start := int64(0)
+		if size > readAllCap {
+			start = size - readAllCap
+		}
+		if _, err := f.Seek(start, io.SeekStart); err != nil {
+			return "", err
+		}
 		data, err := io.ReadAll(f)
 		if err != nil {
 			return "", err
 		}
-		return string(data), nil
+		s := string(data)
+		if start > 0 {
+			if i := strings.IndexByte(s, '\n'); i >= 0 {
+				s = s[i+1:]
+			}
+		}
+		return s, nil
 	}
 
 	const chunk = 32 * 1024

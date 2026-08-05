@@ -65,6 +65,33 @@ func TestReadFileTail(t *testing.T) {
 	}
 }
 
+func TestReadFileTail_AllIsCapped(t *testing.T) {
+	orig := readAllCap
+	readAllCap = 64
+	defer func() { readAllCap = orig }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.log")
+	var b strings.Builder
+	for i := 0; i < 200; i++ {
+		b.WriteString("line-" + strconv.Itoa(i) + "\n")
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readFileTail(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(got)) > readAllCap {
+		t.Errorf("read %d bytes, want <= cap %d", len(got), readAllCap)
+	}
+	if !strings.HasSuffix(got, "line-199\n") {
+		t.Errorf("capped read should keep the file's end, got tail %q", got[max(0, len(got)-20):])
+	}
+}
+
 func TestReadFileTail_FewerLinesThanRequested(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "short.log")
