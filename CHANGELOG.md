@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0-beta.3] - 2026-08-05
+
+Third beta of the Albacore release, focused on the logs pillar of observability and a network-alert correctness fix.
+
+### Added
+- Structured container logs: each line is parsed into a record (service, timestamp, level, message, and JSON fields) so a viewer can render logs as rows instead of a text block
+- Log sources beyond container stdout: known kinds (laravel, wordpress, nginx) expose their conventional log files, and any deployment can point the viewer at a file under its own directory, confined to it; the assistant tools read these sources too
+
+### Fixed
+- Network alerts no longer fire on idle containers: network metrics were a container's lifetime byte total, so a "network above X" rule crossed any threshold given enough uptime and stayed firing; the store now records a per-second rate, so alerts and charts reflect current throughput and a counter reset reads as zero
+- Log level is read only from real header positions (line start, a channel.LEVEL tag, or a level= field), so a stack frame naming a class like ErrorHandler is no longer flagged as an error
+- An all-logs read of a file source is bounded so a very large file cannot exhaust memory, and a stopped container's network baseline is dropped rather than retained
+- The "all logs" selection returns all container output: it was passing a zero line count, which reads as no lines for a snapshot and was otherwise capped at a hundred
+
 ## [0.4.0-beta.2] - 2026-08-01
 
 Second beta of the Albacore release, continuing the deployment lifecycle and self-healing work on top of beta.1. Some Albacore items remain in progress and are not in this beta.
