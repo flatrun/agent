@@ -9,6 +9,7 @@ import (
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/contextkeys"
+	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -100,6 +101,14 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 	// push everything it writes down the socket for the viewer to throw away.
 	filter := strings.ToLower(c.Query("filter"))
 
+	// A source picks where the logs come from: the container output by default,
+	// or one of the deployment's own log files.
+	source, ok := resolveLogSource(deployment.Metadata, c.Query("source"))
+	if !ok {
+		sendError(conn, "Unknown log source")
+		return
+	}
+
 	// The stream ends when the viewer disconnects, which is what stops the compose process
 	// rather than leaving it attached for the life of the agent.
 	ctx := c.Request.Context()
@@ -114,19 +123,40 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 		}
 	}()
 
-	err = s.manager.StreamDeploymentLogs(ctx, name, deployment.Path, tail, func(line string) {
+	sink := func(line string) {
 		if filter != "" && !strings.Contains(strings.ToLower(line), filter) {
 			return
 		}
-		payload, err := json.Marshal(logLine{Type: "log", Line: line, Record: parseLogRecord(line)})
+		record := parseLogRecord(line)
+		// File lines carry no container prefix, so label them with the source
+		// name to keep the row identifiable.
+		if source.Type == models.LogSourceFile && record.Service == "" {
+			record.Service = source.Name
+		}
+		payload, err := json.Marshal(logLine{Type: "log", Line: line, Record: record})
 		if err != nil {
 			return
 		}
 		_ = conn.WriteMessage(websocket.TextMessage, payload)
-	})
-	if err != nil && ctx.Err() == nil {
-		sendError(conn, err.Error())
-		return
+	}
+
+	if source.Type == models.LogSourceFile {
+		path, err := resolveLogFilePath(deployment.Path, source.Path)
+		if err != nil {
+			sendError(conn, err.Error())
+			return
+		}
+		err = streamFileLogs(ctx, path, tail, sink)
+		if err != nil && ctx.Err() == nil {
+			sendError(conn, err.Error())
+			return
+		}
+	} else {
+		err = s.manager.StreamDeploymentLogs(ctx, name, deployment.Path, tail, sink)
+		if err != nil && ctx.Err() == nil {
+			sendError(conn, err.Error())
+			return
+		}
 	}
 
 	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"end"}`))

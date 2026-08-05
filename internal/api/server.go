@@ -469,6 +469,8 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/jobs/:jobId", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentJob)
 			protected.POST("/deployments/:name/actions/:actionId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.executeQuickAction)
 			protected.GET("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogs)
+			protected.GET("/deployments/:name/log-sources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogSources)
+			protected.PUT("/deployments/:name/log-sources", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentLogSources)
 			protected.GET("/deployments/:name/compose", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentCompose)
 			protected.POST("/deployments/:name/compose/mount", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDeploymentComposeMount)
 			protected.POST("/deployments/:name/compose/unmount", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.removeDeploymentComposeMount)
@@ -2491,18 +2493,43 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 		tail = 100
 	}
 
-	logs, err := s.manager.GetDeploymentLogs(name, tail)
+	deployment, err := s.manager.GetDeployment(name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
+	}
+
+	source, ok := resolveLogSource(deployment.Metadata, c.Query("source"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown log source"})
+		return
+	}
+
+	var logs string
+	if source.Type == models.LogSourceFile {
+		path, err := resolveLogFilePath(deployment.Path, source.Path)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		logs, err = readFileTail(path, tail)
+		if err != nil && !os.IsNotExist(err) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fileLogReadError(err).Error()})
+			return
+		}
+	} else {
+		logs, err = s.manager.GetDeploymentLogs(name, tail)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	logs = filterLogLines(logs, c.Query("filter"))
 
 	c.JSON(http.StatusOK, gin.H{
 		"name":    name,
+		"source":  source.ID,
 		"logs":    logs,
 		"records": parseLogRecords(logs),
 	})
@@ -2521,6 +2548,82 @@ func parseLogRecords(logs string) []logRecord {
 		records = append(records, parseLogRecord(line))
 	}
 	return records
+}
+
+// getDeploymentLogSources lists every place this deployment's logs can be read
+// from: the container output, the kind's built-in log files, and any the user
+// pointed at.
+func (s *Server) getDeploymentLogSources(c *gin.Context) {
+	name := c.Param("name")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	var sources []models.LogSource
+	if deployment.Metadata != nil {
+		sources = deployment.Metadata.EffectiveLogSources()
+	} else {
+		sources = []models.LogSource{{ID: models.LogSourceStdout, Name: "Container output", Type: models.LogSourceStdout}}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"name": name, "sources": sources})
+}
+
+// updateDeploymentLogSources saves the user's custom file log sources. Only file
+// sources are stored: the container output and the kind's built-ins are implicit
+// and are never persisted. Each path is checked so it cannot point outside the
+// deployment directory.
+func (s *Server) updateDeploymentLogSources(c *gin.Context) {
+	name := c.Param("name")
+
+	var req struct {
+		Sources []models.LogSource `json:"sources"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	cleaned := make([]models.LogSource, 0, len(req.Sources))
+	for _, src := range req.Sources {
+		if src.Type != models.LogSourceFile {
+			continue
+		}
+		if strings.TrimSpace(src.Path) == "" || strings.TrimSpace(src.Name) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "each file log source needs a name and a path"})
+			return
+		}
+		if _, err := resolveLogFilePath(deployment.Path, src.Path); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if src.ID == "" {
+			src.ID = src.Path
+		}
+		src.Builtin = false
+		cleaned = append(cleaned, src)
+	}
+
+	if deployment.Metadata == nil {
+		deployment.Metadata = &models.ServiceMetadata{Name: name}
+	}
+	deployment.Metadata.LogSources = cleaned
+
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"name": name, "sources": deployment.Metadata.EffectiveLogSources()})
 }
 
 func (s *Server) getDeploymentCompose(c *gin.Context) {
