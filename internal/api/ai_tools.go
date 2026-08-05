@@ -14,6 +14,7 @@ import (
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/setup"
+	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/pluginapi"
 	"github.com/gin-gonic/gin"
 )
@@ -207,10 +208,11 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 		"get_deployment_logs": {
 			Spec: ai.Tool{
 				Name:        "get_deployment_logs",
-				Description: "Get a deployment's recent container logs. In FlatRun, application logs are the containers' stdout/stderr captured by Docker, not files on disk, so use this tool to read logs rather than searching the filesystem.",
+				Description: "Get a deployment's recent logs. By default this reads the containers' stdout/stderr captured by Docker. A deployment can also expose its own log files (e.g. laravel storage/logs, nginx access/error logs); pass 'source' with a source id from list_deployment_log_sources to read one of those instead.",
 				Parameters: objSchema(map[string]interface{}{
 					"deployment": strProp("Deployment name. Omit to use the session's deployment."),
 					"tail":       map[string]interface{}{"type": "integer", "description": "How many recent lines to fetch (default 300, max 1000)."},
+					"source":     strProp("Log source id to read (from list_deployment_log_sources). Omit for container output."),
 				}),
 			},
 			Run: func(s *Server, c *gin.Context, bound string, args map[string]interface{}) (string, error) {
@@ -225,16 +227,70 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 				if tail > 1000 {
 					tail = 1000
 				}
-				logs, err := s.manager.GetDeploymentLogs(name, tail)
+				deployment, err := s.manager.GetDeployment(name)
 				if err != nil {
 					return "", err
 				}
+				source, ok := resolveLogSource(deployment.Metadata, argString(args, "source"))
+				if !ok {
+					return "", fmt.Errorf("unknown log source %q", argString(args, "source"))
+				}
+				var logs string
+				if source.Type == models.LogSourceFile {
+					path, err := resolveLogFilePath(deployment.Path, source.Path)
+					if err != nil {
+						return "", err
+					}
+					logs, err = readFileTail(path, tail)
+					if err != nil && !os.IsNotExist(err) {
+						return "", fileLogReadError(err)
+					}
+				} else {
+					logs, err = s.manager.GetDeploymentLogs(name, tail)
+					if err != nil {
+						return "", err
+					}
+				}
 				if strings.TrimSpace(logs) == "" {
-					return "The deployment has produced no logs.", nil
+					return "The deployment has produced no logs from this source.", nil
 				}
 				redactor := ai.NewRedactor(s.deploymentSecretValues(name))
 				redacted, _ := redactor.Redact(logs)
 				return truncateToolOutput(redacted), nil
+			},
+		},
+		"list_deployment_log_sources": {
+			Spec: ai.Tool{
+				Name:        "list_deployment_log_sources",
+				Description: "List the places a deployment's logs can be read from: the container output, the log files its kind conventionally writes, and any the user pointed at. Use the returned ids with get_deployment_logs.",
+				Parameters: objSchema(map[string]interface{}{
+					"deployment": strProp("Deployment name. Omit to use the session's deployment."),
+				}),
+			},
+			Run: func(s *Server, c *gin.Context, bound string, args map[string]interface{}) (string, error) {
+				name, err := s.toolAllowedDeployment(c, bound, args)
+				if err != nil {
+					return "", err
+				}
+				deployment, err := s.manager.GetDeployment(name)
+				if err != nil {
+					return "", err
+				}
+				var sources []models.LogSource
+				if deployment.Metadata != nil {
+					sources = deployment.Metadata.EffectiveLogSources()
+				} else {
+					sources = []models.LogSource{{ID: models.LogSourceStdout, Name: "Container output", Type: models.LogSourceStdout}}
+				}
+				var b strings.Builder
+				for _, src := range sources {
+					b.WriteString(fmt.Sprintf("%s - %s (%s", src.ID, src.Name, src.Type))
+					if src.Path != "" {
+						b.WriteString(": " + src.Path)
+					}
+					b.WriteString(")\n")
+				}
+				return b.String(), nil
 			},
 		},
 		"list_deployment_files": {

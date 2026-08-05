@@ -14,17 +14,13 @@ var metricHelp = map[string]string{
 	MetricCPUUsage:    "Container CPU usage as a percentage of host capacity.",
 	MetricMemoryUsage: "Container memory usage in bytes.",
 	MetricMemoryLimit: "Container memory limit in bytes.",
-	MetricNetworkRx:   "Bytes received by the container.",
-	MetricNetworkTx:   "Bytes sent by the container.",
+	MetricNetworkRx:   "Bytes received by the container per second.",
+	MetricNetworkTx:   "Bytes sent by the container per second.",
 }
 
 // renderPrometheus writes the store's latest sample per series in Prometheus text exposition
-// format, so any scraper can read the same numbers the native UI draws.
-//
-// Every series is reported as a gauge, including the network counters: the scraper reads the
-// total Docker reports, and Docker resets it when a container is recreated. Declaring those a
-// counter would tell Prometheus the value only ever rises, and a reset would then read as an
-// enormous rate spike rather than a restart.
+// format, so any scraper can read the same numbers the native UI draws. Every series is a
+// gauge, including network, which the store already reduces to a per-second rate.
 func renderPrometheus(points []LatestPoint) string {
 	byMetric := map[string][]LatestPoint{}
 	for _, p := range points {

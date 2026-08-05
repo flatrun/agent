@@ -25,8 +25,10 @@ type Service struct {
 }
 
 type ServiceMetadata struct {
-	Name string `yaml:"name" json:"name"`
-	Type string `yaml:"type" json:"type"`
+	Name       string      `yaml:"name" json:"name"`
+	Type       string      `yaml:"type" json:"type"`
+	Kind       string      `yaml:"kind,omitempty" json:"kind,omitempty"`
+	LogSources []LogSource `yaml:"log_sources,omitempty" json:"log_sources,omitempty"`
 	// PrimaryService is the user-pinned primary service. When set it overrides
 	// auto-detection for the default-domain upstream and is preserved across
 	// compose updates and re-discovery.
@@ -158,6 +160,80 @@ func (m *ServiceMetadata) GetPrimaryDatabase() *DatabaseConfig {
 
 func (m *ServiceMetadata) HasMultipleDatabases() bool {
 	return len(m.Databases) > 1
+}
+
+const (
+	LogSourceStdout = "stdout"
+	LogSourceFile   = "file"
+)
+
+// LogSource is one place a deployment's logs can be read from: container stdout,
+// or a file (Path, relative to the deployment directory) the app writes on the host.
+type LogSource struct {
+	ID      string `yaml:"id" json:"id"`
+	Name    string `yaml:"name" json:"name"`
+	Type    string `yaml:"type" json:"type"`
+	Service string `yaml:"service,omitempty" json:"service,omitempty"`
+	Path    string `yaml:"path,omitempty" json:"path,omitempty"`
+	Format  string `yaml:"format,omitempty" json:"format,omitempty"`
+	Builtin bool   `yaml:"-" json:"builtin,omitempty"`
+}
+
+var builtinLogProfiles = map[string][]LogSource{
+	"laravel": {
+		{ID: "laravel-app", Name: "Laravel application", Type: LogSourceFile, Path: "storage/logs/laravel.log", Format: "text", Builtin: true},
+	},
+	"wordpress": {
+		{ID: "wordpress-debug", Name: "WordPress debug", Type: LogSourceFile, Path: "wp-content/debug.log", Format: "text", Builtin: true},
+	},
+	"nginx": {
+		{ID: "nginx-access", Name: "nginx access", Type: LogSourceFile, Path: "logs/access.log", Format: "text", Builtin: true},
+		{ID: "nginx-error", Name: "nginx error", Type: LogSourceFile, Path: "logs/error.log", Format: "text", Builtin: true},
+	},
+}
+
+func BuiltinLogSourcesForKind(kind string) []LogSource {
+	return builtinLogProfiles[kind]
+}
+
+// EffectiveLogSources is every source a viewer can pick: the stdout stream, the
+// kind's built-in file profiles, and any the user added (which override built-ins by id).
+func (m *ServiceMetadata) EffectiveLogSources() []LogSource {
+	sources := []LogSource{{ID: LogSourceStdout, Name: "Container output", Type: LogSourceStdout}}
+
+	seen := map[string]int{LogSourceStdout: 0}
+	add := func(s LogSource) {
+		if s.ID == "" {
+			s.ID = s.Path
+		}
+		if idx, ok := seen[s.ID]; ok {
+			sources[idx] = s
+			return
+		}
+		seen[s.ID] = len(sources)
+		sources = append(sources, s)
+	}
+
+	for _, s := range BuiltinLogSourcesForKind(m.Kind) {
+		add(s)
+	}
+	for _, s := range m.LogSources {
+		s.Builtin = false
+		add(s)
+	}
+	return sources
+}
+
+func (m *ServiceMetadata) FindLogSource(id string) (LogSource, bool) {
+	if id == "" || id == LogSourceStdout {
+		return LogSource{ID: LogSourceStdout, Name: "Container output", Type: LogSourceStdout}, true
+	}
+	for _, s := range m.EffectiveLogSources() {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return LogSource{}, false
 }
 
 type BackupSpec struct {

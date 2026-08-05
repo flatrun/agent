@@ -72,6 +72,15 @@ type Store struct {
 	series    map[SeriesKey]*ring
 	lastSweep time.Time
 	sink      func([]LatestPoint)
+	prevNet   map[string]netReading
+}
+
+// netReading holds a container's last cumulative network counters so the next
+// reading can be turned into a per-second rate.
+type netReading struct {
+	rx uint64
+	tx uint64
+	t  time.Time
 }
 
 func NewStore(capacityPerSeries int) *Store {
@@ -82,6 +91,7 @@ func NewStore(capacityPerSeries int) *Store {
 		capacity:  capacityPerSeries,
 		retention: time.Hour,
 		series:    make(map[SeriesKey]*ring),
+		prevNet:   make(map[string]netReading),
 	}
 }
 
@@ -103,6 +113,12 @@ func (s *Store) sweepStale(now time.Time) {
 			delete(s.series, k)
 		}
 	}
+	// A container that stops reporting must not keep its network baseline forever.
+	for k, pv := range s.prevNet {
+		if pv.t.Before(cutoff) {
+			delete(s.prevNet, k)
+		}
+	}
 }
 
 func (s *Store) add(key SeriesKey, sample Sample) {
@@ -114,15 +130,46 @@ func (s *Store) add(key SeriesKey, sample Sample) {
 	r.push(sample)
 }
 
-// Record expands a container reading into its semconv series and stores each at t.
+// Record expands a container reading into its semconv series and stores each at
+// t. Network counters become a per-second rate so a threshold sees throughput,
+// not a total that only climbs.
 func (s *Store) Record(c ContainerSample, t time.Time) {
+	rxRate, txRate := s.netRates(c, t)
 	s.record(SeriesKey{Deployment: c.Deployment, Container: c.Container}, map[string]float64{
 		MetricCPUUsage:    c.CPUPercent,
 		MetricMemoryUsage: float64(c.MemoryUsage),
 		MetricMemoryLimit: float64(c.MemoryLimit),
-		MetricNetworkRx:   float64(c.NetworkRx),
-		MetricNetworkTx:   float64(c.NetworkTx),
+		MetricNetworkRx:   rxRate,
+		MetricNetworkTx:   txRate,
 	}, t)
+}
+
+// netRates converts a container's cumulative network counters into a per-second
+// rate. The first reading, a counter reset, or a non-positive interval yield 0.
+func (s *Store) netRates(c ContainerSample, t time.Time) (float64, float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.prevNet == nil {
+		s.prevNet = make(map[string]netReading)
+	}
+	key := c.Deployment + "\x00" + c.Container
+	prev, ok := s.prevNet[key]
+	s.prevNet[key] = netReading{rx: c.NetworkRx, tx: c.NetworkTx, t: t}
+	if !ok {
+		return 0, 0
+	}
+	dt := t.Sub(prev.t).Seconds()
+	if dt <= 0 {
+		return 0, 0
+	}
+	var rxRate, txRate float64
+	if c.NetworkRx >= prev.rx {
+		rxRate = float64(c.NetworkRx-prev.rx) / dt
+	}
+	if c.NetworkTx >= prev.tx {
+		txRate = float64(c.NetworkTx-prev.tx) / dt
+	}
+	return rxRate, txRate
 }
 
 // HostSample is a single host-wide reading.
