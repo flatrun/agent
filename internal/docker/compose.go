@@ -193,8 +193,15 @@ func (c *ComposeExecutor) PullService(deploymentPath, service string, opts ...Ru
 }
 
 func (c *ComposeExecutor) Logs(deploymentPath string, tail int) (string, error) {
-	tailStr := fmt.Sprintf("%d", tail)
-	return c.runCompose(deploymentPath, nil, "logs", "--no-color", "--timestamps", "--tail", tailStr)
+	return c.runCompose(deploymentPath, nil, "logs", "--no-color", "--timestamps", "--tail", tailArg(tail))
+}
+
+// tailArg is the compose --tail value: a count, or "all" for tail <= 0, since "0" shows no lines.
+func tailArg(tail int) string {
+	if tail <= 0 {
+		return "all"
+	}
+	return fmt.Sprintf("%d", tail)
 }
 
 func (c *ComposeExecutor) PS(deploymentPath string) (string, error) {
@@ -455,11 +462,7 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, ar
 // line when the container writes it, and cancelling ctx stops the process rather than
 // leaving it attached for the life of the agent.
 func (c *ComposeExecutor) StreamLogs(ctx context.Context, deploymentPath string, tail int, sink func(string)) error {
-	if tail <= 0 {
-		tail = 100
-	}
-
-	cmd, err := c.composeCommand(ctx, deploymentPath, "logs", "--follow", "--no-color", "--timestamps", "--tail", fmt.Sprintf("%d", tail))
+	cmd, err := c.composeCommand(ctx, deploymentPath, "logs", "--follow", "--no-color", "--timestamps", "--tail", tailArg(tail))
 	if err != nil {
 		return err
 	}
