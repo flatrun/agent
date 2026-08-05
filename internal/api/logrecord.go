@@ -29,9 +29,28 @@ var composePrefix = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)\s*\|\s?`)
 // prints at the start of each message, with or without a zone offset.
 var leadingTimestamp = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\s+`)
 
-// textLevel matches the usual severity words wherever they appear early in a
-// plain-text line, e.g. `[INFO]`, `level=warn`, `ERROR:`.
-var textLevel = regexp.MustCompile(`(?i)\b(TRACE|DEBUG|INFO(?:RMATION)?|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRIT(?:ICAL)?|PANIC|EMERG(?:ENCY)?|ALERT)\b`)
+const levelWords = `TRACE|DEBUG|INFO(?:RMATION)?|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRIT(?:ICAL)?|PANIC|EMERG(?:ENCY)?|ALERT`
+
+// levelPatterns detect a severity only where a log format actually puts one:
+// at the start of the line, as a `channel.LEVEL` tag (monolog/syslog), or a
+// `level=` field (logfmt). Matching the bare word anywhere would wrongly tag a
+// stack frame like `#5 App\ErrorHandler->handle()` as an error.
+var levelPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)^\s*\[?\s*(` + levelWords + `)\s*\]?\s*[:\-\s]`),
+	regexp.MustCompile(`(?i)\b[a-z][a-z0-9_-]*\.(` + levelWords + `)\b`),
+	regexp.MustCompile(`(?i)\blevel\s*[=:]\s*"?(` + levelWords + `)\b`),
+}
+
+// detectTextLevel returns the canonical severity of a plain-text line, or "" if
+// none of the recognised header positions carry one.
+func detectTextLevel(s string) string {
+	for _, re := range levelPatterns {
+		if m := re.FindStringSubmatch(s); m != nil {
+			return canonicalLevel(m[1])
+		}
+	}
+	return ""
+}
 
 // parseLogRecord turns one raw compose log line into a structured record. It is
 // deliberately tolerant: anything it cannot recognise stays in Message, and Raw
@@ -60,9 +79,7 @@ func parseLogRecord(raw string) logRecord {
 	}
 
 	rec.Message = rest
-	if m := textLevel.FindString(rest); m != "" {
-		rec.Level = canonicalLevel(m)
-	}
+	rec.Level = detectTextLevel(rest)
 	return rec
 }
 

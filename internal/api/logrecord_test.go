@@ -60,6 +60,27 @@ func TestParseLogRecord_TextLevel(t *testing.T) {
 	}
 }
 
+func TestDetectTextLevel(t *testing.T) {
+	cases := map[string]string{
+		// Real header positions carry a level.
+		"[ERROR] something failed":                          "error",
+		"WARN: disk almost full":                            "warn",
+		"info  starting up":                                 "info",
+		"[2024-01-15 10:30:00] local.ERROR: boom":           "error",
+		"[2024-01-15 10:30:00] production.WARNING: slow":     "warn",
+		`time=2024 level=debug msg="tick"`:                   "debug",
+		// A level word buried mid-line (a stack frame, a class name) is not a level.
+		"#5 /app/src/App/ErrorHandler.php(10): handle()":    "",
+		"processed the ERROR queue successfully":            "",
+		"GET /api/errors 200":                               "",
+	}
+	for in, want := range cases {
+		if got := detectTextLevel(in); got != want {
+			t.Errorf("detectTextLevel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestParseLogRecord_NoPrefixOrTimestamp(t *testing.T) {
 	raw := "a bare line with no compose prefix"
 	rec := parseLogRecord(raw)
