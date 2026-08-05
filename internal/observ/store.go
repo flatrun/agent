@@ -113,6 +113,12 @@ func (s *Store) sweepStale(now time.Time) {
 			delete(s.series, k)
 		}
 	}
+	// A container that stops reporting must not keep its network baseline forever.
+	for k, pv := range s.prevNet {
+		if pv.t.Before(cutoff) {
+			delete(s.prevNet, k)
+		}
+	}
 }
 
 func (s *Store) add(key SeriesKey, sample Sample) {

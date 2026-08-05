@@ -59,6 +59,26 @@ func TestStoreNetworkCounterBecomesRate(t *testing.T) {
 	}
 }
 
+func TestStoreDropsStaleNetworkBaseline(t *testing.T) {
+	s := NewStore(10)
+	t0 := time.Unix(1_700_000_000, 0)
+
+	s.Record(ContainerSample{Deployment: "shop", Container: "gone", NetworkRx: 100}, t0)
+	if _, ok := s.prevNet["shop\x00gone"]; !ok {
+		t.Fatal("expected a network baseline for the container")
+	}
+
+	// A later reading from a different container, past the retention window, sweeps
+	// the container that stopped reporting.
+	s.Record(ContainerSample{Deployment: "shop", Container: "live", NetworkRx: 100}, t0.Add(2*time.Hour))
+	if _, ok := s.prevNet["shop\x00gone"]; ok {
+		t.Error("stale network baseline was not dropped")
+	}
+	if _, ok := s.prevNet["shop\x00live"]; !ok {
+		t.Error("live container's baseline should remain")
+	}
+}
+
 func lastValue(t *testing.T, s *Store, key SeriesKey) float64 {
 	t.Helper()
 	samples := s.Range(key, time.Unix(0, 0))
