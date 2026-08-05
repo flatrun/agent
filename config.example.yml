@@ -147,3 +147,14 @@ backup:
     #     credential_id: <s3-credential-id>
     #     use_path_style: false
     #     enabled: true
+templates:
+    # Background resync period in seconds; 0 disables the resync loop.
+    sync_interval: 3600
+    github:
+        enabled: true
+        repo: flatrun/templates
+        ref: main
+    marketplace:
+        # Enable once the marketplace API is ready; it then takes priority over GitHub.
+        enabled: false
+        url: ""
