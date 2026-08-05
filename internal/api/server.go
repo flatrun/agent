@@ -2502,9 +2502,25 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 	logs = filterLogLines(logs, c.Query("filter"))
 
 	c.JSON(http.StatusOK, gin.H{
-		"name": name,
-		"logs": logs,
+		"name":    name,
+		"logs":    logs,
+		"records": parseLogRecords(logs),
 	})
+}
+
+// parseLogRecords breaks a snapshot blob into one structured record per line so
+// the viewer renders a paged snapshot exactly like a followed stream. Blank
+// trailing lines are dropped rather than shown as empty rows.
+func parseLogRecords(logs string) []logRecord {
+	if logs == "" {
+		return []logRecord{}
+	}
+	lines := strings.Split(strings.TrimRight(logs, "\n"), "\n")
+	records := make([]logRecord, 0, len(lines))
+	for _, line := range lines {
+		records = append(records, parseLogRecord(line))
+	}
+	return records
 }
 
 func (s *Server) getDeploymentCompose(c *gin.Context) {

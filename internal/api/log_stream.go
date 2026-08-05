@@ -13,10 +13,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// logLine is one line of a followed log, as the viewer receives it.
+// logLine is one line of a followed log, as the viewer receives it. Line is the
+// raw compose output; Record is that same line broken into structured parts so a
+// viewer can render it as an expandable row instead of flat text.
 type logLine struct {
-	Type string `json:"type"`
-	Line string `json:"line"`
+	Type   string    `json:"type"`
+	Line   string    `json:"line"`
+	Record logRecord `json:"record"`
 }
 
 // streamDeploymentLogs follows a deployment's logs over a websocket until the viewer goes
@@ -115,7 +118,7 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 		if filter != "" && !strings.Contains(strings.ToLower(line), filter) {
 			return
 		}
-		payload, err := json.Marshal(logLine{Type: "log", Line: line})
+		payload, err := json.Marshal(logLine{Type: "log", Line: line, Record: parseLogRecord(line)})
 		if err != nil {
 			return
 		}

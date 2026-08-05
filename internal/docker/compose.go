@@ -194,7 +194,7 @@ func (c *ComposeExecutor) PullService(deploymentPath, service string, opts ...Ru
 
 func (c *ComposeExecutor) Logs(deploymentPath string, tail int) (string, error) {
 	tailStr := fmt.Sprintf("%d", tail)
-	return c.runCompose(deploymentPath, nil, "logs", "--tail", tailStr)
+	return c.runCompose(deploymentPath, nil, "logs", "--no-color", "--timestamps", "--tail", tailStr)
 }
 
 func (c *ComposeExecutor) PS(deploymentPath string) (string, error) {
@@ -459,7 +459,7 @@ func (c *ComposeExecutor) StreamLogs(ctx context.Context, deploymentPath string,
 		tail = 100
 	}
 
-	cmd, err := c.composeCommand(ctx, deploymentPath, "logs", "--follow", "--no-color", "--tail", fmt.Sprintf("%d", tail))
+	cmd, err := c.composeCommand(ctx, deploymentPath, "logs", "--follow", "--no-color", "--timestamps", "--tail", fmt.Sprintf("%d", tail))
 	if err != nil {
 		return err
 	}
