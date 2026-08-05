@@ -25,15 +25,9 @@ type Service struct {
 }
 
 type ServiceMetadata struct {
-	Name string `yaml:"name" json:"name"`
-	Type string `yaml:"type" json:"type"`
-	// Kind tags what a deployment runs (wordpress, laravel, nginx, ...) so the
-	// log observer knows where that kind of app keeps its logs. Template deploys
-	// inherit it; custom deploys can set it.
-	Kind string `yaml:"kind,omitempty" json:"kind,omitempty"`
-	// LogSources are extra places, beyond container stdout, that this deployment
-	// writes logs: files under its own directory. They are pointed at from the
-	// logs view so an app's own log files show up there without leaving the page.
+	Name       string      `yaml:"name" json:"name"`
+	Type       string      `yaml:"type" json:"type"`
+	Kind       string      `yaml:"kind,omitempty" json:"kind,omitempty"`
 	LogSources []LogSource `yaml:"log_sources,omitempty" json:"log_sources,omitempty"`
 	// PrimaryService is the user-pinned primary service. When set it overrides
 	// auto-detection for the default-domain upstream and is preserved across
@@ -168,38 +162,23 @@ func (m *ServiceMetadata) HasMultipleDatabases() bool {
 	return len(m.Databases) > 1
 }
 
-// Log source types.
 const (
 	LogSourceStdout = "stdout"
 	LogSourceFile   = "file"
 )
 
-// LogSource is one place a deployment's logs can be read from. A stdout source
-// is the container output compose already streams; a file source is a path
-// (relative to the deployment directory) the app writes to on the host, which
-// FlatRun can read directly because everything is bind-mounted flat files.
+// LogSource is one place a deployment's logs can be read from: container stdout,
+// or a file (Path, relative to the deployment directory) the app writes on the host.
 type LogSource struct {
-	// ID is a stable, url-safe handle used to select this source.
-	ID string `yaml:"id" json:"id"`
-	// Name is what the viewer shows, e.g. "nginx access".
-	Name string `yaml:"name" json:"name"`
-	// Type is stdout or file.
-	Type string `yaml:"type" json:"type"`
-	// Service scopes a stdout source to one compose service; empty means all.
+	ID      string `yaml:"id" json:"id"`
+	Name    string `yaml:"name" json:"name"`
+	Type    string `yaml:"type" json:"type"`
 	Service string `yaml:"service,omitempty" json:"service,omitempty"`
-	// Path is the file source's location relative to the deployment directory,
-	// e.g. "storage/logs/laravel.log". Ignored for stdout sources.
-	Path string `yaml:"path,omitempty" json:"path,omitempty"`
-	// Format is a hint for the parser (text, json). Optional.
-	Format string `yaml:"format,omitempty" json:"format,omitempty"`
-	// Builtin marks a source contributed by the kind's default profile rather
-	// than one the user added, so a viewer can present it differently.
-	Builtin bool `yaml:"-" json:"builtin,omitempty"`
+	Path    string `yaml:"path,omitempty" json:"path,omitempty"`
+	Format  string `yaml:"format,omitempty" json:"format,omitempty"`
+	Builtin bool   `yaml:"-" json:"builtin,omitempty"`
 }
 
-// builtinLogProfiles maps a deployment kind to the log files that kind of app
-// conventionally writes, so the observer can offer them without the user having
-// to know the paths.
 var builtinLogProfiles = map[string][]LogSource{
 	"laravel": {
 		{ID: "laravel-app", Name: "Laravel application", Type: LogSourceFile, Path: "storage/logs/laravel.log", Format: "text", Builtin: true},
@@ -213,15 +192,12 @@ var builtinLogProfiles = map[string][]LogSource{
 	},
 }
 
-// BuiltinLogSourcesForKind returns the default file log sources for a kind, or
-// nil when the kind is unknown or has no convention.
 func BuiltinLogSourcesForKind(kind string) []LogSource {
 	return builtinLogProfiles[kind]
 }
 
-// EffectiveLogSources is every source a viewer can pick: the always-present
-// stdout stream, the kind's built-in file profiles, and any the user added.
-// User sources with the same id as a built-in override it.
+// EffectiveLogSources is every source a viewer can pick: the stdout stream, the
+// kind's built-in file profiles, and any the user added (which override built-ins by id).
 func (m *ServiceMetadata) EffectiveLogSources() []LogSource {
 	sources := []LogSource{{ID: LogSourceStdout, Name: "Container output", Type: LogSourceStdout}}
 
@@ -248,8 +224,6 @@ func (m *ServiceMetadata) EffectiveLogSources() []LogSource {
 	return sources
 }
 
-// FindLogSource resolves a source id against the effective set. The empty id and
-// "stdout" both mean the container output.
 func (m *ServiceMetadata) FindLogSource(id string) (LogSource, bool) {
 	if id == "" || id == LogSourceStdout {
 		return LogSource{ID: LogSourceStdout, Name: "Container output", Type: LogSourceStdout}, true

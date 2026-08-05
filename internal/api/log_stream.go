@@ -14,9 +14,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// logLine is one line of a followed log, as the viewer receives it. Line is the
-// raw compose output; Record is that same line broken into structured parts so a
-// viewer can render it as an expandable row instead of flat text.
 type logLine struct {
 	Type   string    `json:"type"`
 	Line   string    `json:"line"`
@@ -101,8 +98,6 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 	// push everything it writes down the socket for the viewer to throw away.
 	filter := strings.ToLower(c.Query("filter"))
 
-	// A source picks where the logs come from: the container output by default,
-	// or one of the deployment's own log files.
 	source, ok := resolveLogSource(deployment.Metadata, c.Query("source"))
 	if !ok {
 		sendError(conn, "Unknown log source")
@@ -128,8 +123,6 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 			return
 		}
 		record := parseLogRecord(line)
-		// File lines carry no container prefix, so label them with the source
-		// name to keep the row identifiable.
 		if source.Type == models.LogSourceFile && record.Service == "" {
 			record.Service = source.Name
 		}

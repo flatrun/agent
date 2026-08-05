@@ -2535,9 +2535,6 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 	})
 }
 
-// parseLogRecords breaks a snapshot blob into one structured record per line so
-// the viewer renders a paged snapshot exactly like a followed stream. Blank
-// trailing lines are dropped rather than shown as empty rows.
 func parseLogRecords(logs string) []logRecord {
 	if logs == "" {
 		return []logRecord{}
@@ -2550,9 +2547,6 @@ func parseLogRecords(logs string) []logRecord {
 	return records
 }
 
-// getDeploymentLogSources lists every place this deployment's logs can be read
-// from: the container output, the kind's built-in log files, and any the user
-// pointed at.
 func (s *Server) getDeploymentLogSources(c *gin.Context) {
 	name := c.Param("name")
 
@@ -2572,10 +2566,6 @@ func (s *Server) getDeploymentLogSources(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"name": name, "sources": sources})
 }
 
-// updateDeploymentLogSources saves the user's custom file log sources. Only file
-// sources are stored: the container output and the kind's built-ins are implicit
-// and are never persisted. Each path is checked so it cannot point outside the
-// deployment directory.
 func (s *Server) updateDeploymentLogSources(c *gin.Context) {
 	name := c.Param("name")
 
