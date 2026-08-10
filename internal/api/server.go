@@ -104,6 +104,7 @@ type Server struct {
 	certRenewer        *ssl.Renewer
 	planStore          *plan.Store
 	aiProvider         ai.Provider
+	triageBudget       *triageBudget
 	aiSessions         *ai.SessionStore
 	aiAgents           *ai.AgentStore
 	mcpHandler         http.Handler
@@ -390,6 +391,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	} else if aiErr != ai.ErrDisabled {
 		log.Printf("Warning: failed to initialize AI provider: %v", aiErr)
 	}
+	s.triageBudget = newTriageBudget(cfg.AI.TriageDailyCap)
 
 	if backupManager != nil {
 		if err := s.applyBackupDestinations(); err != nil {
@@ -874,6 +876,10 @@ func (s *Server) setupRoutes() {
 
 		// Plugin-emitted notifications (authenticated by the per-run plugin token).
 		api.POST("/internal/notify/emit", s.emitNotification)
+		// Log lines and triage for built-in apps, on the same plugin token. Both keep one
+		// implementation in the agent rather than a second one inside every app.
+		api.GET("/internal/logs/stream", s.streamInternalLogs)
+		api.POST("/internal/ai/triage", s.triageLogIncident)
 
 		// Ingest endpoints (no auth - called by nginx Lua)
 		api.POST("/security/events/ingest", s.ingestSecurityEvent)

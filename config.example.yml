@@ -126,6 +126,9 @@ ai:
     api_key: your-gemini-api-key-here
     model: gemini-2.5-flash
     timeout: 1m0s
+    # Ceiling on log incidents the assistant may be asked to explain in a day.
+    # Unattended work is the only kind that can run up a bill unwatched.
+    triage_daily_cap: 25
 mcp:
     # Exposes the assistant's tool set to external MCP clients at /api/mcp. Every
     # call is authenticated and permission-gated exactly as the assistant is.

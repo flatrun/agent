@@ -135,6 +135,9 @@ type AIConfig struct {
 	Model   string        `yaml:"model" json:"model"`
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 	DocsURL string        `yaml:"docs_url" json:"docs_url"`
+	// TriageDailyCap bounds the log incidents a day the assistant may be asked to explain.
+	// Triage runs unattended, so it gets a ceiling that operator-initiated chat does not need.
+	TriageDailyCap int `yaml:"triage_daily_cap" json:"triage_daily_cap"`
 }
 
 type PlansConfig struct {

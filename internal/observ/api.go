@@ -39,10 +39,24 @@ type alertPersistence interface {
 	Save([]AlertRule) error
 }
 
+// logRuleAccess is the slice of the log engine the API needs; nil-safe.
+type logRuleAccess interface {
+	Rules() []LogRule
+	SetRules([]LogRule)
+	Incidents() []Incident
+}
+
+type logRulePersistence interface {
+	Load() []LogRule
+	Save([]LogRule) error
+}
+
 // alerts is optional wiring for the rule endpoints.
 type alerts struct {
-	engine alertAccess
-	store  alertPersistence
+	engine    alertAccess
+	store     alertPersistence
+	logEngine logRuleAccess
+	logStore  logRulePersistence
 }
 
 func Handler(store *Store, history *MetricsDB, health healthReporter, cfg configAccess, apply func(Config)) http.Handler {
@@ -150,6 +164,46 @@ func HandlerWithAlerts(store *Store, history *MetricsDB, health healthReporter, 
 			al.engine.SetRules(al.store.Load())
 		}
 		writeJSON(w, al.engine.Rules())
+	})
+	mux.HandleFunc("/alerts/log-rules", func(w http.ResponseWriter, r *http.Request) {
+		if al.logEngine == nil || al.logStore == nil {
+			writeJSON(w, []LogRule{})
+			return
+		}
+		if r.Method == http.MethodPut {
+			var incoming []LogRule
+			if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+				http.Error(w, "invalid rules", http.StatusBadRequest)
+				return
+			}
+			// Saving assigns ids and rejects a rule that would match everything.
+			if err := al.logStore.Save(incoming); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			al.logEngine.SetRules(al.logStore.Load())
+		}
+		writeJSON(w, al.logEngine.Rules())
+	})
+	mux.HandleFunc("/alerts/incidents", func(w http.ResponseWriter, r *http.Request) {
+		if al.logEngine == nil {
+			writeJSON(w, []Incident{})
+			return
+		}
+		incidents := al.logEngine.Incidents()
+		if deployment := r.URL.Query().Get("deployment"); deployment != "" {
+			filtered := make([]Incident, 0, len(incidents))
+			for _, in := range incidents {
+				if in.Deployment == deployment {
+					filtered = append(filtered, in)
+				}
+			}
+			incidents = filtered
+		}
+		writeJSON(w, incidents)
+	})
+	mux.HandleFunc("/alerts/responders", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, KnownResponders())
 	})
 	mux.HandleFunc("/alerts/firing", func(w http.ResponseWriter, _ *http.Request) {
 		if al.engine == nil {
