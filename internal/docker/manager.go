@@ -275,8 +275,8 @@ func (m *Manager) ListDeployments() ([]models.Deployment, error) {
 // The deployment path is passed in rather than looked up again: the caller has already read
 // the deployment, and following holds for as long as someone is watching, which is far too
 // long to hold the manager's lock.
-func (m *Manager) StreamDeploymentLogs(ctx context.Context, name, path string, tail int, sink func(string)) error {
-	return m.executor.StreamLogs(ctx, path, tail, sink)
+func (m *Manager) StreamDeploymentLogs(ctx context.Context, name, path string, tail int, sink func(string), services ...string) error {
+	return m.executor.StreamLogs(ctx, path, tail, sink, services...)
 }
 
 // FindDeployments returns deployments built from their on-disk metadata alone,
@@ -856,7 +856,7 @@ func (m *Manager) ComposeExec(ctx context.Context, name string, service string, 
 	return m.apiClient.ExecInService(ctx, project, service, command)
 }
 
-func (m *Manager) GetDeploymentLogs(name string, tail int) (string, error) {
+func (m *Manager) GetDeploymentLogs(name string, tail int, services ...string) (string, error) {
 	m.mu.RLock()
 	deployment, err := m.discovery.GetDeployment(name)
 	m.mu.RUnlock()
@@ -865,7 +865,7 @@ func (m *Manager) GetDeploymentLogs(name string, tail int) (string, error) {
 		return "", err
 	}
 
-	return m.executor.Logs(deployment.Path, tail)
+	return m.executor.Logs(deployment.Path, tail, services...)
 }
 
 func (m *Manager) UpdateDeployment(name string, composeContent string) error {

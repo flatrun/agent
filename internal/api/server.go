@@ -2505,6 +2505,14 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 		return
 	}
 
+	// A file source is one file the deployment writes, so there is nothing per-service to
+	// narrow it to; the filter only applies to container output.
+	services, err := s.resolveLogServices(name, c.Query("service"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	var logs string
 	if source.Type == models.LogSourceFile {
 		path, err := resolveLogFilePath(deployment.Path, source.Path)
@@ -2518,7 +2526,7 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 			return
 		}
 	} else {
-		logs, err = s.manager.GetDeploymentLogs(name, tail)
+		logs, err = s.manager.GetDeploymentLogs(name, tail, services...)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -2530,6 +2538,7 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"name":    name,
 		"source":  source.ID,
+		"service": strings.Join(services, ","),
 		"logs":    logs,
 		"records": parseLogRecords(logs),
 	})

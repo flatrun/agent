@@ -104,6 +104,14 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 		return
 	}
 
+	// A file source is one file the deployment writes, so there is nothing per-service to
+	// narrow it to; the filter only applies to container output.
+	services, err := s.resolveLogServices(name, c.Query("service"))
+	if err != nil {
+		sendError(conn, err.Error())
+		return
+	}
+
 	// The stream ends when the viewer disconnects, which is what stops the compose process
 	// rather than leaving it attached for the life of the agent.
 	ctx := c.Request.Context()
@@ -145,7 +153,7 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 			return
 		}
 	} else {
-		err = s.manager.StreamDeploymentLogs(ctx, name, deployment.Path, tail, sink)
+		err = s.manager.StreamDeploymentLogs(ctx, name, deployment.Path, tail, sink, services...)
 		if err != nil && ctx.Err() == nil {
 			sendError(conn, err.Error())
 			return

@@ -192,8 +192,11 @@ func (c *ComposeExecutor) PullService(deploymentPath, service string, opts ...Ru
 	return c.runCompose(deploymentPath, opts, "pull", "--ignore-buildable", "--policy", "always", service)
 }
 
-func (c *ComposeExecutor) Logs(deploymentPath string, tail int) (string, error) {
-	return c.runCompose(deploymentPath, nil, "logs", "--no-color", "--timestamps", "--tail", tailArg(tail))
+// Logs returns a tail of the deployment's output. Naming services narrows it to those
+// containers; naming none returns every service, which is what compose does by default.
+func (c *ComposeExecutor) Logs(deploymentPath string, tail int, services ...string) (string, error) {
+	args := append([]string{"logs", "--no-color", "--timestamps", "--tail", tailArg(tail)}, services...)
+	return c.runCompose(deploymentPath, nil, args...)
 }
 
 // tailArg is the compose --tail value: a count, or "all" for tail <= 0, since "0" shows no lines.
@@ -461,8 +464,9 @@ func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, ar
 // a user watching a container start reloads to see the next line. Following gives them the
 // line when the container writes it, and cancelling ctx stops the process rather than
 // leaving it attached for the life of the agent.
-func (c *ComposeExecutor) StreamLogs(ctx context.Context, deploymentPath string, tail int, sink func(string)) error {
-	cmd, err := c.composeCommand(ctx, deploymentPath, "logs", "--follow", "--no-color", "--timestamps", "--tail", tailArg(tail))
+func (c *ComposeExecutor) StreamLogs(ctx context.Context, deploymentPath string, tail int, sink func(string), services ...string) error {
+	args := append([]string{"logs", "--follow", "--no-color", "--timestamps", "--tail", tailArg(tail)}, services...)
+	cmd, err := c.composeCommand(ctx, deploymentPath, args...)
 	if err != nil {
 		return err
 	}
