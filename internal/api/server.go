@@ -426,6 +426,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/system/terminal/interactive", s.systemTerminalInteractive)
 		api.GET("/deployments/:name/jobs/:jobId/stream", s.streamDeploymentJob)
 		api.GET("/deployments/:name/logs/stream", s.streamDeploymentLogs)
+		api.GET("/system/logs/stream", s.streamSystemLogs)
 
 		// Setup endpoints (public, gated by setup state)
 		setupGroup := api.Group("/setup")
@@ -678,6 +679,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/infrastructure/:name/stop", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.stopInfraService)
 			protected.POST("/infrastructure/:name/restart", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.restartInfraService)
 			protected.GET("/infrastructure/:name/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getInfraServiceLogs)
+			protected.GET("/system/logs/sources", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.listSystemLogSources)
+			protected.GET("/system/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getSystemLogs)
 			protected.POST("/infrastructure/migrate/:name", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.migrateToInfrastructure)
 
 			// Registry endpoints
