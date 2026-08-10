@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flatrun/agent/internal/docker"
@@ -75,6 +76,23 @@ func TestDeleteDeploymentLogsRefusesAnEscapingPath(t *testing.T) {
 	}
 	if info, err := os.Stat(outside); err != nil || info.Size() == 0 {
 		t.Errorf("the file outside the deployment must be untouched")
+	}
+}
+
+// Emptying nothing at all should not read as success, which is what a mistyped service used to
+// get: 200 with a count of zero.
+func TestDeleteDeploymentLogsRejectsAnUnknownService(t *testing.T) {
+	base, name := writeLogFilterDeployment(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/deployments/"+name+"/logs?source=stdout&service=nope", nil)
+	w := httptest.NewRecorder()
+	truncateRouter(t, base).ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "web") {
+		t.Errorf("the error should name the services that do exist, got %s", w.Body.String())
 	}
 }
 

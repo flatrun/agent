@@ -58,6 +58,14 @@ func (s *Server) deleteDeploymentLogs(c *gin.Context) {
 		return
 	}
 
+	// Checked against the compose file for the same reason reading is: a name that matches
+	// nothing would otherwise report success while emptying nothing.
+	wantedServices, err := s.resolveLogServices(name, c.Query("service"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	if source.Type == models.LogSourceFile {
 		path, pathErr := resolveLogFilePath(deployment.Path, source.Path)
 		if pathErr != nil {
@@ -78,11 +86,10 @@ func (s *Server) deleteDeploymentLogs(c *gin.Context) {
 		return
 	}
 
-	wanted := c.Query("service")
 	var failures []string
 	cleared := 0
 	for _, svc := range services {
-		if wanted != "" && wanted != "all" && svc.Name != wanted {
+		if len(wantedServices) > 0 && wantedServices[0] != svc.Name {
 			continue
 		}
 		if svc.ContainerID == "" {
