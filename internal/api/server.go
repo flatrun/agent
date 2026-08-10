@@ -470,6 +470,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/jobs/:jobId", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentJob)
 			protected.POST("/deployments/:name/actions/:actionId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.executeQuickAction)
 			protected.GET("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogs)
+			protected.DELETE("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteDeploymentLogs)
 			protected.GET("/deployments/:name/log-sources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogSources)
 			protected.PUT("/deployments/:name/log-sources", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentLogSources)
 			protected.GET("/deployments/:name/compose", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentCompose)
@@ -681,6 +682,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/infrastructure/:name/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getInfraServiceLogs)
 			protected.GET("/system/logs/sources", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.listSystemLogSources)
 			protected.GET("/system/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getSystemLogs)
+			protected.DELETE("/system/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.deleteSystemLogs)
 			protected.POST("/infrastructure/migrate/:name", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.migrateToInfrastructure)
 
 			// Registry endpoints
