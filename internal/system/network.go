@@ -12,14 +12,14 @@ import (
 )
 
 type NetworkHealth struct {
-	ExternalAccess bool              `json:"external_access"`
-	DNS            DNSHealth         `json:"dns"`
+	ExternalAccess bool               `json:"external_access"`
+	DNS            DNSHealth          `json:"dns"`
 	Interfaces     []NetworkInterface `json:"interfaces"`
-	CheckedAt      time.Time         `json:"checked_at"`
+	CheckedAt      time.Time          `json:"checked_at"`
 }
 
 type DNSHealth struct {
-	Healthy  bool             `json:"healthy"`
+	Healthy   bool            `json:"healthy"`
 	Resolvers []ResolverCheck `json:"resolvers"`
 }
 
