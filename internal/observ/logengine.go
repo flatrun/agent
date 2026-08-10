@@ -92,6 +92,15 @@ type window struct {
 	times     []time.Time
 	lastFired time.Time
 	incident  *Incident
+	lastSeen  time.Time
+	// Past its own window and cooldown a window holds no live state, so that is how long it
+	// has to be quiet before it can be dropped.
+	ttl time.Duration
+}
+
+type streamLines struct {
+	lines    []string
+	lastSeen time.Time
 }
 
 // LogEngine runs the funnel: level, pattern, burst, fingerprint cooldown, then whatever the
@@ -108,16 +117,23 @@ type LogEngine struct {
 	// Nil means incidents are raised untriaged rather than not raised.
 	triage       func(ctx context.Context, incident Incident) (*Triage, error)
 	contextLines int
-	recentLines  map[string][]string
+	recentLines  map[string]*streamLines
+	lastSweep    time.Time
 }
 
-const maxRecentIncidents = 200
+const (
+	maxRecentIncidents = 200
+	sweepInterval      = 5 * time.Minute
+	// Context is only worth keeping for a stream still writing; one that has gone quiet this
+	// long can rebuild it from the lines before its next incident.
+	streamIdleTTL = time.Hour
+)
 
 func NewLogEngine() *LogEngine {
 	return &LogEngine{
 		patterns:     map[string]*regexp.Regexp{},
 		windows:      map[string]*window{},
-		recentLines:  map[string][]string{},
+		recentLines:  map[string]*streamLines{},
 		now:          func() time.Time { return time.Now().UTC() },
 		contextLines: 12,
 	}
@@ -195,6 +211,7 @@ func (e *LogEngine) Offer(line LogLine) []Incident {
 		line.At = e.now()
 	}
 	e.rememberLine(line)
+	e.sweep(line.At)
 
 	var raised []Incident
 	for _, rule := range e.rules {
@@ -298,6 +315,8 @@ func (e *LogEngine) record(rule LogRule, line LogLine) *Incident {
 		w = &window{}
 		e.windows[key] = w
 	}
+	w.lastSeen = line.At
+	w.ttl = time.Duration(rule.WindowSeconds+rule.CooldownSeconds) * time.Second
 
 	cutoff := line.At.Add(-time.Duration(rule.WindowSeconds) * time.Second)
 	kept := w.times[:0]
@@ -365,17 +384,46 @@ func (e *LogEngine) streamKey(line LogLine) string {
 
 func (e *LogEngine) rememberLine(line LogLine) {
 	key := e.streamKey(line)
-	tail := append(e.recentLines[key], line.Raw)
-	if len(tail) > maxLogContextLines {
-		tail = tail[len(tail)-maxLogContextLines:]
+	buf := e.recentLines[key]
+	if buf == nil {
+		buf = &streamLines{}
+		e.recentLines[key] = buf
 	}
-	e.recentLines[key] = tail
+	buf.lines = append(buf.lines, line.Raw)
+	if len(buf.lines) > maxLogContextLines {
+		buf.lines = buf.lines[len(buf.lines)-maxLogContextLines:]
+	}
+	buf.lastSeen = line.At
 }
 
 func (e *LogEngine) contextFor(line LogLine) []string {
-	tail := e.recentLines[e.streamKey(line)]
-	if len(tail) <= e.contextLines {
-		return append([]string(nil), tail...)
+	buf := e.recentLines[e.streamKey(line)]
+	if buf == nil {
+		return nil
 	}
-	return append([]string(nil), tail[len(tail)-e.contextLines:]...)
+	if len(buf.lines) <= e.contextLines {
+		return append([]string(nil), buf.lines...)
+	}
+	return append([]string(nil), buf.lines[len(buf.lines)-e.contextLines:]...)
+}
+
+// sweep drops what the funnel is no longer counting on. The agent runs for months, and both maps
+// are keyed by things that come and go: a stream by deployment and service, a window by the shape
+// of a message. Without this, every container that ever wrote a line stays in memory.
+func (e *LogEngine) sweep(now time.Time) {
+	if now.Sub(e.lastSweep) < sweepInterval {
+		return
+	}
+	e.lastSweep = now
+
+	for key, w := range e.windows {
+		if now.Sub(w.lastSeen) > w.ttl {
+			delete(e.windows, key)
+		}
+	}
+	for key, buf := range e.recentLines {
+		if now.Sub(buf.lastSeen) > streamIdleTTL {
+			delete(e.recentLines, key)
+		}
+	}
 }

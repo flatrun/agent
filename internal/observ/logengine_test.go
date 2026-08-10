@@ -187,6 +187,45 @@ func TestLogEngineScopesToDeploymentAndService(t *testing.T) {
 	}
 }
 
+// The agent runs for months. Both of the engine's maps are keyed by things that come and go, a
+// stream by its service and a window by the shape of a message, so neither may grow forever.
+func TestLogEngineForgetsStreamsAndShapesItNoLongerNeeds(t *testing.T) {
+	e := NewLogEngine()
+	e.SetRules([]LogRule{testRule(func(r *LogRule) {
+		r.MinCount = 1
+		r.WindowSeconds = 60
+		r.CooldownSeconds = 60
+	})})
+
+	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 500; i++ {
+		l := line(base.Add(time.Duration(i)*time.Millisecond), "error", fmt.Sprintf("connection refused talking to shard %d", i))
+		l.Service = fmt.Sprintf("worker-%d", i)
+		e.Offer(l)
+	}
+
+	e.mu.Lock()
+	windows, streams := len(e.windows), len(e.recentLines)
+	e.mu.Unlock()
+	if windows == 0 || streams == 0 {
+		t.Fatalf("expected the engine to be holding state, got %d windows and %d streams", windows, streams)
+	}
+
+	// A day later, none of it is still deciding anything.
+	quiet := line(base.Add(24*time.Hour), "info", "still here")
+	quiet.Service = "web"
+	e.Offer(quiet)
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.windows) != 0 {
+		t.Errorf("windows past their cooldown should be dropped, %d left", len(e.windows))
+	}
+	if len(e.recentLines) != 1 {
+		t.Errorf("only the stream still writing should be kept, %d left", len(e.recentLines))
+	}
+}
+
 // Triage is the only part that costs money, so it must run for the incident and never per
 // line, and only when the rule asked for it.
 func TestLogEngineTriagesOncePerIncidentAndOnlyWhenAsked(t *testing.T) {
