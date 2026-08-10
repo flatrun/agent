@@ -70,12 +70,22 @@ func TestNginxAccessLineNamesItsDeployment(t *testing.T) {
 		}
 	})
 
+	// docker run returns as soon as the container is created, which is before nginx has
+	// finished its entrypoint and bound the port, so the request is retried until it answers.
 	const domain = "shop.example.test"
-	req := exec.Command("docker", "exec", container,
-		"wget", "-qO-", "--header", "Host: "+domain, "http://127.0.0.1/")
-	if out, err := req.CombinedOutput(); err != nil {
+	var reqOut []byte
+	var reqErr error
+	for attempt := 0; attempt < 30; attempt++ {
+		req := exec.Command("docker", "exec", container,
+			"wget", "-qO-", "--header", "Host: "+domain, "http://127.0.0.1/")
+		if reqOut, reqErr = req.CombinedOutput(); reqErr == nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if reqErr != nil {
 		logs, _ := exec.Command("docker", "logs", container).CombinedOutput()
-		t.Fatalf("request through nginx failed: %v: %s (container: %s)", err, out, logs)
+		t.Fatalf("request through nginx failed: %v: %s (container: %s)", reqErr, reqOut, logs)
 	}
 
 	// The access log is buffered and flushed on a timer, so the line is not there the moment
