@@ -185,10 +185,11 @@ func (e *LogEngine) Incidents() []Incident {
 	return append(make([]Incident, 0, len(e.recent)), e.recent...)
 }
 
-// Offer runs one line through the funnel, returning what it raised. The caller acts; the
-// engine only decides.
+// Offer runs one line through the funnel, returning what it raised. It never leaves the machine,
+// so it is cheap enough to call for every line read.
 func (e *LogEngine) Offer(line LogLine) []Incident {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	if line.At.IsZero() {
 		line.At = e.now()
@@ -207,30 +208,30 @@ func (e *LogEngine) Offer(line LogLine) []Incident {
 			raised = append(raised, *incident)
 		}
 	}
+	return raised
+}
+
+// Explain records what the model makes of an incident. It waits on a network call, so it must
+// not be called from the path that reads log lines.
+func (e *LogEngine) Explain(incident Incident) *Triage {
+	e.mu.Lock()
 	triage := e.triage
 	e.mu.Unlock()
 
-	// Outside the lock: this reaches a model, and holding the engine would stall every
-	// other line on the host.
-	for i := range raised {
-		if raised[i].Triage != nil || triage == nil {
-			continue
-		}
-		if !e.ruleWantsTriage(raised[i].RuleID) {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		verdict, err := triage(ctx, raised[i])
-		cancel()
-		if err != nil {
-			verdict = &Triage{Skipped: err.Error(), At: e.now()}
-		}
-		if verdict != nil {
-			raised[i].Triage = verdict
-			e.attachTriage(raised[i].ID, verdict)
-		}
+	if triage == nil || incident.Triage != nil || !e.ruleWantsTriage(incident.RuleID) {
+		return nil
 	}
-	return raised
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	verdict, err := triage(ctx, incident)
+	cancel()
+	if err != nil {
+		verdict = &Triage{Skipped: err.Error(), At: e.now()}
+	}
+	if verdict != nil {
+		e.attachTriage(incident.ID, verdict)
+	}
+	return verdict
 }
 
 func (e *LogEngine) ruleWantsTriage(ruleID string) bool {

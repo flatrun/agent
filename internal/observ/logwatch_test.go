@@ -103,6 +103,70 @@ func TestLogWatcherRaisesFromTheAgentsEnvelope(t *testing.T) {
 	}
 }
 
+// The model call is the slowest thing in the pipeline, and a reader that waits on it stops
+// reading the deployment's logs for as long as it takes.
+func TestLogWatcherKeepsReadingWhileTriageIsSlow(t *testing.T) {
+	lines := []string{
+		`{"type":"log","line":"web-1  | ERROR connection refused talking to redis","record":{"service":"web-1","level":"error","message":"connection refused talking to redis"}}`,
+		`{"type":"log","line":"web-1  | ERROR disk is full","record":{"service":"web-1","level":"error","message":"disk is full"}}`,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		for _, line := range lines {
+			fmt.Fprintln(w, line)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	triaging := make(chan struct{})
+	release := make(chan struct{})
+	engine := NewLogEngine()
+	engine.OnTriage(func(_ context.Context, _ Incident) (*Triage, error) {
+		close(triaging)
+		<-release
+		return &Triage{Summary: "redis is down"}, nil
+	})
+	engine.SetRules([]LogRule{
+		LogRule{ID: "redis", Name: "Redis", Enabled: true, Deployment: "shop", Pattern: "redis", MinCount: 1, Triage: true}.WithDefaults(),
+		LogRule{ID: "disk", Name: "Disk", Enabled: true, Deployment: "shop", Pattern: "disk", MinCount: 1}.WithDefaults(),
+	})
+
+	watcher := NewLogWatcher(engine, server.URL, "plugin-secret")
+	watcher.SetRules(engine.Rules)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go watcher.Run(ctx, time.Hour)
+	defer close(release)
+
+	select {
+	case <-triaging:
+	case <-ctx.Done():
+		t.Fatal("triage never ran")
+	}
+
+	// Triage is still blocked here, so the second line only lands if reading kept going.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		for _, incident := range engine.Incidents() {
+			if incident.RuleID == "disk" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the reader stopped taking lines while the model was answering")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // A stream that is not there is a normal condition (a stopped deployment, a restarting
 // agent), so the watcher keeps trying rather than giving up on the rule.
 func TestLogWatcherKeepsTryingWhenTheStreamIsUnavailable(t *testing.T) {

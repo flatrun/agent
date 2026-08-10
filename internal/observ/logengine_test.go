@@ -227,11 +227,19 @@ func TestLogEngineTriagesOncePerIncidentAndOnlyWhenAsked(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		raised = append(raised, e2.Offer(line(base.Add(time.Duration(i)*time.Second), "error", "connection refused"))...)
 	}
+	if got := atomic.LoadInt64(&calls); got != 0 {
+		t.Fatalf("reading a line must never reach the model on its own, got %d calls", got)
+	}
+	if len(raised) != 1 {
+		t.Fatalf("five hundred lines of one fault should raise one incident, got %d", len(raised))
+	}
+
+	verdict := e2.Explain(raised[0])
 	if got := atomic.LoadInt64(&calls); got != 1 {
 		t.Fatalf("five hundred lines of one fault should cost one triage, got %d", got)
 	}
-	if len(raised) != 1 || raised[0].Triage == nil || raised[0].Triage.Summary != "redis is down" {
-		t.Fatalf("the incident should carry the verdict, got %+v", raised)
+	if verdict == nil || verdict.Summary != "redis is down" {
+		t.Fatalf("the incident should carry the verdict, got %+v", verdict)
 	}
 }
 
@@ -250,8 +258,9 @@ func TestLogEngineRaisesWhenTriageFails(t *testing.T) {
 	if len(raised) != 1 {
 		t.Fatalf("expected the incident regardless of triage, got %d", len(raised))
 	}
-	if raised[0].Triage == nil || !strings.Contains(raised[0].Triage.Skipped, "budget") {
-		t.Errorf("the incident should record why it was not triaged, got %+v", raised[0].Triage)
+	verdict := e.Explain(raised[0])
+	if verdict == nil || !strings.Contains(verdict.Skipped, "budget") {
+		t.Errorf("the incident should record why it was not triaged, got %+v", verdict)
 	}
 }
 

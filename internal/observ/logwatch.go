@@ -44,9 +44,14 @@ type LogWatcher struct {
 	rules   func() []LogRule
 	respond func(incident Incident, responders []string)
 
+	raised chan Incident
+
 	mu      sync.Mutex
 	running map[string]context.CancelFunc
 }
+
+// Deep enough that the funnel's cooldown makes filling it mean something is already very wrong.
+const incidentQueueDepth = 256
 
 func NewLogWatcher(engine *LogEngine, base, token string) *LogWatcher {
 	return &LogWatcher{
@@ -55,6 +60,7 @@ func NewLogWatcher(engine *LogEngine, base, token string) *LogWatcher {
 		token:  token,
 		// No timeout: a follow never ends on purpose. Cancellation is by context.
 		client:  &http.Client{},
+		raised:  make(chan Incident, incidentQueueDepth),
 		running: map[string]context.CancelFunc{},
 	}
 }
@@ -71,6 +77,7 @@ func (w *LogWatcher) Run(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
+	go w.explainAndRespond(ctx)
 	w.reconcile(ctx)
 
 	ticker := time.NewTicker(interval)
@@ -223,19 +230,60 @@ func (w *LogWatcher) readOnce(ctx context.Context, ref streamRef) error {
 			Level:      incoming.Record.Level,
 			Message:    message,
 			Raw:        incoming.Line,
-			At:         time.Now().UTC(),
+			At:         lineTime(incoming.Record.Timestamp),
 		})
 	}
 	return scanner.Err()
 }
 
+// lineTime prefers when the line was written over when it was read: a reconnect would otherwise
+// squeeze a spread-out burst into an instant. A stamp far from now is a wrong clock, not
+// information, so arrival time stands in.
+func lineTime(stamp string) time.Time {
+	now := time.Now().UTC()
+	if stamp == "" {
+		return now
+	}
+	at, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return now
+	}
+	if drift := now.Sub(at); drift > maxLineClockDrift || drift < -maxLineClockDrift {
+		return now
+	}
+	return at.UTC()
+}
+
+const maxLineClockDrift = 10 * time.Minute
+
 func (w *LogWatcher) handle(line LogLine) {
 	for _, incident := range w.engine.Offer(line) {
-		if w.respond == nil {
-			continue
+		select {
+		case w.raised <- incident:
+		default:
+			// The incident is recorded either way, so it reaches the page unexplained rather
+			// than holding up the reader.
+			log.Printf("observ: incident queue full, %s goes unexplained", incident.Key())
 		}
-		responders := w.respondersFor(incident.RuleID)
-		w.respond(incident, responders)
+	}
+}
+
+// explainAndRespond runs the slow half of an incident one at a time, so neither the model call
+// nor the responders can hold up reading logs, and a storm of incidents cannot become a storm of
+// model calls.
+func (w *LogWatcher) explainAndRespond(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case incident := <-w.raised:
+			if verdict := w.engine.Explain(incident); verdict != nil {
+				incident.Triage = verdict
+			}
+			if w.respond != nil {
+				w.respond(incident, w.respondersFor(incident.RuleID))
+			}
+		}
 	}
 }
 

@@ -51,6 +51,17 @@ func (s *Server) streamInternalLogs(c *gin.Context) {
 		}
 	}
 
+	// Everything that can fail is resolved before the status goes out, since a 200 followed by
+	// silence is indistinguishable from a stream that has nothing to say yet.
+	var filePath string
+	if source.Type == models.LogSourceFile {
+		filePath, err = resolveLogFilePath(deployment.Path, source.Path)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	c.Writer.Header().Set("Content-Type", "application/x-ndjson")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.WriteHeader(http.StatusOK)
@@ -71,11 +82,7 @@ func (s *Server) streamInternalLogs(c *gin.Context) {
 	}
 
 	if source.Type == models.LogSourceFile {
-		path, pathErr := resolveLogFilePath(deployment.Path, source.Path)
-		if pathErr != nil {
-			return
-		}
-		_ = streamFileLogs(ctx, path, tail, sink)
+		_ = streamFileLogs(ctx, filePath, tail, sink)
 		return
 	}
 	_ = s.manager.StreamDeploymentLogs(ctx, name, deployment.Path, tail, sink, services...)
