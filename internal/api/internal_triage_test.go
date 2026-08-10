@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/pkg/config"
@@ -135,6 +136,30 @@ func TestTriagePromptIsCappedBySizeAndLines(t *testing.T) {
 	}
 	if len(provider.lastUser) > maxTriageContextChars+64 {
 		t.Errorf("prompt should be capped near %d chars, got %d", maxTriageContextChars, len(provider.lastUser))
+	}
+}
+
+// Logs are not all ASCII, and a prompt cut mid-character is not valid UTF-8.
+func TestTriagePromptCutsOnACharacterBoundary(t *testing.T) {
+	provider := &countingProvider{reply: `{"summary":"ok"}`}
+	router, _ := triageServer(t, provider, 10)
+
+	context := make([]string, 40)
+	for i := range context {
+		context[i] = strings.Repeat("é", 500)
+	}
+
+	w := triagePost(t, router, "plugin-secret", map[string]any{
+		"deployment": "shop",
+		"sample":     "boom",
+		"count":      3,
+		"context":    context,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !utf8.ValidString(provider.lastUser) {
+		t.Error("the truncated prompt is not valid UTF-8")
 	}
 }
 

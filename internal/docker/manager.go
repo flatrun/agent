@@ -54,6 +54,16 @@ func (m *Manager) indexContainersByProject(ctx context.Context) (containerIndex,
 	return index, nil
 }
 
+// ContainerLogPath is the file Docker keeps a container's output in, by container id or name.
+func (m *Manager) ContainerLogPath(ref string) (string, error) {
+	if m.apiClient == nil {
+		return "", fmt.Errorf("docker api client unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), statusReadTimeout)
+	defer cancel()
+	return m.apiClient.ContainerLogPath(ctx, ref)
+}
+
 // ContainerPrimaryIP returns the first running container's address for a
 // deployment on the given docker network. A flatrun deploy names its compose
 // project after the deployment, so the project name is the deployment name.

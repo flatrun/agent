@@ -58,6 +58,16 @@ func (a *APIClient) FindContainer(ctx context.Context, project, service string) 
 	return containers[0].ID, nil
 }
 
+// ContainerLogPath is the file Docker keeps a container's output in, or "" when its logging
+// driver keeps it somewhere Docker does not own, such as journald or a remote collector.
+func (a *APIClient) ContainerLogPath(ctx context.Context, ref string) (string, error) {
+	info, err := a.cli.ContainerInspect(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	return info.LogPath, nil
+}
+
 // ContainerPrimaryIP returns the IP address of a project's first running
 // container on the given docker network. The agent runs on the host, so a
 // service that only exposes ports on an internal compose network (a self-hosted

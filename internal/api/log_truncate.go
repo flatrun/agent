@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/flatrun/agent/internal/infra"
@@ -17,17 +16,17 @@ import (
 // Docker keeps the log itself, so there is nothing to delete through the API: the file behind
 // LogPath is truncated in place. That keeps the container running and its file descriptor
 // valid, which deleting the file would not.
-func truncateContainerLog(container string) error {
+func (s *Server) truncateContainerLog(container string) error {
 	if strings.TrimSpace(container) == "" {
 		return fmt.Errorf("no container to clear")
 	}
 
-	out, err := exec.Command("docker", "inspect", "--format", "{{.LogPath}}", container).Output()
+	path, err := s.manager.ContainerLogPath(container)
 	if err != nil {
 		return fmt.Errorf("could not find the log for %s: %w", container, err)
 	}
 
-	path := strings.TrimSpace(string(out))
+	path = strings.TrimSpace(path)
 	if path == "" {
 		// A container on journald, syslog or a remote driver has no file here to empty, and
 		// clearing whatever it does write is that system's business, not FlatRun's.
@@ -89,7 +88,7 @@ func (s *Server) deleteDeploymentLogs(c *gin.Context) {
 		if svc.ContainerID == "" {
 			continue
 		}
-		if truncErr := truncateContainerLog(svc.ContainerID); truncErr != nil {
+		if truncErr := s.truncateContainerLog(svc.ContainerID); truncErr != nil {
 			failures = append(failures, truncErr.Error())
 			continue
 		}
@@ -129,7 +128,7 @@ func (s *Server) deleteSystemLogs(c *gin.Context) {
 
 	// Access and error share one container, so clearing either clears both. Saying so is
 	// better than quietly emptying more than was asked for.
-	if err := truncateContainerLog(container); err != nil {
+	if err := s.truncateContainerLog(container); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

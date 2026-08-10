@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/gin-gonic/gin"
@@ -179,8 +180,13 @@ func buildTriagePrompt(req triageRequest, redactor *ai.Redactor) string {
 
 	text := b.String()
 	if len(text) > maxTriageContextChars {
-		// The head carries the deployment, the rule and the failing line.
-		text = text[:maxTriageContextChars] + "\n[truncated]"
+		// The head carries the deployment, the rule and the failing line. The cut walks back to
+		// a rune boundary so a log line in any language cannot end in half a character.
+		cut := maxTriageContextChars
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut] + "\n[truncated]"
 	}
 	if redactor != nil {
 		text, _ = redactor.Redact(text)
