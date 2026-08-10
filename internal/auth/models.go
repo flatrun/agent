@@ -21,7 +21,6 @@ const (
 	AccessLevelAdmin = "admin"
 )
 
-
 func ValidAccessLevel(level string) bool {
 	return level == AccessLevelRead || level == AccessLevelWrite || level == AccessLevelAdmin
 }
@@ -88,21 +87,21 @@ func (d *DeploymentAccess) UnmarshalJSON(data []byte) error {
 }
 
 type APIKey struct {
-	ID          int64             `json:"id"`
-	KeyID       string            `json:"key_id"`
-	UserID      int64             `json:"user_id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	KeyHash     string            `json:"-"`
-	KeyPrefix   string            `json:"key_prefix"`
-	Role        Role              `json:"role,omitempty"`
-	Permissions []string          `json:"permissions,omitempty"`
-	Deployments DeploymentAccess  `json:"deployments,omitempty"`
-	ExpiresAt   time.Time         `json:"expires_at,omitempty"`
-	LastUsedAt  time.Time         `json:"last_used_at,omitempty"`
-	LastUsedIP  string            `json:"last_used_ip,omitempty"`
-	IsActive    bool              `json:"is_active"`
-	CreatedAt   time.Time         `json:"created_at"`
+	ID          int64            `json:"id"`
+	KeyID       string           `json:"key_id"`
+	UserID      int64            `json:"user_id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	KeyHash     string           `json:"-"`
+	KeyPrefix   string           `json:"key_prefix"`
+	Role        Role             `json:"role,omitempty"`
+	Permissions []string         `json:"permissions,omitempty"`
+	Deployments DeploymentAccess `json:"deployments,omitempty"`
+	ExpiresAt   time.Time        `json:"expires_at,omitempty"`
+	LastUsedAt  time.Time        `json:"last_used_at,omitempty"`
+	LastUsedIP  string           `json:"last_used_ip,omitempty"`
+	IsActive    bool             `json:"is_active"`
+	CreatedAt   time.Time        `json:"created_at"`
 }
 
 type Session struct {
@@ -127,13 +126,13 @@ type UserDeployment struct {
 }
 
 type ActorContext struct {
-	Type        string             `json:"type"`
-	UserID      int64              `json:"user_id,omitempty"`
-	User        *User              `json:"user,omitempty"`
-	APIKey      *APIKey            `json:"api_key,omitempty"`
-	Role        Role               `json:"role"`
-	Permissions []string           `json:"permissions,omitempty"`
-	Deployments map[string]string  `json:"deployments,omitempty"`
+	Type        string            `json:"type"`
+	UserID      int64             `json:"user_id,omitempty"`
+	User        *User             `json:"user,omitempty"`
+	APIKey      *APIKey           `json:"api_key,omitempty"`
+	Role        Role              `json:"role"`
+	Permissions []string          `json:"permissions,omitempty"`
+	Deployments map[string]string `json:"deployments,omitempty"`
 }
 
 func (a *ActorContext) HasPermission(p Permission) bool {

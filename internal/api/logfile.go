@@ -25,6 +25,25 @@ func resolveLogSource(meta *models.ServiceMetadata, id string) (models.LogSource
 	return meta.FindLogSource(id)
 }
 
+// resolveLogServices turns the requested service into the compose service list to read logs
+// from: none for "" or "all", meaning every service. The name is checked against the compose
+// file rather than passed through, so a caller cannot smuggle arguments into compose.
+func (s *Server) resolveLogServices(name, service string) ([]string, error) {
+	if service == "" || service == "all" {
+		return nil, nil
+	}
+	names, err := s.manager.GetComposeServiceNames(name)
+	if err != nil {
+		return nil, err
+	}
+	for _, sn := range names {
+		if sn == service {
+			return []string{service}, nil
+		}
+	}
+	return nil, fmt.Errorf("service '%s' not found in compose file, available: %s", service, strings.Join(names, ", "))
+}
+
 var errLogPathEscapes = errors.New("log source path escapes the deployment directory")
 
 // readAllCap bounds how much a tail<=0 ("all") read pulls into memory.

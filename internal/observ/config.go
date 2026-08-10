@@ -23,6 +23,20 @@ type Config struct {
 	// OTEL_EXPORTER_OTLP_ENDPOINT environment variable is honoured instead, and with
 	// neither set nothing is pushed and the metrics are still there to scrape.
 	OTLPEndpoint string `yaml:"otlp_endpoint,omitempty" json:"otlp_endpoint,omitempty"`
+	// Off unless turned on here, and still opt-in per rule after that.
+	LogTriage bool `yaml:"log_triage" json:"log_triage"`
+	// Bounds what an incident carries, and so the most a triage can be asked to read.
+	TriageContextLines int `yaml:"triage_context_lines,omitempty" json:"triage_context_lines,omitempty"`
+}
+
+func (c Config) triageContextLines() int {
+	if c.TriageContextLines <= 0 {
+		return 12
+	}
+	if c.TriageContextLines > maxLogContextLines {
+		return maxLogContextLines
+	}
+	return c.TriageContextLines
 }
 
 // DefaultConfig returns the built-in defaults.
@@ -93,4 +107,6 @@ var ConfigSchema = map[string]any{
 	"restart_cooldown_seconds": map[string]any{"type": "number", "label": "Restart cooldown (seconds)", "default": 120, "min": 10},
 	"retention_days":           map[string]any{"type": "number", "label": "Keep history for (days)", "default": 7, "min": 1},
 	"otlp_endpoint":            map[string]any{"type": "string", "label": "OTLP endpoint", "placeholder": "http://localhost:4318", "help": "Push metrics to an OpenTelemetry backend. Leave empty to only serve them for scraping."},
+	"log_triage":               map[string]any{"type": "boolean", "label": "Let log rules ask the assistant", "default": false, "help": "Log rules that opt in can have the assistant explain an incident. Bounded by the agent's daily triage cap."},
+	"triage_context_lines":     map[string]any{"type": "number", "label": "Lines of context per incident", "default": 12, "min": 1, "max": 40},
 }

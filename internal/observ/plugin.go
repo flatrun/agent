@@ -124,15 +124,50 @@ func RunPlugin() error {
 	defer close(alertStop)
 	go engine.Run(alertStop, cfg.sampleInterval()*3)
 
+	// Rules over what deployments write. Only what survives the whole funnel is ever sent
+	// to the assistant.
+	logRuleStore := NewLogRuleStore(dataDir)
+	logEngine := NewLogEngine()
+	logEngine.SetRules(logRuleStore.Load())
+	logEngine.SetContextLines(cfg.triageContextLines())
+
+	agentBase, agentToken := pluginsdk.AgentCallback()
+	RegisterResponder(NewNotifyResponder(func(title, message string, targets []string) {
+		emitNotificationTo(title, message, targets)
+	}))
+
+	if cfg.LogTriage {
+		triage := NewTriageClient(agentBase, agentToken)
+		logEngine.OnTriage(triage.Explain)
+	}
+
+	logWatcher := NewLogWatcher(logEngine, agentBase, agentToken)
+	logWatcher.SetRules(logEngine.Rules)
+	logWatcher.OnIncident(func(incident Incident, responders []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		results := runResponders(ctx, responders, incident)
+		logEngine.AttachResponses(incident.ID, results)
+	})
+	logCtx, stopLogWatch := context.WithCancel(ctx)
+	defer stopLogWatch()
+	go logWatcher.Run(logCtx, 30*time.Second)
+
 	go collector.Run(ctx)
 	go NewHostCollector(store, SystemHostSource, cfg.sampleInterval()).Run(ctx)
 	go watcher.Run(ctx)
 
 	applyConfig := func(c Config) {
 		watcher.SetEnabled(c.AutoRestart)
+		logEngine.SetContextLines(c.triageContextLines())
 	}
 
-	handler := HandlerWithAlerts(store, history, watcher, cfgStore, applyConfig, alerts{engine: engine, store: alertStore})
+	handler := HandlerWithAlerts(store, history, watcher, cfgStore, applyConfig, alerts{
+		engine:    engine,
+		store:     alertStore,
+		logEngine: logEngine,
+		logStore:  logRuleStore,
+	})
 	return pluginsdk.Serve(PluginInfo, handler, buildTools(store, watcher, cfgStore)...)
 }
 

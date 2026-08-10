@@ -1,9 +1,12 @@
 package infra
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,24 +116,117 @@ func (m *Manager) RestartService(name string) error {
 	return nil
 }
 
+// A container writes two separate outputs and nginx uses both: the access log goes to stdout
+// and the error log to stderr, so the two are readable apart without configuring a file.
+const (
+	LogStreamAll    = "all"
+	LogStreamStdout = "stdout"
+	LogStreamStderr = "stderr"
+)
+
 func (m *Manager) GetServiceLogs(name string, tail int) (string, error) {
+	return m.ServiceLogs(name, tail, LogStreamAll)
+}
+
+func (m *Manager) ServiceLogs(name string, tail int, stream string) (string, error) {
 	containerName := m.resolveContainerName(name)
 	if containerName == "" {
 		return "", fmt.Errorf("unknown service: %s", name)
 	}
 
-	args := []string{"logs"}
+	cmd := exec.Command("docker", dockerLogArgs(containerName, tail, false)...)
+	var out, errOut bytes.Buffer
+	switch stream {
+	case LogStreamStdout, LogStreamStderr:
+		cmd.Stdout, cmd.Stderr = &out, &errOut
+	default:
+		// One buffer for both keeps the two outputs in the order they were written.
+		cmd.Stdout, cmd.Stderr = &out, &out
+	}
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to get logs for %s: %w: %s", name, err, strings.TrimSpace(errOut.String()+out.String()))
+	}
+
+	if stream == LogStreamStderr {
+		return errOut.String(), nil
+	}
+	return out.String(), nil
+}
+
+// StreamServiceLogs follows an infrastructure container's output until ctx is done, handing
+// each line to sink as it is written.
+func (m *Manager) StreamServiceLogs(ctx context.Context, name string, tail int, stream string, sink func(string)) error {
+	containerName := m.resolveContainerName(name)
+	if containerName == "" {
+		return fmt.Errorf("unknown service: %s", name)
+	}
+
+	cmd := exec.CommandContext(ctx, "docker", dockerLogArgs(containerName, tail, true)...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	follow := func(r io.Reader) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			// Both outputs feed one viewer, so a line is handed over whole.
+			mu.Lock()
+			sink(line)
+			mu.Unlock()
+		}
+	}
+
+	if stream != LogStreamStderr {
+		wg.Add(1)
+		go follow(stdout)
+	} else {
+		go io.Copy(io.Discard, stdout)
+	}
+	if stream != LogStreamStdout {
+		wg.Add(1)
+		go follow(stderr)
+	} else {
+		go io.Copy(io.Discard, stderr)
+	}
+	wg.Wait()
+
+	// A cancelled follow is the viewer leaving, not a failure.
+	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		return err
+	}
+	return nil
+}
+
+func dockerLogArgs(containerName string, tail int, follow bool) []string {
+	args := []string{"logs", "--timestamps"}
+	if follow {
+		args = append(args, "--follow")
+	}
 	if tail > 0 {
 		args = append(args, "--tail", fmt.Sprintf("%d", tail))
 	}
-	args = append(args, containerName)
+	return append(args, containerName)
+}
 
-	cmd := exec.Command("docker", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("failed to get logs for %s: %w", name, err)
-	}
-	return string(output), nil
+// ContainerName is the container behind an infrastructure service, or "" if there is none.
+func (m *Manager) ContainerName(name string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.resolveContainerName(name)
 }
 
 func (m *Manager) resolveContainerName(name string) string {

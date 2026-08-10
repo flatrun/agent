@@ -104,6 +104,7 @@ type Server struct {
 	certRenewer        *ssl.Renewer
 	planStore          *plan.Store
 	aiProvider         ai.Provider
+	triageBudget       *triageBudget
 	aiSessions         *ai.SessionStore
 	aiAgents           *ai.AgentStore
 	mcpHandler         http.Handler
@@ -390,6 +391,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	} else if aiErr != ai.ErrDisabled {
 		log.Printf("Warning: failed to initialize AI provider: %v", aiErr)
 	}
+	s.triageBudget = newTriageBudget(cfg.AI.TriageDailyCap)
 
 	if backupManager != nil {
 		if err := s.applyBackupDestinations(); err != nil {
@@ -426,6 +428,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/system/terminal/interactive", s.systemTerminalInteractive)
 		api.GET("/deployments/:name/jobs/:jobId/stream", s.streamDeploymentJob)
 		api.GET("/deployments/:name/logs/stream", s.streamDeploymentLogs)
+		api.GET("/system/logs/stream", s.streamSystemLogs)
 
 		// Setup endpoints (public, gated by setup state)
 		setupGroup := api.Group("/setup")
@@ -469,6 +472,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/jobs/:jobId", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentJob)
 			protected.POST("/deployments/:name/actions/:actionId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.executeQuickAction)
 			protected.GET("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogs)
+			protected.DELETE("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteDeploymentLogs)
 			protected.GET("/deployments/:name/log-sources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogSources)
 			protected.PUT("/deployments/:name/log-sources", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentLogSources)
 			protected.GET("/deployments/:name/compose", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentCompose)
@@ -678,6 +682,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/infrastructure/:name/stop", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.stopInfraService)
 			protected.POST("/infrastructure/:name/restart", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.restartInfraService)
 			protected.GET("/infrastructure/:name/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getInfraServiceLogs)
+			protected.GET("/system/logs/sources", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.listSystemLogSources)
+			protected.GET("/system/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureRead), s.getSystemLogs)
+			protected.DELETE("/system/logs", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.deleteSystemLogs)
 			protected.POST("/infrastructure/migrate/:name", s.authMiddleware.RequirePermission(auth.PermInfrastructureWrite), s.migrateToInfrastructure)
 
 			// Registry endpoints
@@ -869,6 +876,10 @@ func (s *Server) setupRoutes() {
 
 		// Plugin-emitted notifications (authenticated by the per-run plugin token).
 		api.POST("/internal/notify/emit", s.emitNotification)
+		// Log lines and triage for built-in apps, on the same plugin token. Both keep one
+		// implementation in the agent rather than a second one inside every app.
+		api.GET("/internal/logs/stream", s.streamInternalLogs)
+		api.POST("/internal/ai/triage", s.triageLogIncident)
 
 		// Ingest endpoints (no auth - called by nginx Lua)
 		api.POST("/security/events/ingest", s.ingestSecurityEvent)
@@ -2505,6 +2516,14 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 		return
 	}
 
+	// A file source is one file the deployment writes, so there is nothing per-service to
+	// narrow it to; the filter only applies to container output.
+	services, err := s.resolveLogServices(name, c.Query("service"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	var logs string
 	if source.Type == models.LogSourceFile {
 		path, err := resolveLogFilePath(deployment.Path, source.Path)
@@ -2518,7 +2537,7 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 			return
 		}
 	} else {
-		logs, err = s.manager.GetDeploymentLogs(name, tail)
+		logs, err = s.manager.GetDeploymentLogs(name, tail, services...)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -2530,6 +2549,7 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"name":    name,
 		"source":  source.ID,
+		"service": strings.Join(services, ","),
 		"logs":    logs,
 		"records": parseLogRecords(logs),
 	})

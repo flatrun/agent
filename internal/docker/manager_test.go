@@ -407,10 +407,10 @@ func TestResolveServiceNotFound(t *testing.T) {
 
 func TestGetComposeServiceNames(t *testing.T) {
 	tests := []struct {
-		name           string
-		compose        string
-		wantNames      []string
-		wantErr        bool
+		name      string
+		compose   string
+		wantNames []string
+		wantErr   bool
 	}{
 		{
 			name: "single service",

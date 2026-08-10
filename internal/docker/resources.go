@@ -24,10 +24,10 @@ type ResourceUpdate struct {
 }
 
 type hostConfig struct {
-	Memory     int64  `json:"Memory"`
-	MemorySwap int64  `json:"MemorySwap"`
-	NanoCpus   int64  `json:"NanoCpus"`
-	CpuShares  int64  `json:"CpuShares"`
+	Memory        int64                `json:"Memory"`
+	MemorySwap    int64                `json:"MemorySwap"`
+	NanoCpus      int64                `json:"NanoCpus"`
+	CpuShares     int64                `json:"CpuShares"`
 	RestartPolicy restartPolicyInspect `json:"RestartPolicy"`
 }
 
