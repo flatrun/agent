@@ -21,14 +21,14 @@ type DatabaseSpec = models.DatabaseBackupSpec
 type HookSpec = models.BackupHookSpec
 
 type Backup struct {
-	ID             string       `json:"id"`
-	DeploymentName string       `json:"deployment_name"`
-	Status         BackupStatus `json:"status"`
-	Size           int64        `json:"size"`
+	ID             string       `json:"id" cli:"column"`
+	DeploymentName string       `json:"deployment_name" cli:"column"`
+	Status         BackupStatus `json:"status" cli:"column"`
+	Size           int64        `json:"size" cli:"column"`
 	Path           string       `json:"path"`
 	Components     []string     `json:"components"`
 	Error          string       `json:"error,omitempty"`
-	CreatedAt      time.Time    `json:"created_at"`
+	CreatedAt      time.Time    `json:"created_at" cli:"column"`
 	CompletedAt    *time.Time   `json:"completed_at,omitempty"`
 	ExpiresAt      *time.Time   `json:"expires_at,omitempty"`
 	// Locations lists where this backup exists: "local" and/or remote

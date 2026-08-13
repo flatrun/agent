@@ -418,6 +418,7 @@ func (s *Server) setupRoutes() {
 	api := s.router.Group("/api")
 	{
 		api.GET("/health", s.healthCheck)
+		api.GET("/openapi.json", s.getOpenAPISpec)
 		api.GET("/auth/status", s.authMiddleware.GetAuthStatus)
 		api.POST("/auth/login", s.authMiddleware.Login)
 		api.GET("/auth/validate", s.authMiddleware.ValidateToken)
@@ -975,9 +976,9 @@ func (s *Server) listDeployments(c *gin.Context) {
 		deployments = filtered
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"deployments": deployments,
-		"path":        s.manager.BasePath(),
+	c.JSON(http.StatusOK, DeploymentListResponse{
+		Deployments: deployments,
+		Path:        s.manager.BasePath(),
 	})
 }
 
@@ -5033,9 +5034,7 @@ func (s *Server) listCertificates(c *gin.Context) {
 
 	s.annotateCertificatesWithDeployment(certificates)
 
-	c.JSON(http.StatusOK, gin.H{
-		"certificates": certificates,
-	})
+	c.JSON(http.StatusOK, CertificateListResponse{Certificates: certificates})
 }
 
 func (s *Server) annotateCertificatesWithDeployment(certs []models.Certificate) {
