@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -69,6 +70,76 @@ func TestOpenAPISpecMatchesTheRoutes(t *testing.T) {
 	}
 	if string(fresh) != string(openAPISpec) {
 		t.Error("the committed spec is out of date; run: go run ./tools/genspec -o internal/api/openapi.json")
+	}
+}
+
+// A description a client cannot resolve is worse than none, since the client trusts it. These
+// are the faults a generator can introduce that still produce parseable JSON.
+func TestOpenAPISpecIsStructurallySound(t *testing.T) {
+	spec := loadSpec(t)
+
+	schemas, ok := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	if !ok {
+		t.Fatal("the spec describes no schemas")
+	}
+
+	var refs []string
+	var walk func(node any)
+	walk = func(node any) {
+		switch typed := node.(type) {
+		case map[string]any:
+			if ref, ok := typed["$ref"].(string); ok {
+				refs = append(refs, ref)
+			}
+			for _, value := range typed {
+				walk(value)
+			}
+		case []any:
+			for _, value := range typed {
+				walk(value)
+			}
+		}
+	}
+	walk(spec)
+
+	if len(refs) == 0 {
+		t.Fatal("no schema is referenced, so nothing describes a body")
+	}
+	for _, ref := range refs {
+		name := strings.TrimPrefix(ref, "#/components/schemas/")
+		if name == ref {
+			t.Errorf("%s does not point into the schemas", ref)
+			continue
+		}
+		if _, ok := schemas[name]; !ok {
+			t.Errorf("%s is referenced but not described", ref)
+		}
+	}
+
+	seen := map[string]string{}
+	for path, methods := range spec["paths"].(map[string]any) {
+		if !strings.HasPrefix(path, "/api/") {
+			t.Errorf("%s is not reachable: every route is served under /api", path)
+		}
+		for method, raw := range methods.(map[string]any) {
+			op, ok := raw.(map[string]any)
+			if !ok {
+				t.Errorf("%s %s is not an operation", method, path)
+				continue
+			}
+			id, _ := op["operationId"].(string)
+			if id == "" {
+				t.Errorf("%s %s has no operationId, which client generators key on", method, path)
+				continue
+			}
+			if previous, clash := seen[id]; clash {
+				t.Errorf("operationId %s is used by both %s and %s %s", id, previous, method, path)
+			}
+			seen[id] = method + " " + path
+			if op["responses"] == nil {
+				t.Errorf("%s %s describes no response", method, path)
+			}
+		}
 	}
 }
 
