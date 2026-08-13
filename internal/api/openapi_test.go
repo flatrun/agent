@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -140,6 +141,42 @@ func TestOpenAPISpecIsStructurallySound(t *testing.T) {
 				t.Errorf("%s %s describes no response", method, path)
 			}
 		}
+	}
+}
+
+// A permission is a string the agent checks, not a rewording of a constant's name, and a path
+// OpenAPI cannot express is a path no client can call.
+func TestOpenAPISpecNamesPermissionsAndPathsExactly(t *testing.T) {
+	spec := loadSpec(t)
+
+	for path, methods := range spec["paths"].(map[string]any) {
+		if strings.ContainsAny(path, "*:") {
+			t.Errorf("%s is not a path a client can build", path)
+		}
+		for _, raw := range methods.(map[string]any) {
+			op := raw.(map[string]any)
+			permission, ok := op["x-permission"].(string)
+			if !ok {
+				continue
+			}
+			resource, _, found := strings.Cut(permission, ":")
+			if !found || len(resource) < 3 {
+				t.Errorf("%s reads as a mangled permission on %s", permission, path)
+			}
+		}
+	}
+
+	// The wildcard segment carries the rest of the path, and a caller has to be told about it.
+	files, ok := spec["paths"].(map[string]any)["/api/deployments/{name}/files/{path}"].(map[string]any)
+	if !ok {
+		t.Fatal("the file endpoint is missing, so wildcards are not being translated")
+	}
+	var named []string
+	for _, param := range files["get"].(map[string]any)["parameters"].([]any) {
+		named = append(named, param.(map[string]any)["name"].(string))
+	}
+	if !slices.Contains(named, "path") {
+		t.Errorf("the wildcard is not described as a parameter, got %v", named)
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"go/types"
+	"reflect"
 	"strings"
 )
 
@@ -231,7 +232,9 @@ type fieldTag struct {
 
 func parseTag(raw string) fieldTag {
 	tag := fieldTag{}
-	jsonTag := structTag(raw, "json")
+	parsed := reflect.StructTag(raw)
+
+	jsonTag := parsed.Get("json")
 	if jsonTag == "-" {
 		tag.skip = true
 		return tag
@@ -239,53 +242,13 @@ func parseTag(raw string) fieldTag {
 	if jsonTag != "" {
 		tag.name = strings.Split(jsonTag, ",")[0]
 	}
-	if strings.Contains(structTag(raw, "binding"), "required") {
+	if strings.Contains(parsed.Get("binding"), "required") {
 		tag.required = true
 	}
-	if strings.TrimSpace(structTag(raw, "cli")) == "-" {
+	if strings.TrimSpace(parsed.Get("cli")) == "-" {
 		tag.hidden = true
 	}
 	return tag
-}
-
-// structTag reads one key out of a raw struct tag without reflect, which needs a live value.
-func structTag(raw, key string) string {
-	for raw != "" {
-		i := 0
-		for i < len(raw) && raw[i] == ' ' {
-			i++
-		}
-		raw = raw[i:]
-		if raw == "" {
-			break
-		}
-		i = 0
-		for i < len(raw) && raw[i] > ' ' && raw[i] != ':' && raw[i] != '"' {
-			i++
-		}
-		if i+1 >= len(raw) || raw[i] != ':' || raw[i+1] != '"' {
-			break
-		}
-		name := raw[:i]
-		raw = raw[i+1:]
-
-		i = 1
-		for i < len(raw) && raw[i] != '"' {
-			if raw[i] == '\\' {
-				i++
-			}
-			i++
-		}
-		if i >= len(raw) {
-			break
-		}
-		value := raw[1:i]
-		raw = raw[i+1:]
-		if name == key {
-			return value
-		}
-	}
-	return ""
 }
 
 func basicSchema(t *types.Basic) *schema {

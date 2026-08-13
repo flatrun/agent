@@ -482,7 +482,7 @@
         "tags": [
           "apikeys"
         ],
-        "x-permission": "a:pikeysdelete"
+        "x-permission": "apikeys:delete"
       },
       "get": {
         "operationId": "get-apikeys-by-id",
@@ -575,7 +575,7 @@
         "tags": [
           "apikeys"
         ],
-        "x-permission": "a:pikeyswrite"
+        "x-permission": "apikeys:write"
       }
     },
     "/api/apikeys/{id}/revoke": {
@@ -599,7 +599,7 @@
         "tags": [
           "apikeys"
         ],
-        "x-permission": "a:pikeysdelete"
+        "x-permission": "apikeys:delete"
       }
     },
     "/api/audit/cleanup": {
@@ -1600,9 +1600,19 @@
         "x-permission": "config:read"
       }
     },
-    "/api/config/*key": {
+    "/api/config/{key}": {
       "get": {
-        "operationId": "get-config-*key",
+        "operationId": "get-config-by-key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success"
@@ -1614,7 +1624,17 @@
         "x-permission": "config:read"
       },
       "put": {
-        "operationId": "put-config-*key",
+        "operationId": "put-config-by-key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4203,13 +4223,21 @@
         "x-permission": "deployments:read"
       }
     },
-    "/api/deployments/{name}/files/*path": {
+    "/api/deployments/{name}/files/{path}": {
       "delete": {
-        "operationId": "delete-deployments-by-name-files-*path",
+        "operationId": "delete-deployments-by-name-files-by-path",
         "parameters": [
           {
             "in": "path",
             "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
             "required": true,
             "schema": {
               "type": "string"
@@ -4227,11 +4255,19 @@
         "x-permission": "deployments:delete"
       },
       "get": {
-        "operationId": "get-deployments-by-name-files-*path",
+        "operationId": "get-deployments-by-name-files-by-path",
         "parameters": [
           {
             "in": "path",
             "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
             "required": true,
             "schema": {
               "type": "string"
@@ -4270,11 +4306,19 @@
         "x-permission": "deployments:read"
       },
       "post": {
-        "operationId": "post-deployments-by-name-files-*path",
+        "operationId": "post-deployments-by-name-files-by-path",
         "parameters": [
           {
             "in": "path",
             "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
             "required": true,
             "schema": {
               "type": "string"
@@ -4610,13 +4654,21 @@
         "x-permission": "deployments:write"
       }
     },
-    "/api/deployments/{name}/mkdir/*path": {
+    "/api/deployments/{name}/mkdir/{path}": {
       "post": {
-        "operationId": "post-deployments-by-name-mkdir-*path",
+        "operationId": "post-deployments-by-name-mkdir-by-path",
         "parameters": [
           {
             "in": "path",
             "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
             "required": true,
             "schema": {
               "type": "string"
@@ -4634,13 +4686,21 @@
         "x-permission": "deployments:write"
       }
     },
-    "/api/deployments/{name}/permissions/*path": {
+    "/api/deployments/{name}/permissions/{path}": {
       "put": {
-        "operationId": "put-deployments-by-name-permissions-*path",
+        "operationId": "put-deployments-by-name-permissions-by-path",
         "parameters": [
           {
             "in": "path",
             "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
             "required": true,
             "schema": {
               "type": "string"
@@ -5304,13 +5364,21 @@
         "x-permission": "deployments:write"
       }
     },
-    "/api/deployments/{name}/touch/*path": {
+    "/api/deployments/{name}/touch/{path}": {
       "post": {
-        "operationId": "post-deployments-by-name-touch-*path",
+        "operationId": "post-deployments-by-name-touch-by-path",
         "parameters": [
           {
             "in": "path",
             "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
             "required": true,
             "schema": {
               "type": "string"
@@ -8450,9 +8518,19 @@
         "x-permission": "system:files"
       }
     },
-    "/api/system/files/*path": {
+    "/api/system/files/{path}": {
       "delete": {
-        "operationId": "delete-system-files-*path",
+        "operationId": "delete-system-files-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success"
@@ -8464,8 +8542,16 @@
         "x-permission": "system:files"
       },
       "get": {
-        "operationId": "get-system-files-*path",
+        "operationId": "get-system-files-by-path",
         "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
           {
             "in": "query",
             "name": "info",
@@ -8499,7 +8585,17 @@
         "x-permission": "system:files"
       },
       "post": {
-        "operationId": "post-system-files-*path",
+        "operationId": "post-system-files-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success"
@@ -8576,9 +8672,19 @@
         "x-permission": "infrastructure:read"
       }
     },
-    "/api/system/mkdir/*path": {
+    "/api/system/mkdir/{path}": {
       "post": {
-        "operationId": "post-system-mkdir-*path",
+        "operationId": "post-system-mkdir-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success"
@@ -8590,9 +8696,19 @@
         "x-permission": "system:files"
       }
     },
-    "/api/system/permissions/*path": {
+    "/api/system/permissions/{path}": {
       "put": {
-        "operationId": "put-system-permissions-*path",
+        "operationId": "put-system-permissions-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -8727,9 +8843,19 @@
         }
       }
     },
-    "/api/system/touch/*path": {
+    "/api/system/touch/{path}": {
       "post": {
-        "operationId": "post-system-touch-*path",
+        "operationId": "post-system-touch-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success"

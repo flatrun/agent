@@ -13,6 +13,7 @@ import (
 	"go/types"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -103,6 +104,7 @@ func build(root string) (*openAPI, error) {
 	}
 
 	handlers := indexHandlers(pkgs)
+	permissions := indexPermissions(pkgs)
 	schemas := &schemaSet{byName: map[string]*schema{}, seen: map[string]bool{}}
 
 	spec := &openAPI{
@@ -123,7 +125,7 @@ func build(root string) (*openAPI, error) {
 			Responses:   map[string]response{"200": {Description: "Success"}},
 		}
 		if r.Permission != "" {
-			op.Extensions = map[string]any{"x-permission": permissionValue(r.Permission)}
+			op.Extensions = map[string]any{"x-permission": permissions[r.Permission]}
 		}
 		for _, param := range pathParams(r.Path) {
 			op.Parameters = append(op.Parameters, parameter{
@@ -167,7 +169,7 @@ func build(root string) (*openAPI, error) {
 }
 
 func readVersion(root string) string {
-	raw, err := os.ReadFile(root + "/VERSION")
+	raw, err := os.ReadFile(filepath.Join(root, "VERSION"))
 	if err != nil {
 		return "0.0.0"
 	}
@@ -334,7 +336,7 @@ func isGinH(t types.Type) bool {
 	if !ok {
 		return false
 	}
-	return named.Obj().Name() == "H" && strings.HasSuffix(named.Obj().Pkg().Path(), "gin")
+	return named.Obj().Name() == "H" && named.Obj().Pkg().Path() == "github.com/gin-gonic/gin"
 }
 
 // queryParams are the query keys a handler reads.
@@ -369,11 +371,19 @@ func queryParams(api *packages.Package, fn *ast.FuncDecl) []string {
 	return names
 }
 
+// A route parameter is either :name or *name, the second matching the rest of the path.
+func paramName(segment string) (string, bool) {
+	if strings.HasPrefix(segment, ":") || strings.HasPrefix(segment, "*") {
+		return segment[1:], true
+	}
+	return "", false
+}
+
 func pathParams(path string) []string {
 	var params []string
 	for _, segment := range strings.Split(strings.Trim(path, "/"), "/") {
-		if strings.HasPrefix(segment, ":") {
-			params = append(params, strings.TrimPrefix(segment, ":"))
+		if name, ok := paramName(segment); ok {
+			params = append(params, name)
 		}
 	}
 	return params
@@ -382,8 +392,8 @@ func pathParams(path string) []string {
 func openAPIPath(path string) string {
 	segments := strings.Split(path, "/")
 	for i, segment := range segments {
-		if strings.HasPrefix(segment, ":") {
-			segments[i] = "{" + strings.TrimPrefix(segment, ":") + "}"
+		if name, ok := paramName(segment); ok {
+			segments[i] = "{" + name + "}"
 		}
 	}
 	return "/api" + strings.Join(segments, "/")
@@ -403,8 +413,8 @@ func operationID(r route) string {
 		if segment == "" {
 			continue
 		}
-		if strings.HasPrefix(segment, ":") {
-			parts = append(parts, "by-"+strings.TrimPrefix(segment, ":"))
+		if name, ok := paramName(segment); ok {
+			parts = append(parts, "by-"+name)
 			continue
 		}
 		parts = append(parts, segment)
@@ -412,13 +422,22 @@ func operationID(r route) string {
 	return strings.Join(parts, "-")
 }
 
-func permissionValue(constant string) string {
-	// PermDeploymentsWrite reads as deployments:write.
-	trimmed := strings.TrimPrefix(constant, "Perm")
-	for i := 1; i < len(trimmed); i++ {
-		if trimmed[i] >= 'A' && trimmed[i] <= 'Z' {
-			return strings.ToLower(trimmed[:i]) + ":" + strings.ToLower(trimmed[i:])
+// indexPermissions reads what each Perm constant is actually set to, rather than deriving it from
+// the name: PermAPIKeysWrite is "apikeys:write", which no reading of the name produces.
+func indexPermissions(pkgs []*packages.Package) map[string]string {
+	values := map[string]string{}
+	for _, pkg := range pkgs {
+		if pkg.Types == nil {
+			continue
+		}
+		scope := pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			constant, ok := scope.Lookup(name).(*types.Const)
+			if !ok || !strings.HasPrefix(name, "Perm") || constant.Val() == nil {
+				continue
+			}
+			values[name] = strings.Trim(constant.Val().String(), `"`)
 		}
 	}
-	return strings.ToLower(trimmed)
+	return values
 }
