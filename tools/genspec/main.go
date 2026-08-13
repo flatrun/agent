@@ -1,9 +1,6 @@
-// Command genspec writes the agent's OpenAPI description by reading the agent.
-//
-// Nothing here is annotated: the routes come from the router, the request body of an endpoint
-// comes from whatever its handler binds, and the response comes from whatever typed value it
-// writes. A spec written that way cannot say something the code does not, which is the whole
-// reason for generating it rather than maintaining one by hand.
+// Command genspec writes the agent's OpenAPI description by reading the agent: routes from the
+// router, bodies from whatever each handler binds, responses from whatever typed value it writes.
+// Nothing is annotated, so the description cannot claim something the code does not do.
 //
 //	go run ./tools/genspec -o internal/api/openapi.json
 package main
@@ -177,8 +174,7 @@ func readVersion(root string) string {
 	return strings.TrimSpace(string(raw))
 }
 
-// readRoutes reads the registrations out of the router's source. The router is built at runtime
-// against a live host, so its table cannot be read by calling it.
+// readRoutes reads the registrations out of the source, since building the router needs a live host.
 func readRoutes(api *packages.Package) ([]route, error) {
 	var file string
 	for _, f := range api.GoFiles {
@@ -244,7 +240,6 @@ func skip(path string) bool {
 	return strings.HasSuffix(path, "/stream") || strings.HasSuffix(path, "/interactive")
 }
 
-// handler is a method that serves a route, with the package it came from so its types resolve.
 type handler struct {
 	decl *ast.FuncDecl
 	pkg  *packages.Package
@@ -259,8 +254,7 @@ func indexHandlers(pkgs []*packages.Package) map[string]*handler {
 				if !ok || fn.Recv == nil {
 					continue
 				}
-				// The API package wins a name it shares with another, since that is where a
-				// route's handler lives unless it is delegated.
+				// The API package wins a shared name: that is where a route's handler lives.
 				if existing, taken := handlers[fn.Name.Name]; taken &&
 					strings.HasSuffix(existing.pkg.PkgPath, "/internal/api") {
 					continue
@@ -272,7 +266,6 @@ func indexHandlers(pkgs []*packages.Package) map[string]*handler {
 	return handlers
 }
 
-// boundRequestType is the type a handler binds the request body into.
 func boundRequestType(api *packages.Package, fn *ast.FuncDecl) types.Type {
 	var found types.Type
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -302,8 +295,8 @@ func boundRequestType(api *packages.Package, fn *ast.FuncDecl) types.Type {
 	return found
 }
 
-// typedResponse is the type a handler writes on success, when it writes one rather than an
-// inline map. A handler answering with gin.H describes nothing, and is left undescribed.
+// typedResponse is what a handler writes on success. A handler answering with gin.H describes
+// nothing and is left undescribed.
 func typedResponse(api *packages.Package, fn *ast.FuncDecl) types.Type {
 	var found types.Type
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -344,8 +337,7 @@ func isGinH(t types.Type) bool {
 	return named.Obj().Name() == "H" && strings.HasSuffix(named.Obj().Pkg().Path(), "gin")
 }
 
-// queryParams are the query keys a handler reads, which is what makes them checkable by a caller
-// rather than something to be discovered by trial.
+// queryParams are the query keys a handler reads.
 func queryParams(api *packages.Package, fn *ast.FuncDecl) []string {
 	seen := map[string]bool{}
 	var names []string
@@ -421,7 +413,7 @@ func operationID(r route) string {
 }
 
 func permissionValue(constant string) string {
-	// PermDeploymentsWrite reads as deployments:write, which is the string the agent checks.
+	// PermDeploymentsWrite reads as deployments:write.
 	trimmed := strings.TrimPrefix(constant, "Perm")
 	for i := 1; i < len(trimmed); i++ {
 		if trimmed[i] >= 'A' && trimmed[i] <= 'Z' {

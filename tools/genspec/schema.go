@@ -32,7 +32,7 @@ type operation struct {
 	Extensions  map[string]any      `json:"-"`
 }
 
-// MarshalJSON writes the extensions inline, which is where OpenAPI expects x- keys.
+// MarshalJSON writes the extensions inline, where OpenAPI expects x- keys.
 func (o operation) MarshalJSON() ([]byte, error) {
 	type plain operation
 	encoded, err := json.Marshal(plain(o))
@@ -79,22 +79,16 @@ type schema struct {
 	Format     string             `json:"format,omitempty"`
 	Items      *schema            `json:"items,omitempty"`
 	Properties map[string]*schema `json:"properties,omitempty"`
-	// PropertyOrder is the order the fields are declared in, which is the order a caller reads
-	// them in and the order the CLI lays out columns. JSON objects have none of their own.
-	PropertyOrder []string `json:"x-property-order,omitempty"`
-	// Columns are the fields worth showing when a row of this is printed as a table, named on
-	// the type so the choice lives with the data rather than in every client.
-	Columns []string `json:"x-columns,omitempty"`
-	// Render is how an answer of this shape is presented: a list of rows, one thing, or a
-	// report of what happened. A client switches on this rather than on the resource.
+	// JSON objects have no order of their own, and declaration order is the order to read in.
+	PropertyOrder        []string `json:"x-property-order,omitempty"`
+	Columns              []string `json:"x-columns,omitempty"`
 	Render               string   `json:"x-render,omitempty"`
 	Required             []string `json:"required,omitempty"`
 	Description          string   `json:"description,omitempty"`
 	AdditionalProperties *schema  `json:"additionalProperties,omitempty"`
 }
 
-// schemaSet collects the named types the spec refers to, so a type used by twenty endpoints is
-// described once.
+// schemaSet describes a type once however many endpoints use it.
 type schemaSet struct {
 	byName map[string]*schema
 	seen   map[string]bool
@@ -313,8 +307,7 @@ func isByteSlice(t *types.Slice) bool {
 	return ok && basic.Kind() == types.Byte
 }
 
-// isScalar reports whether a value fits in a table cell. Anything nested is still in the answer,
-// it just cannot be a column.
+// isScalar reports whether a value fits in a table cell.
 func isScalar(s *schema) bool {
 	switch s.Type {
 	case "string", "integer", "number", "boolean":
@@ -323,8 +316,7 @@ func isScalar(s *schema) bool {
 	return false
 }
 
-// instantiatedName keeps generic shapes apart: a list of deployments and a list of backups are
-// the same type but not the same schema.
+// instantiatedName keeps a list of deployments and a list of backups as separate schemas.
 func instantiatedName(t *types.Named) string {
 	obj := t.Obj()
 	name := schemaName(obj.Pkg().Path(), obj.Name())
@@ -353,7 +345,6 @@ func argName(t types.Type) string {
 	return "Value"
 }
 
-// renderKind maps the shapes an answer can take onto what a client does with them.
 func renderKind(typeName string) string {
 	switch typeName {
 	case "List":
