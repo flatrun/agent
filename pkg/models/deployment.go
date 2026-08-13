@@ -3,10 +3,10 @@ package models
 import "time"
 
 type Deployment struct {
-	Name      string           `json:"name" cli:"column"`
-	Path      string           `json:"path"`
-	Status    string           `json:"status" cli:"column"`
-	CreatedAt time.Time        `json:"created_at" cli:"column"`
+	Name      string           `json:"name"`
+	Path      string           `json:"path" cli:"-"`
+	Status    string           `json:"status"`
+	CreatedAt time.Time        `json:"created_at"`
 	UpdatedAt time.Time        `json:"updated_at"`
 	Services  []Service        `json:"services,omitempty"`
 	Metadata  *ServiceMetadata `json:"metadata,omitempty"`

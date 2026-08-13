@@ -976,10 +976,7 @@ func (s *Server) listDeployments(c *gin.Context) {
 		deployments = filtered
 	}
 
-	c.JSON(http.StatusOK, DeploymentListResponse{
-		Deployments: deployments,
-		Path:        s.manager.BasePath(),
-	})
+	c.JSON(http.StatusOK, NewList(deployments, "deployments"))
 }
 
 func (s *Server) getDeployment(c *gin.Context) {
@@ -5034,7 +5031,7 @@ func (s *Server) listCertificates(c *gin.Context) {
 
 	s.annotateCertificatesWithDeployment(certificates)
 
-	c.JSON(http.StatusOK, CertificateListResponse{Certificates: certificates})
+	c.JSON(http.StatusOK, NewList(certificates, "certificates"))
 }
 
 func (s *Server) annotateCertificatesWithDeployment(certs []models.Certificate) {

@@ -139,6 +139,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "content"
+                ],
                 "x-property-order": [
                   "content"
                 ]
@@ -181,6 +184,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "dry_run"
+                ],
                 "x-property-order": [
                   "dry_run"
                 ]
@@ -273,6 +279,14 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "scope",
+                  "deployment",
+                  "auto_run",
+                  "message",
+                  "context",
+                  "seed"
+                ],
                 "x-property-order": [
                   "scope",
                   "deployment",
@@ -418,6 +432,10 @@
                 "x-property-order": [
                   "message",
                   "context"
+                ],
+                "x-columns": [
+                  "message",
+                  "context"
                 ]
               }
             }
@@ -530,6 +548,12 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "description",
+                  "role",
+                  "expires_in"
+                ],
                 "x-property-order": [
                   "name",
                   "description",
@@ -759,6 +783,16 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "format",
+                  "actor_id",
+                  "actor_type",
+                  "action",
+                  "resource_type",
+                  "start_time",
+                  "end_time",
+                  "limit"
+                ],
                 "x-property-order": [
                   "format",
                   "actor_id",
@@ -830,6 +864,11 @@
                   }
                 },
                 "x-property-order": [
+                  "api_key",
+                  "username",
+                  "password"
+                ],
+                "x-columns": [
                   "api_key",
                   "username",
                   "password"
@@ -942,7 +981,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/api.BackupListResponse"
+                  "$ref": "#/components/schemas/api.ListOfBackup"
                 }
               }
             },
@@ -1143,7 +1182,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/api.CertificateListResponse"
+                  "$ref": "#/components/schemas/api.ListOfCertificate"
                 }
               }
             },
@@ -1173,6 +1212,10 @@
                   "domain"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "domain",
+                  "deployment"
+                ],
                 "x-property-order": [
                   "domain",
                   "deployment"
@@ -1283,6 +1326,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "auto_renew"
+                ],
                 "x-property-order": [
                   "auto_renew"
                 ]
@@ -1356,6 +1402,11 @@
                   "peer_url"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "invite_token",
+                  "peer_url",
+                  "callback_url"
+                ],
                 "x-property-order": [
                   "invite_token",
                   "peer_url",
@@ -1693,6 +1744,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "command"
+                ],
                 "x-property-order": [
                   "command",
                   "args"
@@ -1945,6 +1999,15 @@
                   "password"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "registry_type_slug",
+                  "registry_url",
+                  "username",
+                  "password",
+                  "email",
+                  "is_default"
+                ],
                 "x-property-order": [
                   "name",
                   "registry_type_slug",
@@ -2052,6 +2115,14 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "registry_url",
+                  "username",
+                  "password",
+                  "email",
+                  "is_default"
+                ],
                 "x-property-order": [
                   "name",
                   "registry_url",
@@ -2233,6 +2304,16 @@
                   "db_name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "db_name"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2296,6 +2377,16 @@
                   "db_name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "db_name"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2390,6 +2481,18 @@
                   "target_database"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "target_username",
+                  "target_database",
+                  "target_host"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2456,6 +2559,17 @@
                   "query"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "database",
+                  "query"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2524,6 +2638,16 @@
                   "database"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "database"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2594,6 +2718,19 @@
                   "table"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "database",
+                  "table",
+                  "limit",
+                  "offset"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2668,6 +2805,17 @@
                   "table"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "database",
+                  "table"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2784,6 +2932,16 @@
                   "database"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "database"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2854,6 +3012,18 @@
                   "target_password"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "target_username",
+                  "target_password",
+                  "target_host"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2922,6 +3092,17 @@
                   "target_username"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "type",
+                  "host",
+                  "port",
+                  "username",
+                  "password",
+                  "database",
+                  "container",
+                  "target_username",
+                  "target_host"
+                ],
                 "x-property-order": [
                   "type",
                   "host",
@@ -2957,7 +3138,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/api.DeploymentListResponse"
+                  "$ref": "#/components/schemas/api.ListOfDeployment"
                 }
               }
             },
@@ -3046,6 +3227,15 @@
                       }
                     },
                     "type": "object",
+                    "x-columns": [
+                      "credential_id",
+                      "username",
+                      "password",
+                      "save_credential",
+                      "credential_name",
+                      "registry_type_slug",
+                      "registry_url"
+                    ],
                     "x-property-order": [
                       "credential_id",
                       "username",
@@ -3082,6 +3272,18 @@
                   "name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "image",
+                  "compose_content",
+                  "template_id",
+                  "container_port",
+                  "map_ports",
+                  "host_port",
+                  "auto_start",
+                  "use_shared_database",
+                  "existing_database_container"
+                ],
                 "x-property-order": [
                   "name",
                   "image",
@@ -3209,6 +3411,9 @@
                   "compose_content"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "compose_content"
+                ],
                 "x-property-order": [
                   "compose_content"
                 ]
@@ -3375,7 +3580,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/api.BackupListResponse"
+                  "$ref": "#/components/schemas/api.ListOfBackup"
                 }
               }
             },
@@ -3498,6 +3703,13 @@
                   "service_name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "source_path",
+                  "target_path",
+                  "service_name",
+                  "read_only",
+                  "selinux"
+                ],
                 "x-property-order": [
                   "source_path",
                   "target_path",
@@ -3555,6 +3767,11 @@
                   "service_name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "source_path",
+                  "target_path",
+                  "service_name"
+                ],
                 "x-property-order": [
                   "source_path",
                   "target_path",
@@ -3652,6 +3869,10 @@
                   "container_path"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "container_path",
+                  "host_path"
+                ],
                 "x-property-order": [
                   "container_path",
                   "host_path"
@@ -3704,6 +3925,12 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "action",
+                  "pull",
+                  "only_latest",
+                  "cleanup"
+                ],
                 "x-property-order": [
                   "action",
                   "pull",
@@ -4112,6 +4339,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "dry_run"
+                ],
                 "x-property-order": [
                   "dry_run"
                 ]
@@ -4430,6 +4660,9 @@
                   "mode"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "mode"
+                ],
                 "x-property-order": [
                   "mode"
                 ]
@@ -4509,6 +4742,10 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "only_latest",
+                  "cleanup"
+                ],
                 "x-property-order": [
                   "only_latest",
                   "cleanup"
@@ -4752,6 +4989,12 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "action",
+                  "force_recreate",
+                  "no_cache",
+                  "fresh_pull"
+                ],
                 "x-property-order": [
                   "action",
                   "force_recreate",
@@ -5193,6 +5436,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "dry_run"
+                ],
                 "x-property-order": [
                   "dry_run"
                 ]
@@ -5231,6 +5477,10 @@
                   "name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "credential_id"
+                ],
                 "x-property-order": [
                   "name",
                   "credential_id"
@@ -5491,6 +5741,10 @@
                   "name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "driver"
+                ],
                 "x-property-order": [
                   "name",
                   "driver",
@@ -5562,6 +5816,9 @@
                   "container"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "container"
+                ],
                 "x-property-order": [
                   "container"
                 ]
@@ -5607,6 +5864,9 @@
                   "container"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "container"
+                ],
                 "x-property-order": [
                   "container"
                 ]
@@ -5689,6 +5949,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "url"
+                ],
                 "x-property-order": [
                   "url"
                 ]
@@ -5761,6 +6024,10 @@
                   "deployment"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "deployment",
+                  "prefix"
+                ],
                 "x-property-order": [
                   "deployment",
                   "prefix"
@@ -5829,6 +6096,9 @@
                   "bucket"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "bucket"
+                ],
                 "x-property-order": [
                   "bucket"
                 ]
@@ -6047,6 +6317,9 @@
                   "target"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "target"
+                ],
                 "x-property-order": [
                   "target"
                 ]
@@ -6257,6 +6530,9 @@
                   "name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name"
+                ],
                 "x-property-order": [
                   "name",
                   "config"
@@ -6459,6 +6735,12 @@
                   "url_patterns"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "auth_type",
+                  "login_url",
+                  "docs_url"
+                ],
                 "x-property-order": [
                   "name",
                   "url_patterns",
@@ -6564,6 +6846,12 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "auth_type",
+                  "login_url",
+                  "docs_url"
+                ],
                 "x-property-order": [
                   "name",
                   "url_patterns",
@@ -6822,6 +7110,11 @@
                   "ip"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "ip",
+                  "reason",
+                  "duration"
+                ],
                 "x-property-order": [
                   "ip",
                   "reason",
@@ -6880,6 +7173,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "days"
+                ],
                 "x-property-order": [
                   "days"
                 ]
@@ -7157,6 +7453,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "enabled"
+                ],
                 "x-property-order": [
                   "enabled"
                 ]
@@ -7246,6 +7545,11 @@
                   "type"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "value",
+                  "type",
+                  "reason"
+                ],
                 "x-property-order": [
                   "value",
                   "type",
@@ -7364,6 +7668,15 @@
                       }
                     },
                     "type": "object",
+                    "x-columns": [
+                      "enabled",
+                      "image",
+                      "email",
+                      "staging",
+                      "certs_path",
+                      "webroot_path",
+                      "dns_provider"
+                    ],
                     "x-property-order": [
                       "enabled",
                       "image",
@@ -7390,6 +7703,12 @@
                       }
                     },
                     "type": "object",
+                    "x-columns": [
+                      "default_domain",
+                      "auto_subdomain",
+                      "auto_ssl",
+                      "subdomain_style"
+                    ],
                     "x-property-order": [
                       "default_domain",
                       "auto_subdomain",
@@ -7424,6 +7743,15 @@
                           }
                         },
                         "type": "object",
+                        "x-columns": [
+                          "enabled",
+                          "type",
+                          "container",
+                          "host",
+                          "port",
+                          "root_user",
+                          "root_password"
+                        ],
                         "x-property-order": [
                           "enabled",
                           "type",
@@ -7459,6 +7787,13 @@
                           }
                         },
                         "type": "object",
+                        "x-columns": [
+                          "enabled",
+                          "container",
+                          "host",
+                          "port",
+                          "password"
+                        ],
                         "x-property-order": [
                           "enabled",
                           "container",
@@ -7469,6 +7804,10 @@
                       }
                     },
                     "type": "object",
+                    "x-columns": [
+                      "default_proxy_network",
+                      "default_database_network"
+                    ],
                     "x-property-order": [
                       "default_proxy_network",
                       "default_database_network",
@@ -7501,6 +7840,15 @@
                       }
                     },
                     "type": "object",
+                    "x-columns": [
+                      "enabled",
+                      "image",
+                      "container_name",
+                      "config_path",
+                      "reload_command",
+                      "external",
+                      "reject_unknown_domains"
+                    ],
                     "x-property-order": [
                       "enabled",
                       "image",
@@ -7539,6 +7887,16 @@
                       }
                     },
                     "type": "object",
+                    "x-columns": [
+                      "enabled",
+                      "realtime_capture",
+                      "scan_interval",
+                      "retention_days",
+                      "rate_threshold",
+                      "auto_block_enabled",
+                      "auto_block_threshold",
+                      "auto_block_duration"
+                    ],
                     "x-property-order": [
                       "enabled",
                       "realtime_capture",
@@ -7636,6 +7994,21 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "enabled",
+                  "realtime_capture",
+                  "scan_interval",
+                  "retention_days",
+                  "rate_threshold",
+                  "auto_block_enabled",
+                  "auto_block_threshold",
+                  "auto_block_duration",
+                  "detection_window",
+                  "not_found_threshold",
+                  "auth_failure_threshold",
+                  "unique_paths_threshold",
+                  "repeated_hits_threshold"
+                ],
                 "x-property-order": [
                   "enabled",
                   "realtime_capture",
@@ -7800,6 +8173,11 @@
                   "token"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "username",
+                  "token"
+                ],
                 "x-property-order": [
                   "name",
                   "username",
@@ -7906,6 +8284,10 @@
                   "kind"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "kind"
+                ],
                 "x-property-order": [
                   "name",
                   "kind",
@@ -7978,6 +8360,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "name"
+                ],
                 "x-property-order": [
                   "name",
                   "data"
@@ -8221,6 +8606,9 @@
                   "mode"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "mode"
+                ],
                 "x-property-order": [
                   "mode"
                 ]
@@ -8530,6 +8918,9 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "days"
+                ],
                 "x-property-order": [
                   "days"
                 ]
@@ -8718,6 +9109,9 @@
                 },
                 "x-property-order": [
                   "email"
+                ],
+                "x-columns": [
+                  "email"
                 ]
               }
             }
@@ -8751,6 +9145,10 @@
                   }
                 },
                 "x-property-order": [
+                  "current_password",
+                  "new_password"
+                ],
+                "x-columns": [
                   "current_password",
                   "new_password"
                 ],
@@ -8850,6 +9248,12 @@
                   }
                 },
                 "type": "object",
+                "x-columns": [
+                  "username",
+                  "email",
+                  "role",
+                  "is_active"
+                ],
                 "x-property-order": [
                   "username",
                   "email",
@@ -8924,6 +9328,10 @@
                   "access_level"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "deployment_name",
+                  "access_level"
+                ],
                 "x-property-order": [
                   "deployment_name",
                   "access_level"
@@ -9008,6 +9416,9 @@
                   "access_level"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "access_level"
+                ],
                 "x-property-order": [
                   "access_level"
                 ]
@@ -9064,6 +9475,10 @@
                   "name"
                 ],
                 "type": "object",
+                "x-columns": [
+                  "name",
+                  "driver"
+                ],
                 "x-property-order": [
                   "name",
                   "driver",
@@ -9126,34 +9541,6 @@
   },
   "components": {
     "schemas": {
-      "api.BackupListResponse": {
-        "type": "object",
-        "properties": {
-          "backups": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/backup.Backup"
-            }
-          }
-        },
-        "x-property-order": [
-          "backups"
-        ]
-      },
-      "api.CertificateListResponse": {
-        "type": "object",
-        "properties": {
-          "certificates": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/models.Certificate"
-            }
-          }
-        },
-        "x-property-order": [
-          "certificates"
-        ]
-      },
       "api.ComposeGenerateRequest": {
         "type": "object",
         "properties": {
@@ -9187,6 +9574,13 @@
           "host_port",
           "mounts"
         ],
+        "x-columns": [
+          "name",
+          "image",
+          "container_port",
+          "map_ports",
+          "host_port"
+        ],
         "required": [
           "name"
         ]
@@ -9218,6 +9612,9 @@
           "ports",
           "mounts",
           "database"
+        ],
+        "x-columns": [
+          "content"
         ],
         "required": [
           "content"
@@ -9255,6 +9652,17 @@
           }
         },
         "x-property-order": [
+          "type",
+          "mode",
+          "name",
+          "user",
+          "password",
+          "root_password",
+          "existing_container",
+          "external_host",
+          "external_port"
+        ],
+        "x-columns": [
           "type",
           "mode",
           "name",
@@ -9315,24 +9723,19 @@
           "username",
           "password",
           "env_prefix"
-        ]
-      },
-      "api.DeploymentListResponse": {
-        "type": "object",
-        "properties": {
-          "deployments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/models.Deployment"
-            }
-          },
-          "path": {
-            "type": "string"
-          }
-        },
-        "x-property-order": [
-          "deployments",
-          "path"
+        ],
+        "x-columns": [
+          "alias",
+          "type",
+          "mode",
+          "service",
+          "existing_container",
+          "external_host",
+          "external_port",
+          "database_name",
+          "username",
+          "password",
+          "env_prefix"
         ]
       },
       "api.EnvVar": {
@@ -9346,6 +9749,10 @@
           }
         },
         "x-property-order": [
+          "key",
+          "value"
+        ],
+        "x-columns": [
           "key",
           "value"
         ]
@@ -9400,7 +9807,84 @@
           "error",
           "started_at",
           "finished_at"
+        ],
+        "x-columns": [
+          "id",
+          "deployment",
+          "service",
+          "action",
+          "status",
+          "output",
+          "error",
+          "started_at",
+          "finished_at"
         ]
+      },
+      "api.ListOfBackup": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/backup.Backup"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfCertificate": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/models.Certificate"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfDeployment": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/models.Deployment"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
       },
       "api.MountSelection": {
         "type": "object",
@@ -9416,6 +9900,11 @@
           }
         },
         "x-property-order": [
+          "id",
+          "enabled",
+          "type"
+        ],
+        "x-columns": [
           "id",
           "enabled",
           "type"
@@ -9442,6 +9931,12 @@
           "container",
           "host_port",
           "host"
+        ],
+        "x-columns": [
+          "container_port",
+          "container",
+          "host_port",
+          "host"
         ]
       },
       "api.agentUpdateRequest": {
@@ -9458,6 +9953,11 @@
           }
         },
         "x-property-order": [
+          "channel",
+          "force",
+          "restart"
+        ],
+        "x-columns": [
           "channel",
           "force",
           "restart"
@@ -9483,6 +9983,10 @@
           "intent",
           "sources",
           "question"
+        ],
+        "x-columns": [
+          "intent",
+          "question"
         ]
       },
       "api.assistSource": {
@@ -9502,6 +10006,12 @@
           }
         },
         "x-property-order": [
+          "type",
+          "label",
+          "content",
+          "tail"
+        ],
+        "x-columns": [
           "type",
           "label",
           "content",
@@ -9541,6 +10051,15 @@
           "credential_id",
           "username",
           "token"
+        ],
+        "x-columns": [
+          "type",
+          "ref",
+          "branch",
+          "subpath",
+          "credential_id",
+          "username",
+          "token"
         ]
       },
       "api.exchangeRequest": {
@@ -9564,6 +10083,12 @@
           "url",
           "api_key",
           "name"
+        ],
+        "x-columns": [
+          "invite_token",
+          "url",
+          "api_key",
+          "name"
         ]
       },
       "api.exchangeResponse": {
@@ -9577,6 +10102,10 @@
           }
         },
         "x-property-order": [
+          "api_key",
+          "name"
+        ],
+        "x-columns": [
           "api_key",
           "name"
         ]
@@ -9627,6 +10156,18 @@
           "region",
           "use_path_style"
         ],
+        "x-columns": [
+          "deployment",
+          "store_name",
+          "bucket",
+          "access_key_env",
+          "secret_key_env",
+          "access_key",
+          "secret_key",
+          "api_port",
+          "region",
+          "use_path_style"
+        ],
         "required": [
           "deployment"
         ]
@@ -9648,6 +10189,12 @@
           }
         },
         "x-property-order": [
+          "actor_id",
+          "actor_type",
+          "event_count",
+          "last_seen"
+        ],
+        "x-columns": [
           "actor_id",
           "actor_type",
           "event_count",
@@ -9744,6 +10291,29 @@
           "success",
           "error_message",
           "metadata"
+        ],
+        "x-columns": [
+          "id",
+          "event_id",
+          "timestamp",
+          "actor_type",
+          "actor_id",
+          "actor_name",
+          "api_key_prefix",
+          "action",
+          "method",
+          "path",
+          "resource_type",
+          "resource_id",
+          "client_ip",
+          "user_agent",
+          "request_id",
+          "request_body",
+          "response_status",
+          "response_time_ms",
+          "success",
+          "error_message",
+          "metadata"
         ]
       },
       "audit.AuditStats": {
@@ -9802,6 +10372,12 @@
           "failure_count",
           "top_actors",
           "events_trend"
+        ],
+        "x-columns": [
+          "total_events",
+          "last_24_hours",
+          "last_7_days",
+          "failure_count"
         ]
       },
       "audit.TrendPoint": {
@@ -9815,6 +10391,10 @@
           }
         },
         "x-property-order": [
+          "date",
+          "count"
+        ],
+        "x-columns": [
           "date",
           "count"
         ]
@@ -9883,7 +10463,10 @@
           "deployment_name",
           "status",
           "size",
-          "created_at"
+          "error",
+          "created_at",
+          "completed_at",
+          "expires_at"
         ]
       },
       "backup.CreateBackupRequest": {
@@ -9897,6 +10480,10 @@
           }
         },
         "x-property-order": [
+          "deployment_name",
+          "description"
+        ],
+        "x-columns": [
           "deployment_name",
           "description"
         ],
@@ -9924,6 +10511,13 @@
           }
         },
         "x-property-order": [
+          "backup_id",
+          "deployment_name",
+          "restore_data",
+          "restore_db",
+          "stop_first"
+        ],
+        "x-columns": [
           "backup_id",
           "deployment_name",
           "restore_data",
@@ -9966,6 +10560,12 @@
           }
         },
         "x-property-order": [
+          "name",
+          "online",
+          "data",
+          "error"
+        ],
+        "x-columns": [
           "name",
           "online",
           "data",
@@ -10021,6 +10621,19 @@
           "credential_id",
           "use_path_style",
           "enabled"
+        ],
+        "x-columns": [
+          "name",
+          "type",
+          "kind",
+          "deployment",
+          "endpoint",
+          "region",
+          "bucket",
+          "prefix",
+          "credential_id",
+          "use_path_style",
+          "enabled"
         ]
       },
       "dashboards.Dashboard": {
@@ -10043,6 +10656,10 @@
           "id",
           "name",
           "panels"
+        ],
+        "x-columns": [
+          "id",
+          "name"
         ]
       },
       "dashboards.Panel": {
@@ -10078,6 +10695,15 @@
           "deployment",
           "type",
           "width"
+        ],
+        "x-columns": [
+          "id",
+          "title",
+          "source",
+          "series",
+          "deployment",
+          "type",
+          "width"
         ]
       },
       "database.ColumnSchema": {
@@ -10105,6 +10731,13 @@
           "type",
           "nullable",
           "default",
+          "key",
+          "extra"
+        ],
+        "x-columns": [
+          "name",
+          "type",
+          "nullable",
           "key",
           "extra"
         ]
@@ -10142,6 +10775,15 @@
           "password",
           "database",
           "container"
+        ],
+        "x-columns": [
+          "type",
+          "host",
+          "port",
+          "username",
+          "password",
+          "database",
+          "container"
         ]
       },
       "database.IndexSchema": {
@@ -10166,6 +10808,11 @@
         "x-property-order": [
           "name",
           "columns",
+          "unique",
+          "primary"
+        ],
+        "x-columns": [
+          "name",
           "unique",
           "primary"
         ]
@@ -10193,6 +10840,9 @@
         "x-property-order": [
           "columns",
           "rows",
+          "count"
+        ],
+        "x-columns": [
           "count"
         ]
       },
@@ -10230,6 +10880,10 @@
         "x-property-order": [
           "running",
           "version"
+        ],
+        "x-columns": [
+          "running",
+          "version"
         ]
       },
       "docker.ResourceUpdate": {
@@ -10249,6 +10903,12 @@
           }
         },
         "x-property-order": [
+          "memory_limit",
+          "memory_swap",
+          "cpus",
+          "cpu_shares"
+        ],
+        "x-columns": [
           "memory_limit",
           "memory_swap",
           "cpus",
@@ -10282,6 +10942,15 @@
           }
         },
         "x-property-order": [
+          "name",
+          "path",
+          "size",
+          "is_dir",
+          "mod_time",
+          "permissions",
+          "child_count"
+        ],
+        "x-columns": [
           "name",
           "path",
           "size",
@@ -10342,6 +11011,16 @@
           "nginx_reloaded",
           "vhosts_updated",
           "errors"
+        ],
+        "x-columns": [
+          "success",
+          "agent_ip",
+          "agent_port",
+          "nginx_conf_written",
+          "lua_written",
+          "volumes_modified",
+          "container_recreated",
+          "nginx_reloaded"
         ]
       },
       "infra.SecurityHealthCheck": {
@@ -10379,6 +11058,9 @@
           "issues",
           "recommendations",
           "details"
+        ],
+        "x-columns": [
+          "status"
         ]
       },
       "models.BackupHookSpec": {
@@ -10395,6 +11077,11 @@
           }
         },
         "x-property-order": [
+          "service",
+          "command",
+          "timeout"
+        ],
+        "x-columns": [
           "service",
           "command",
           "timeout"
@@ -10489,9 +11176,12 @@
         "x-columns": [
           "domain",
           "issuer",
+          "not_before",
+          "not_after",
           "days_left",
           "status",
-          "auto_renew"
+          "auto_renew",
+          "deployment_id"
         ]
       },
       "models.ContainerBackupPath": {
@@ -10511,6 +11201,12 @@
           }
         },
         "x-property-order": [
+          "service",
+          "container_path",
+          "description",
+          "required"
+        ],
+        "x-columns": [
           "service",
           "container_path",
           "description",
@@ -10564,6 +11260,22 @@
           }
         },
         "x-property-order": [
+          "service",
+          "type",
+          "container",
+          "all_databases",
+          "host_env",
+          "port_env",
+          "user_env",
+          "password_env",
+          "database_env",
+          "host",
+          "port",
+          "user",
+          "password",
+          "database"
+        ],
+        "x-columns": [
           "service",
           "type",
           "container",
@@ -10633,6 +11345,20 @@
           "username",
           "env_prefix",
           "is_shared"
+        ],
+        "x-columns": [
+          "id",
+          "alias",
+          "type",
+          "mode",
+          "service",
+          "host",
+          "port",
+          "container",
+          "database_name",
+          "username",
+          "env_prefix",
+          "is_shared"
         ]
       },
       "models.Deployment": {
@@ -10677,7 +11403,8 @@
         "x-columns": [
           "name",
           "status",
-          "created_at"
+          "created_at",
+          "updated_at"
         ]
       },
       "models.DeploymentRateLimit": {
@@ -10697,6 +11424,12 @@
           }
         },
         "x-property-order": [
+          "path",
+          "rate",
+          "burst",
+          "enabled"
+        ],
+        "x-columns": [
           "path",
           "rate",
           "burst",
@@ -10733,6 +11466,9 @@
           "blocked_ips",
           "protected_paths",
           "rate_limits"
+        ],
+        "x-columns": [
+          "enabled"
         ]
       },
       "models.DomainConfig": {
@@ -10790,6 +11526,16 @@
           "route_only_aliases",
           "proxy_timeout",
           "static_cache"
+        ],
+        "x-columns": [
+          "id",
+          "service",
+          "container_port",
+          "domain",
+          "path_prefix",
+          "strip_prefix",
+          "proxy_timeout",
+          "static_cache"
         ]
       },
       "models.HealthCheckConfig": {
@@ -10803,6 +11549,10 @@
           }
         },
         "x-property-order": [
+          "path",
+          "interval"
+        ],
+        "x-columns": [
           "path",
           "interval"
         ]
@@ -10833,6 +11583,15 @@
           }
         },
         "x-property-order": [
+          "id",
+          "name",
+          "type",
+          "service",
+          "path",
+          "format",
+          "builtin"
+        ],
+        "x-columns": [
           "id",
           "name",
           "type",
@@ -10871,6 +11630,14 @@
           "container_port",
           "protocol",
           "proxy_type"
+        ],
+        "x-columns": [
+          "expose",
+          "domain",
+          "service",
+          "container_port",
+          "protocol",
+          "proxy_type"
         ]
       },
       "models.ProtectedCommandRule": {
@@ -10896,6 +11663,14 @@
           }
         },
         "x-property-order": [
+          "id",
+          "name",
+          "match",
+          "pattern",
+          "case_sensitive",
+          "description"
+        ],
+        "x-columns": [
           "id",
           "name",
           "match",
@@ -10931,6 +11706,10 @@
           "blocked_actions",
           "blocked_command_rules",
           "disable_terminal"
+        ],
+        "x-columns": [
+          "enabled",
+          "disable_terminal"
         ]
       },
       "models.ProtectedPath": {
@@ -10944,6 +11723,10 @@
           }
         },
         "x-property-order": [
+          "pattern",
+          "enabled"
+        ],
+        "x-columns": [
           "pattern",
           "enabled"
         ]
@@ -10977,6 +11760,14 @@
           "description",
           "icon",
           "service"
+        ],
+        "x-columns": [
+          "id",
+          "name",
+          "command",
+          "description",
+          "icon",
+          "service"
         ]
       },
       "models.SSLConfig": {
@@ -10990,6 +11781,10 @@
           }
         },
         "x-property-order": [
+          "enabled",
+          "auto_cert"
+        ],
+        "x-columns": [
           "enabled",
           "auto_cert"
         ]
@@ -11040,6 +11835,15 @@
           "health",
           "ports",
           "networks",
+          "is_primary",
+          "created_at"
+        ],
+        "x-columns": [
+          "name",
+          "container_id",
+          "image",
+          "status",
+          "health",
           "is_primary",
           "created_at"
         ]
@@ -11132,6 +11936,14 @@
           "service_credentials",
           "domains",
           "databases"
+        ],
+        "x-columns": [
+          "name",
+          "type",
+          "kind",
+          "primary_service",
+          "require_plan",
+          "credential_id"
         ]
       },
       "notify.Config": {
@@ -11169,6 +11981,12 @@
           "name",
           "url",
           "enabled"
+        ],
+        "x-columns": [
+          "id",
+          "name",
+          "url",
+          "enabled"
         ]
       },
       "scheduler.AgentTaskConfig": {
@@ -11179,6 +11997,9 @@
           }
         },
         "x-property-order": [
+          "agent_name"
+        ],
+        "x-columns": [
           "agent_name"
         ]
       },
@@ -11193,6 +12014,10 @@
           }
         },
         "x-property-order": [
+          "retention_count",
+          "storage_path"
+        ],
+        "x-columns": [
           "retention_count",
           "storage_path"
         ]
@@ -11211,6 +12036,11 @@
           }
         },
         "x-property-order": [
+          "service",
+          "command",
+          "timeout"
+        ],
+        "x-columns": [
           "service",
           "command",
           "timeout"
@@ -11245,6 +12075,13 @@
           "cron_expr",
           "enabled",
           "config"
+        ],
+        "x-columns": [
+          "name",
+          "type",
+          "deployment_name",
+          "cron_expr",
+          "enabled"
         ],
         "required": [
           "name",
@@ -11293,6 +12130,11 @@
           "cron_expr",
           "enabled",
           "config"
+        ],
+        "x-columns": [
+          "name",
+          "cron_expr",
+          "enabled"
         ]
       },
       "security.ProtectedRoute": {
@@ -11319,6 +12161,14 @@
           }
         },
         "x-property-order": [
+          "id",
+          "path_pattern",
+          "rate_limit",
+          "block_duration",
+          "enabled",
+          "created_at"
+        ],
+        "x-columns": [
           "id",
           "path_pattern",
           "rate_limit",
@@ -11355,6 +12205,12 @@
           "latest_version",
           "update_available",
           "releases"
+        ],
+        "x-columns": [
+          "current_version",
+          "channel",
+          "latest_version",
+          "update_available"
         ]
       },
       "updater.ReleaseInfo": {
@@ -11374,6 +12230,12 @@
           }
         },
         "x-property-order": [
+          "version",
+          "prerelease",
+          "published_at",
+          "changelog"
+        ],
+        "x-columns": [
           "version",
           "prerelease",
           "published_at",

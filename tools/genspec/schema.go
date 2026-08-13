@@ -84,7 +84,10 @@ type schema struct {
 	PropertyOrder []string `json:"x-property-order,omitempty"`
 	// Columns are the fields worth showing when a row of this is printed as a table, named on
 	// the type so the choice lives with the data rather than in every client.
-	Columns              []string `json:"x-columns,omitempty"`
+	Columns []string `json:"x-columns,omitempty"`
+	// Render is how an answer of this shape is presented: a list of rows, one thing, or a
+	// report of what happened. A client switches on this rather than on the resource.
+	Render               string   `json:"x-render,omitempty"`
 	Required             []string `json:"required,omitempty"`
 	Description          string   `json:"description,omitempty"`
 	AdditionalProperties *schema  `json:"additionalProperties,omitempty"`
@@ -154,13 +157,14 @@ func (s *schemaSet) named(t *types.Named, depth int) *schema {
 		return s.build(t.Underlying(), depth)
 	}
 
-	name := schemaName(obj.Pkg().Path(), obj.Name())
+	name := instantiatedName(t)
 	if !s.seen[name] {
 		s.seen[name] = true
 		// Registered before its fields are walked, so a type holding itself terminates.
 		s.byName[name] = &schema{Type: "object"}
 		built := s.structSchema(t.Underlying().(*types.Struct), depth+1)
 		if built != nil {
+			built.Render = renderKind(obj.Name())
 			s.byName[name] = built
 		}
 	}
@@ -200,7 +204,7 @@ func (s *schemaSet) fields(t *types.Struct, depth int, out *schema) {
 		if built == nil {
 			continue
 		}
-		if tag.column {
+		if isScalar(built) && !tag.hidden {
 			out.Columns = append(out.Columns, name)
 		}
 		out.Properties[name] = built
@@ -228,7 +232,7 @@ type fieldTag struct {
 	name     string
 	skip     bool
 	required bool
-	column   bool
+	hidden   bool
 }
 
 func parseTag(raw string) fieldTag {
@@ -244,8 +248,8 @@ func parseTag(raw string) fieldTag {
 	if strings.Contains(structTag(raw, "binding"), "required") {
 		tag.required = true
 	}
-	if strings.Contains(structTag(raw, "cli"), "column") {
-		tag.column = true
+	if strings.TrimSpace(structTag(raw, "cli")) == "-" {
+		tag.hidden = true
 	}
 	return tag
 }
@@ -307,6 +311,59 @@ func basicSchema(t *types.Basic) *schema {
 func isByteSlice(t *types.Slice) bool {
 	basic, ok := t.Elem().(*types.Basic)
 	return ok && basic.Kind() == types.Byte
+}
+
+// isScalar reports whether a value fits in a table cell. Anything nested is still in the answer,
+// it just cannot be a column.
+func isScalar(s *schema) bool {
+	switch s.Type {
+	case "string", "integer", "number", "boolean":
+		return true
+	}
+	return false
+}
+
+// instantiatedName keeps generic shapes apart: a list of deployments and a list of backups are
+// the same type but not the same schema.
+func instantiatedName(t *types.Named) string {
+	obj := t.Obj()
+	name := schemaName(obj.Pkg().Path(), obj.Name())
+	args := t.TypeArgs()
+	if args == nil || args.Len() == 0 {
+		return name
+	}
+	parts := make([]string, 0, args.Len())
+	for i := 0; i < args.Len(); i++ {
+		parts = append(parts, argName(args.At(i)))
+	}
+	return name + "Of" + strings.Join(parts, "And")
+}
+
+func argName(t types.Type) string {
+	switch typed := t.(type) {
+	case *types.Pointer:
+		return argName(typed.Elem())
+	case *types.Slice:
+		return argName(typed.Elem()) + "s"
+	case *types.Named:
+		return typed.Obj().Name()
+	case *types.Basic:
+		return strings.ToUpper(typed.Name()[:1]) + typed.Name()[1:]
+	}
+	return "Value"
+}
+
+// renderKind maps the shapes an answer can take onto what a client does with them.
+func renderKind(typeName string) string {
+	switch typeName {
+	case "List":
+		return "list"
+	case "Item":
+		return "item"
+	case "Message":
+		return "message"
+	}
+	return ""
 }
 
 func schemaName(pkgPath, name string) string {

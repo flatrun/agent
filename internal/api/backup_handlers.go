@@ -48,7 +48,7 @@ func (s *Server) listBackups(c *gin.Context) {
 		backups = filtered
 	}
 
-	c.JSON(http.StatusOK, BackupListResponse{Backups: backups})
+	c.JSON(http.StatusOK, NewList(backups, "backups"))
 }
 
 func (s *Server) getBackup(c *gin.Context) {
@@ -140,7 +140,7 @@ func (s *Server) listDeploymentBackups(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, BackupListResponse{Backups: backups})
+	c.JSON(http.StatusOK, NewList(backups, "backups"))
 }
 
 func (s *Server) deleteBackup(c *gin.Context) {

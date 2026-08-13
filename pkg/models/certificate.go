@@ -3,13 +3,13 @@ package models
 import "time"
 
 type Certificate struct {
-	Domain       string    `json:"domain" cli:"column"`
-	Issuer       string    `json:"issuer" cli:"column"`
+	Domain       string    `json:"domain"`
+	Issuer       string    `json:"issuer"`
 	NotBefore    time.Time `json:"not_before"`
 	NotAfter     time.Time `json:"not_after"`
-	DaysLeft     int       `json:"days_left" cli:"column"`
-	Status       string    `json:"status" cli:"column"`
-	Path         string    `json:"path"`
-	AutoRenew    bool      `json:"auto_renew" cli:"column"`
+	DaysLeft     int       `json:"days_left"`
+	Status       string    `json:"status"`
+	Path         string    `json:"path" cli:"-"`
+	AutoRenew    bool      `json:"auto_renew"`
 	DeploymentID string    `json:"deployment_id,omitempty"`
 }
