@@ -25,7 +25,7 @@ type Backup struct {
 	DeploymentName string       `json:"deployment_name"`
 	Status         BackupStatus `json:"status"`
 	Size           int64        `json:"size"`
-	Path           string       `json:"path"`
+	Path           string       `json:"path" cli:"-"`
 	Components     []string     `json:"components"`
 	Error          string       `json:"error,omitempty"`
 	CreatedAt      time.Time    `json:"created_at"`

@@ -4,7 +4,7 @@ import "time"
 
 type Deployment struct {
 	Name      string           `json:"name"`
-	Path      string           `json:"path"`
+	Path      string           `json:"path" cli:"-"`
 	Status    string           `json:"status"`
 	CreatedAt time.Time        `json:"created_at"`
 	UpdatedAt time.Time        `json:"updated_at"`

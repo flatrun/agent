@@ -9,7 +9,7 @@ type Certificate struct {
 	NotAfter     time.Time `json:"not_after"`
 	DaysLeft     int       `json:"days_left"`
 	Status       string    `json:"status"`
-	Path         string    `json:"path"`
+	Path         string    `json:"path" cli:"-"`
 	AutoRenew    bool      `json:"auto_renew"`
 	DeploymentID string    `json:"deployment_id,omitempty"`
 }
