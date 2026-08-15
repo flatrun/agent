@@ -14,7 +14,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,33 +46,10 @@ func main() {
 	}
 }
 
-// route is one registration read out of the router.
-type route struct {
-	Method     string
-	Path       string
-	Handler    string
-	Permission string
-	Group      string
+type handler struct {
+	decl *ast.FuncDecl
+	pkg  *packages.Package
 }
-
-// groupPrefix is what each router group prepends to the paths registered on it.
-var groupPrefix = map[string]string{
-	"api":          "",
-	"protected":    "",
-	"setupGroup":   "/setup",
-	"guarded":      "/setup",
-	"usersGroup":   "/users",
-	"apiKeysGroup": "/apikeys",
-	"dnsGroup":     "/dns",
-	"clusterGroup": "/cluster",
-}
-
-// Endpoints the agent's own components call, not part of the interface it offers.
-var skipPrefixes = []string{"/internal", "/_internal", "/security/events/ingest", "/traffic/ingest"}
-
-var routePattern = regexp.MustCompile(`\b(\w+)\.(GET|POST|PUT|DELETE|PATCH)\(\s*"([^"]+)"(.*)`)
-var permPattern = regexp.MustCompile(`auth\.(Perm\w+)`)
-var handlerPattern = regexp.MustCompile(`\.(\w+)\s*\)\s*$`)
 
 func build(root string) (*openAPI, error) {
 	cfg := &packages.Config{
@@ -98,12 +74,13 @@ func build(root string) (*openAPI, error) {
 		return nil, fmt.Errorf("no packages loaded from %s", root)
 	}
 
-	routes, err := readRoutes(api)
+	handlers := indexHandlers(pkgs)
+
+	routes, err := readRoutes(api, handlers)
 	if err != nil {
 		return nil, err
 	}
 
-	handlers := indexHandlers(pkgs)
 	permissions := indexPermissions(pkgs)
 	schemas := &schemaSet{byName: map[string]*schema{}, seen: map[string]bool{}}
 
@@ -143,9 +120,12 @@ func build(root string) (*openAPI, error) {
 					}
 				}
 			}
-			if returned := typedResponse(fn.pkg, fn.decl); returned != nil {
+			if returned, status := typedResponse(fn.pkg, fn.decl); returned != nil {
 				if ref := schemas.add(returned); ref != nil {
-					op.Responses["200"] = response{
+					if status != "200" {
+						delete(op.Responses, "200")
+					}
+					op.Responses[status] = response{
 						Description: "Success",
 						Content:     map[string]mediaType{"application/json": {Schema: ref}},
 					}
@@ -176,53 +156,65 @@ func readVersion(root string) string {
 	return strings.TrimSpace(string(raw))
 }
 
-// readRoutes reads the registrations out of the source, since building the router needs a live host.
-func readRoutes(api *packages.Package) ([]route, error) {
-	var file string
-	for _, f := range api.GoFiles {
-		if strings.HasSuffix(f, "server.go") {
-			file = f
-		}
-	}
-	if file == "" {
-		return nil, fmt.Errorf("server.go not found in internal/api")
-	}
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		return nil, err
+// route is one registration read out of the router.
+type route struct {
+	Method     string
+	Path       string
+	Handler    string
+	Permission string
+}
+
+// Endpoints the agent's own components call, not part of the interface it offers.
+var skipPrefixes = []string{"/internal", "/_internal", "/security/events/ingest", "/traffic/ingest"}
+
+var httpMethods = map[string]bool{"GET": true, "POST": true, "PUT": true, "DELETE": true, "PATCH": true}
+
+// readRoutes walks the router setup rather than matching its text, so a new group, a trailing
+// comment or two handlers sharing a method name cannot silently drop an endpoint.
+func readRoutes(api *packages.Package, handlers map[string]*handler) ([]route, error) {
+	setup := findFunc(api, "setupRoutes")
+	if setup == nil {
+		return nil, fmt.Errorf("setupRoutes not found in internal/api")
 	}
 
 	var routes []route
 	seen := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		match := routePattern.FindStringSubmatch(line)
-		if match == nil {
-			continue
-		}
-		group, method, path, rest := match[1], match[2], match[3], match[4]
-		prefix, known := groupPrefix[group]
-		if !known {
-			continue
-		}
-		full := prefix + path
-		if skip(full) {
-			continue
-		}
-		key := method + " " + full
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
 
-		r := route{Method: method, Path: full, Group: group}
-		if m := permPattern.FindStringSubmatch(rest); m != nil {
-			r.Permission = m[1]
+	// A function handed a router group registers routes under whatever prefix the caller gave
+	// it, so following the group into it is the only way those endpoints are seen at all.
+	var walk func(fn *ast.FuncDecl, prefixes map[string]string, depth int)
+	walk = func(fn *ast.FuncDecl, prefixes map[string]string, depth int) {
+		if fn == nil || depth > 4 {
+			return
 		}
-		if m := handlerPattern.FindStringSubmatch(strings.TrimSpace(rest)); m != nil {
-			r.Handler = m[1]
-		}
-		routes = append(routes, r)
+		ast.Inspect(fn, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.AssignStmt:
+				if name, prefix, ok := groupAssignment(node, prefixes); ok {
+					prefixes[name] = prefix
+				}
+			case *ast.CallExpr:
+				if r, ok := routeCall(api, node, prefixes); ok {
+					if skip(r.Path) {
+						return true
+					}
+					key := r.Method + " " + r.Path
+					if seen[key] {
+						return true
+					}
+					seen[key] = true
+					routes = append(routes, r)
+					return true
+				}
+				if target, bound, ok := delegated(api, handlers, node, prefixes); ok {
+					walk(target, bound, depth+1)
+				}
+			}
+			return true
+		})
 	}
+	walk(setup, map[string]string{}, 0)
+
 	sort.Slice(routes, func(i, j int) bool {
 		if routes[i].Path != routes[j].Path {
 			return routes[i].Path < routes[j].Path
@@ -232,19 +224,170 @@ func readRoutes(api *packages.Package) ([]route, error) {
 	return routes, nil
 }
 
+// delegated resolves a call that hands a router group to another function, returning that
+// function and the prefix its parameter stands for.
+func delegated(api *packages.Package, handlers map[string]*handler, call *ast.CallExpr, prefixes map[string]string) (*ast.FuncDecl, map[string]string, bool) {
+	index := -1
+	prefix := ""
+	for i, arg := range call.Args {
+		ident, ok := arg.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if known, ok := prefixes[ident.Name]; ok {
+			index, prefix = i, known
+			break
+		}
+	}
+	if index < 0 {
+		return nil, nil, false
+	}
+
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, nil, false
+	}
+	fn, ok := api.TypesInfo.Uses[sel.Sel].(*types.Func)
+	if !ok {
+		return nil, nil, false
+	}
+	signature, ok := fn.Type().(*types.Signature)
+	if !ok || signature.Recv() == nil {
+		return nil, nil, false
+	}
+	target, ok := handlers[receiverName(signature.Recv().Type())+"."+fn.Name()]
+	if !ok || target.decl.Type.Params == nil {
+		return nil, nil, false
+	}
+
+	// The name the group goes by inside the function it was handed to.
+	position := 0
+	for _, field := range target.decl.Type.Params.List {
+		for _, name := range field.Names {
+			if position == index {
+				return target.decl, map[string]string{name.Name: prefix}, true
+			}
+			position++
+		}
+	}
+	return nil, nil, false
+}
+
+// groupAssignment reads `x := parent.Group("/prefix")`, which is how every path prefix is set.
+func groupAssignment(stmt *ast.AssignStmt, prefixes map[string]string) (string, string, bool) {
+	if len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
+		return "", "", false
+	}
+	name, ok := stmt.Lhs[0].(*ast.Ident)
+	if !ok {
+		return "", "", false
+	}
+	call, ok := stmt.Rhs[0].(*ast.CallExpr)
+	if !ok {
+		return "", "", false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Group" || len(call.Args) == 0 {
+		return "", "", false
+	}
+	segment, ok := stringLiteral(call.Args[0])
+	if !ok {
+		return "", "", false
+	}
+	// The parent's own prefix, when the group hangs off another group.
+	parent := ""
+	if ident, ok := sel.X.(*ast.Ident); ok {
+		parent = prefixes[ident.Name]
+	}
+	return name.Name, parent + segment, true
+}
+
+// routeCall reads `group.GET("/path", middleware..., handler)`.
+func routeCall(api *packages.Package, call *ast.CallExpr, prefixes map[string]string) (route, bool) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !httpMethods[sel.Sel.Name] || len(call.Args) < 2 {
+		return route{}, false
+	}
+	group, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return route{}, false
+	}
+	prefix, known := prefixes[group.Name]
+	if !known {
+		return route{}, false
+	}
+	path, ok := stringLiteral(call.Args[0])
+	if !ok {
+		return route{}, false
+	}
+
+	r := route{Method: sel.Sel.Name, Path: prefix + path}
+	r.Handler = handlerKey(api, call.Args[len(call.Args)-1])
+	ast.Inspect(call, func(n ast.Node) bool {
+		if ident, ok := n.(*ast.Ident); ok && strings.HasPrefix(ident.Name, "Perm") {
+			r.Permission = ident.Name
+		}
+		return true
+	})
+	return r, true
+}
+
+// handlerKey names a handler by its receiver as well as its method, since Server and half a dozen
+// managers each have a Delete.
+func handlerKey(api *packages.Package, expr ast.Expr) string {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return ""
+	}
+	fn, ok := api.TypesInfo.Uses[sel.Sel].(*types.Func)
+	if !ok {
+		return sel.Sel.Name
+	}
+	signature, ok := fn.Type().(*types.Signature)
+	if !ok || signature.Recv() == nil {
+		return fn.Name()
+	}
+	return receiverName(signature.Recv().Type()) + "." + fn.Name()
+}
+
+func receiverName(t types.Type) string {
+	if pointer, ok := t.(*types.Pointer); ok {
+		t = pointer.Elem()
+	}
+	if named, ok := t.(*types.Named); ok {
+		return named.Obj().Name()
+	}
+	return ""
+}
+
+func findFunc(pkg *packages.Package, name string) *ast.FuncDecl {
+	for _, file := range pkg.Syntax {
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == name {
+				return fn
+			}
+		}
+	}
+	return nil
+}
+
+func stringLiteral(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok {
+		return "", false
+	}
+	value, err := strconv.Unquote(lit.Value)
+	return value, err == nil
+}
+
 func skip(path string) bool {
 	for _, prefix := range skipPrefixes {
-		if strings.HasPrefix(path, prefix) {
+		if strings.HasPrefix(strings.TrimPrefix(path, "/api"), prefix) {
 			return true
 		}
 	}
 	// A websocket carries no JSON body or response to describe.
 	return strings.HasSuffix(path, "/stream") || strings.HasSuffix(path, "/interactive")
-}
-
-type handler struct {
-	decl *ast.FuncDecl
-	pkg  *packages.Package
 }
 
 func indexHandlers(pkgs []*packages.Package) map[string]*handler {
@@ -253,15 +396,11 @@ func indexHandlers(pkgs []*packages.Package) map[string]*handler {
 		for _, file := range pkg.Syntax {
 			for _, decl := range file.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Recv == nil {
+				if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
 					continue
 				}
-				// The API package wins a shared name: that is where a route's handler lives.
-				if existing, taken := handlers[fn.Name.Name]; taken &&
-					strings.HasSuffix(existing.pkg.PkgPath, "/internal/api") {
-					continue
-				}
-				handlers[fn.Name.Name] = &handler{decl: fn, pkg: pkg}
+				recv := pkg.TypesInfo.TypeOf(fn.Recv.List[0].Type)
+				handlers[receiverName(recv)+"."+fn.Name.Name] = &handler{decl: fn, pkg: pkg}
 			}
 		}
 	}
@@ -285,11 +424,7 @@ func boundRequestType(api *packages.Package, fn *ast.FuncDecl) types.Type {
 		if len(call.Args) != 1 {
 			return true
 		}
-		unary, ok := call.Args[0].(*ast.UnaryExpr)
-		if !ok {
-			return true
-		}
-		if t := api.TypesInfo.TypeOf(unary.X); t != nil {
+		if t := api.TypesInfo.TypeOf(call.Args[0]); t != nil {
 			found = t
 		}
 		return false
@@ -299,8 +434,9 @@ func boundRequestType(api *packages.Package, fn *ast.FuncDecl) types.Type {
 
 // typedResponse is what a handler writes on success. A handler answering with gin.H describes
 // nothing and is left undescribed.
-func typedResponse(api *packages.Package, fn *ast.FuncDecl) types.Type {
+func typedResponse(api *packages.Package, fn *ast.FuncDecl) (types.Type, string) {
 	var found types.Type
+	code := "200"
 	ast.Inspect(fn, func(n ast.Node) bool {
 		if found != nil {
 			return false
@@ -313,27 +449,34 @@ func typedResponse(api *packages.Package, fn *ast.FuncDecl) types.Type {
 		if !ok || sel.Sel.Name != "JSON" {
 			return true
 		}
-		if !isStatusOK(call.Args[0]) {
+		status, ok := successStatus(call.Args[0])
+		if !ok {
 			return true
 		}
 		t := api.TypesInfo.TypeOf(call.Args[1])
 		if t == nil || isGinH(t) {
 			return true
 		}
-		found = t
+		found, code = t, status
 		return false
 	})
-	return found
+	return found, code
 }
 
-func isStatusOK(expr ast.Expr) bool {
+var successStatuses = map[string]string{"StatusOK": "200", "StatusCreated": "201", "StatusAccepted": "202"}
+
+func successStatus(expr ast.Expr) (string, bool) {
 	sel, ok := expr.(*ast.SelectorExpr)
-	return ok && sel.Sel.Name == "StatusOK"
+	if !ok {
+		return "", false
+	}
+	code, ok := successStatuses[sel.Sel.Name]
+	return code, ok
 }
 
 func isGinH(t types.Type) bool {
 	named, ok := t.(*types.Named)
-	if !ok {
+	if !ok || named.Obj().Pkg() == nil {
 		return false
 	}
 	return named.Obj().Name() == "H" && named.Obj().Pkg().Path() == "github.com/gin-gonic/gin"
@@ -396,11 +539,11 @@ func openAPIPath(path string) string {
 			segments[i] = "{" + name + "}"
 		}
 	}
-	return "/api" + strings.Join(segments, "/")
+	return strings.Join(segments, "/")
 }
 
 func familyOf(path string) string {
-	trimmed := strings.Trim(path, "/")
+	trimmed := strings.Trim(strings.TrimPrefix(path, "/api"), "/")
 	if trimmed == "" {
 		return "root"
 	}
@@ -409,7 +552,7 @@ func familyOf(path string) string {
 
 func operationID(r route) string {
 	parts := []string{strings.ToLower(r.Method)}
-	for _, segment := range strings.Split(strings.Trim(r.Path, "/"), "/") {
+	for _, segment := range strings.Split(strings.Trim(strings.TrimPrefix(r.Path, "/api"), "/"), "/") {
 		if segment == "" {
 			continue
 		}

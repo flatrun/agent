@@ -461,6 +461,89 @@
         }
       }
     },
+    "/api/apikeys": {
+      "get": {
+        "operationId": "get-apikeys",
+        "tags": [
+          "apikeys"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-apikeys",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "deployments": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "expires_in": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "permissions": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "user_id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "name",
+                  "description",
+                  "role",
+                  "expires_in",
+                  "user_id"
+                ],
+                "x-property-order": [
+                  "name",
+                  "description",
+                  "role",
+                  "permissions",
+                  "deployments",
+                  "expires_in",
+                  "user_id"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "apikeys"
+        ],
+        "x-permission": "apikeys:write"
+      }
+    },
     "/api/apikeys/{id}": {
       "delete": {
         "operationId": "delete-apikeys-by-id",
@@ -5451,6 +5534,206 @@
         "x-permission": "users:read"
       }
     },
+    "/api/dns/powerdns/disable": {
+      "post": {
+        "operationId": "post-dns-powerdns-disable",
+        "tags": [
+          "dns"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/dns/powerdns/enable": {
+      "post": {
+        "operationId": "post-dns-powerdns-enable",
+        "tags": [
+          "dns"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/dns/powerdns/restart": {
+      "post": {
+        "operationId": "post-dns-powerdns-restart",
+        "tags": [
+          "dns"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/dns/powerdns/status": {
+      "get": {
+        "operationId": "get-dns-powerdns-status",
+        "tags": [
+          "dns"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dns.PowerDNSStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dns/powerdns/zones": {
+      "get": {
+        "operationId": "get-dns-powerdns-zones",
+        "tags": [
+          "dns"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-dns-powerdns-zones",
+        "tags": [
+          "dns"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/dns.ZoneCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dns.Zone"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dns/powerdns/zones/{zoneId}": {
+      "delete": {
+        "operationId": "delete-dns-powerdns-zones-by-zoneId",
+        "tags": [
+          "dns"
+        ],
+        "parameters": [
+          {
+            "name": "zoneId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get-dns-powerdns-zones-by-zoneId",
+        "tags": [
+          "dns"
+        ],
+        "parameters": [
+          {
+            "name": "zoneId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dns.Zone"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patch-dns-powerdns-zones-by-zoneId",
+        "tags": [
+          "dns"
+        ],
+        "parameters": [
+          {
+            "name": "zoneId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "rrsets": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/dns.RRSet"
+                    }
+                  }
+                },
+                "x-property-order": [
+                  "rrsets"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dns.Zone"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/dns/providers": {
       "get": {
         "operationId": "get-dns-providers",
@@ -8168,14 +8451,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/dns.PowerDNSStatus"
-                }
-              }
-            }
+            "description": "Success"
           }
         }
       }
@@ -9203,6 +9479,79 @@
           "traffic"
         ],
         "x-permission": "traffic:read"
+      }
+    },
+    "/api/users": {
+      "get": {
+        "operationId": "get-users",
+        "tags": [
+          "users"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-users",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "permissions": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "username": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "password",
+                  "role"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "username",
+                  "email",
+                  "password",
+                  "role"
+                ],
+                "x-property-order": [
+                  "username",
+                  "email",
+                  "password",
+                  "role",
+                  "permissions"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "users"
+        ],
+        "x-permission": "users:write"
       }
     },
     "/api/users/me": {
@@ -11010,6 +11359,135 @@
         "x-columns": [
           "running",
           "version"
+        ]
+      },
+      "dns.RRSet": {
+        "type": "object",
+        "properties": {
+          "changetype": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/dns.Record"
+            }
+          },
+          "ttl": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "name",
+          "type",
+          "ttl",
+          "changetype",
+          "records"
+        ],
+        "x-columns": [
+          "name",
+          "type",
+          "ttl",
+          "changetype"
+        ]
+      },
+      "dns.Record": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          }
+        },
+        "x-property-order": [
+          "content",
+          "disabled"
+        ],
+        "x-columns": [
+          "content",
+          "disabled"
+        ]
+      },
+      "dns.Zone": {
+        "type": "object",
+        "properties": {
+          "dnssec": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "nameservers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rrsets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/dns.RRSet"
+            }
+          },
+          "serial": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "name",
+          "kind",
+          "serial",
+          "dnssec",
+          "rrsets",
+          "nameservers"
+        ],
+        "x-columns": [
+          "id",
+          "name",
+          "kind",
+          "serial",
+          "dnssec"
+        ]
+      },
+      "dns.ZoneCreate": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "nameservers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "x-property-order": [
+          "name",
+          "kind",
+          "nameservers"
+        ],
+        "x-columns": [
+          "name",
+          "kind"
         ]
       },
       "docker.ResourceUpdate": {

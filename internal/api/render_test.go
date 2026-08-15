@@ -39,3 +39,31 @@ func TestListWithoutALegacyNameAnswersOnlyTheShape(t *testing.T) {
 		t.Errorf("expected items and total only, got %v", decoded)
 	}
 }
+
+func TestListKeepsAFieldItUsedToAnswerWith(t *testing.T) {
+	raw, err := json.Marshal(NewList([]string{"shop"}, "deployments").Also("path", "/srv/apps"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["path"] != "/srv/apps" {
+		t.Errorf("path = %v", decoded["path"])
+	}
+}
+
+func TestListReportsWhatExistsNotWhatItHolds(t *testing.T) {
+	raw, err := json.Marshal(NewList([]string{"a", "b"}, "").OfTotal(97))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["total"] != float64(97) {
+		t.Errorf("a page of 2 out of 97 should report 97, got %v", decoded["total"])
+	}
+}

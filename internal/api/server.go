@@ -976,7 +976,7 @@ func (s *Server) listDeployments(c *gin.Context) {
 		deployments = filtered
 	}
 
-	c.JSON(http.StatusOK, NewList(deployments, "deployments"))
+	c.JSON(http.StatusOK, NewList(deployments, "deployments").Also("path", s.manager.BasePath()))
 }
 
 func (s *Server) getDeployment(c *gin.Context) {
