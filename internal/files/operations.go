@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -123,7 +124,15 @@ func movePath(source, destination string) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
 		return err
 	}
-	return os.Rename(source, destination)
+	if err := os.Rename(source, destination); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	if err := copyPath(source, destination); err != nil {
+		return err
+	}
+	return os.RemoveAll(source)
 }
 
 func listArchive(path string) ([]ArchiveEntry, error) {
