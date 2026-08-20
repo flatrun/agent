@@ -107,16 +107,16 @@ func build(root string) (*openAPI, error) {
 		for _, param := range pathParams(r.Path) {
 			op.Parameters = append(op.Parameters, parameter{
 				Name: param, In: "path", Required: true,
-				Schema: &schema{Type: "string"},
+				Schema: &schema{Type: "string"}, Rest: strings.Contains(r.Path, "*"+param),
 			})
 		}
 
 		if fn := handlers[r.Handler]; fn != nil {
-			if bound := boundRequestType(fn.pkg, fn.decl); bound != nil {
+			if bound, contentType := boundRequestType(fn.pkg, fn.decl); bound != nil {
 				if ref := schemas.add(bound); ref != nil {
 					op.RequestBody = &requestBody{
 						Required: true,
-						Content:  map[string]mediaType{"application/json": {Schema: ref}},
+						Content:  map[string]mediaType{contentType: {Schema: ref}},
 					}
 				}
 			}
@@ -407,8 +407,9 @@ func indexHandlers(pkgs []*packages.Package) map[string]*handler {
 	return handlers
 }
 
-func boundRequestType(api *packages.Package, fn *ast.FuncDecl) types.Type {
+func boundRequestType(api *packages.Package, fn *ast.FuncDecl) (types.Type, string) {
 	var found types.Type
+	contentType := "application/json"
 	ast.Inspect(fn, func(n ast.Node) bool {
 		if found != nil {
 			return false
@@ -418,8 +419,11 @@ func boundRequestType(api *packages.Package, fn *ast.FuncDecl) types.Type {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || (sel.Sel.Name != "ShouldBindJSON" && sel.Sel.Name != "BindJSON") {
+		if !ok || (sel.Sel.Name != "ShouldBindJSON" && sel.Sel.Name != "BindJSON" && sel.Sel.Name != "ShouldBind") {
 			return true
+		}
+		if sel.Sel.Name == "ShouldBind" {
+			contentType = "multipart/form-data"
 		}
 		if len(call.Args) != 1 {
 			return true
@@ -429,7 +433,7 @@ func boundRequestType(api *packages.Package, fn *ast.FuncDecl) types.Type {
 		}
 		return false
 	})
-	return found
+	return found, contentType
 }
 
 // typedResponse is what a handler writes on success. A handler answering with gin.H describes

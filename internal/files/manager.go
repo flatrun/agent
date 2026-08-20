@@ -54,7 +54,11 @@ func (m *Manager) resolvePath(deploymentName, relativePath string) (string, erro
 		return "", fmt.Errorf("failed to resolve full path: %w", err)
 	}
 
-	if !strings.HasPrefix(absFull, absBase) {
+	baseWithSeparator := absBase
+	if !strings.HasSuffix(baseWithSeparator, string(os.PathSeparator)) {
+		baseWithSeparator += string(os.PathSeparator)
+	}
+	if absFull != absBase && !strings.HasPrefix(absFull, baseWithSeparator) {
 		return "", fmt.Errorf("path traversal detected")
 	}
 
@@ -224,6 +228,9 @@ func (m *Manager) DeleteFile(deploymentName, relativePath string) error {
 	if filePath == basePath {
 		return fmt.Errorf("cannot delete deployment root directory")
 	}
+	if filePath == activeComposePath(basePath) {
+		return fmt.Errorf("cannot delete the active deployment compose file")
+	}
 
 	info, err := os.Stat(filePath)
 	if err != nil {
@@ -247,8 +254,87 @@ func (m *Manager) Rename(deploymentName, oldPath, newPath string) error {
 	if err != nil {
 		return err
 	}
+	basePath := m.getDeploymentPath(deploymentName)
+	if oldFilePath == activeComposePath(basePath) && !isRootComposePath(basePath, newFilePath) {
+		return fmt.Errorf("cannot move the active deployment compose file out of the deployment root")
+	}
 
-	return os.Rename(oldFilePath, newFilePath)
+	return movePath(oldFilePath, newFilePath)
+}
+
+func activeComposePath(deploymentPath string) string {
+	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+		path := filepath.Join(deploymentPath, name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	for _, pattern := range []string{"*compose*.yml", "*compose*.yaml"} {
+		matches, err := filepath.Glob(filepath.Join(deploymentPath, pattern))
+		if err == nil && len(matches) > 0 {
+			return matches[0]
+		}
+	}
+	return ""
+}
+
+func isRootComposePath(deploymentPath, path string) bool {
+	if filepath.Dir(path) != deploymentPath {
+		return false
+	}
+	name := filepath.Base(path)
+	if name == "docker-compose.yml" || name == "docker-compose.yaml" || name == "compose.yml" || name == "compose.yaml" {
+		return true
+	}
+	extension := filepath.Ext(name)
+	return strings.Contains(name, "compose") && (extension == ".yml" || extension == ".yaml")
+}
+
+func (m *Manager) Copy(deploymentName, sourcePath, destinationPath string) error {
+	source, err := m.resolvePath(deploymentName, sourcePath)
+	if err != nil {
+		return err
+	}
+	destination, err := m.resolvePath(deploymentName, destinationPath)
+	if err != nil {
+		return err
+	}
+	return copyPath(source, destination)
+}
+
+func (m *Manager) ListArchive(deploymentName, relativePath string) ([]ArchiveEntry, error) {
+	archivePath, err := m.resolvePath(deploymentName, relativePath)
+	if err != nil {
+		return nil, err
+	}
+	return listArchive(archivePath)
+}
+
+func (m *Manager) ExtractArchive(deploymentName, sourcePath, destinationPath string) error {
+	source, err := m.resolvePath(deploymentName, sourcePath)
+	if err != nil {
+		return err
+	}
+	destination, err := m.resolvePath(deploymentName, destinationPath)
+	if err != nil {
+		return err
+	}
+	return extractArchive(source, destination)
+}
+
+func (m *Manager) PushArchive(deploymentName, archivePath, destinationPath string, deleteMissing bool) (int, error) {
+	destination, err := m.resolvePath(deploymentName, destinationPath)
+	if err != nil {
+		return 0, err
+	}
+	root, err := m.resolvePath(deploymentName, "/")
+	if err != nil {
+		return 0, err
+	}
+	if deleteMissing && destination == root {
+		return 0, fmt.Errorf("delete sync cannot replace the deployment root")
+	}
+	return pushArchive(archivePath, destination, deleteMissing)
 }
 
 func (m *Manager) GetFileInfo(deploymentName, relativePath string) (*FileInfo, error) {
