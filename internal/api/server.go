@@ -640,6 +640,11 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/touch/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createDeploymentFile)
 			protected.PUT("/deployments/:name/permissions/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.chmodDeploymentFile)
 			protected.GET("/deployments/:name/files-info", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentFilesInfo)
+			protected.POST("/deployments/:name/copy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.copyDeploymentPath)
+			protected.POST("/deployments/:name/move", s.authMiddleware.RequirePermission(auth.PermDeploymentsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.moveDeploymentPath)
+			protected.GET("/deployments/:name/archive", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentArchive)
+			protected.POST("/deployments/:name/extract", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.extractDeploymentArchive)
+			protected.POST("/deployments/:name/files-push", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.pushDeploymentFiles)
 
 			// Container file endpoints: browse what a running service holds, and
 			// bring a path onto the host where the file endpoints above can edit it.
@@ -655,6 +660,10 @@ func (s *Server) setupRoutes() {
 			protected.POST("/system/mkdir/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.createSystemDir)
 			protected.POST("/system/touch/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.createSystemFile)
 			protected.PUT("/system/permissions/*path", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.chmodSystemFile)
+			protected.POST("/system/copy", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.copySystemPath)
+			protected.POST("/system/move", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.moveSystemPath)
+			protected.GET("/system/archive", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.listSystemArchive)
+			protected.POST("/system/extract", s.authMiddleware.RequirePermission(auth.PermSystemFiles), s.extractSystemArchive)
 
 			// Deployment environment endpoints
 			protected.GET("/deployments/:name/env", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentEnv)

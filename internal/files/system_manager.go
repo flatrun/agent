@@ -254,6 +254,50 @@ func (m *SystemManager) Chmod(relativePath string, mode os.FileMode) error {
 	return os.Chmod(target, mode)
 }
 
+func (m *SystemManager) Copy(sourcePath, destinationPath string) error {
+	source, err := m.resolvePath(sourcePath)
+	if err != nil {
+		return err
+	}
+	destination, err := m.resolvePath(destinationPath)
+	if err != nil {
+		return err
+	}
+	return copyPath(source, destination)
+}
+
+func (m *SystemManager) Move(sourcePath, destinationPath string) error {
+	source, err := m.resolvePath(sourcePath)
+	if err != nil {
+		return err
+	}
+	destination, err := m.resolvePath(destinationPath)
+	if err != nil {
+		return err
+	}
+	return movePath(source, destination)
+}
+
+func (m *SystemManager) ListArchive(relativePath string) ([]ArchiveEntry, error) {
+	archivePath, err := m.resolvePath(relativePath)
+	if err != nil {
+		return nil, err
+	}
+	return listArchive(archivePath)
+}
+
+func (m *SystemManager) ExtractArchive(sourcePath, destinationPath string) error {
+	source, err := m.resolvePath(sourcePath)
+	if err != nil {
+		return err
+	}
+	destination, err := m.resolvePath(destinationPath)
+	if err != nil {
+		return err
+	}
+	return extractArchive(source, destination)
+}
+
 // GetDiskUsage returns the total byte size of regular files under relativePath.
 // The walk only traverses paths that resolve inside the root. Callers should be
 // aware that walking the entire root (e.g. "/") can be very slow.

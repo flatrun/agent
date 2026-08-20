@@ -3,7 +3,7 @@
   "info": {
     "title": "FlatRun Agent API",
     "description": "Generated from the agent's routes and the types its handlers bind and return.",
-    "version": "0.4.0-beta.3"
+    "version": "0.4.0-beta.4"
   },
   "paths": {
     "/api/agent/update": {
@@ -1693,7 +1693,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
@@ -1715,7 +1716,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "requestBody": {
@@ -3602,6 +3604,44 @@
         "x-permission": "deployments:read"
       }
     },
+    "/api/deployments/{name}/archive": {
+      "get": {
+        "operationId": "get-deployments-by-name-archive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfArchiveEntry"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
     "/api/deployments/{name}/backup-config": {
       "get": {
         "operationId": "get-deployments-by-name-backup-config",
@@ -3996,6 +4036,47 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/deployments/{name}/copy": {
+      "post": {
+        "operationId": "post-deployments-by-name-copy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/deploy": {
       "post": {
         "operationId": "post-deployments-by-name-deploy",
@@ -4251,6 +4332,47 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/deployments/{name}/extract": {
+      "post": {
+        "operationId": "post-deployments-by-name-extract",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/files": {
       "get": {
         "operationId": "get-deployments-by-name-files",
@@ -4306,6 +4428,47 @@
         "x-permission": "deployments:read"
       }
     },
+    "/api/deployments/{name}/files-push": {
+      "post": {
+        "operationId": "post-deployments-by-name-files-push",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/api.filePushRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ItemOffilePushResult"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/files/{path}": {
       "delete": {
         "operationId": "delete-deployments-by-name-files-by-path",
@@ -4324,7 +4487,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
@@ -4354,7 +4518,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           },
           {
             "in": "query",
@@ -4405,7 +4570,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
@@ -4755,7 +4921,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
@@ -4767,6 +4934,47 @@
           "deployments"
         ],
         "x-permission": "deployments:write"
+      }
+    },
+    "/api/deployments/{name}/move": {
+      "post": {
+        "operationId": "post-deployments-by-name-move",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:delete"
       }
     },
     "/api/deployments/{name}/permissions/{path}": {
@@ -4787,7 +4995,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "requestBody": {
@@ -5465,7 +5674,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
@@ -8741,6 +8951,98 @@
         "x-permission": "deployments:read"
       }
     },
+    "/api/system/archive": {
+      "get": {
+        "operationId": "get-system-archive",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfArchiveEntry"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "system"
+        ],
+        "x-permission": "system:files"
+      }
+    },
+    "/api/system/copy": {
+      "post": {
+        "operationId": "post-system-copy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "system"
+        ],
+        "x-permission": "system:files"
+      }
+    },
+    "/api/system/extract": {
+      "post": {
+        "operationId": "post-system-extract",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "system"
+        ],
+        "x-permission": "system:files"
+      }
+    },
     "/api/system/files": {
       "get": {
         "operationId": "get-system-files",
@@ -8804,7 +9106,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
@@ -8826,7 +9129,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           },
           {
             "in": "query",
@@ -8869,7 +9173,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
@@ -8958,11 +9263,43 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
           "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "system"
+        ],
+        "x-permission": "system:files"
+      }
+    },
+    "/api/system/move": {
+      "post": {
+        "operationId": "post-system-move",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
             "description": "Success"
           }
         },
@@ -8982,7 +9319,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "requestBody": {
@@ -9129,7 +9467,8 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
+            },
+            "x-rest-of-path": true
           }
         ],
         "responses": {
@@ -10232,6 +10571,18 @@
           "value"
         ]
       },
+      "api.ItemOffilePushResult": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/api.filePushResult"
+          }
+        },
+        "x-property-order": [
+          "item"
+        ],
+        "x-render": "item"
+      },
       "api.JobSnapshot": {
         "type": "object",
         "properties": {
@@ -10294,6 +10645,28 @@
           "started_at",
           "finished_at"
         ]
+      },
+      "api.ListOfArchiveEntry": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/files.ArchiveEntry"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
       },
       "api.ListOfBackup": {
         "type": "object",
@@ -10360,6 +10733,21 @@
           "total"
         ],
         "x-render": "list"
+      },
+      "api.Message": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "message"
+        ],
+        "x-columns": [
+          "message"
+        ],
+        "x-render": "message"
       },
       "api.MountSelection": {
         "type": "object",
@@ -10583,6 +10971,87 @@
         "x-columns": [
           "api_key",
           "name"
+        ]
+      },
+      "api.fileOperationRequest": {
+        "type": "object",
+        "properties": {
+          "destination_path": {
+            "type": "string"
+          },
+          "source_path": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "source_path",
+          "destination_path"
+        ],
+        "x-columns": [
+          "source_path",
+          "destination_path"
+        ],
+        "required": [
+          "source_path",
+          "destination_path"
+        ]
+      },
+      "api.filePushRequest": {
+        "type": "object",
+        "properties": {
+          "archive": {
+            "type": "string",
+            "format": "binary"
+          },
+          "delete": {
+            "type": "boolean"
+          },
+          "destination": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "archive",
+          "destination",
+          "delete"
+        ],
+        "x-columns": [
+          "archive",
+          "destination",
+          "delete"
+        ],
+        "required": [
+          "archive",
+          "destination"
+        ]
+      },
+      "api.filePushResult": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "files": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "message",
+          "destination",
+          "deleted",
+          "files"
+        ],
+        "x-columns": [
+          "message",
+          "destination",
+          "deleted",
+          "files"
         ]
       },
       "api.provisionManagedObjectStoreRequest": {
@@ -11517,6 +11986,36 @@
           "memory_swap",
           "cpus",
           "cpu_shares"
+        ]
+      },
+      "files.ArchiveEntry": {
+        "type": "object",
+        "properties": {
+          "is_dir": {
+            "type": "boolean"
+          },
+          "mod_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "name",
+          "size",
+          "is_dir",
+          "mod_time"
+        ],
+        "x-columns": [
+          "name",
+          "size",
+          "is_dir",
+          "mod_time"
         ]
       },
       "files.FileInfo": {

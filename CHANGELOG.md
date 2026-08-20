@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0-beta.4] - 2026-08-20
+
+### Added
+- File and folder copy, move, archive browsing, and extraction
+- Single-request deployment content pushes with optional destination cleanup
+
+### Fixed
+- Active deployment compose files cannot be moved out of the deployment root or deleted
+
 ## [0.4.0-beta.3] - 2026-08-05
 
 Third beta of the Albacore release, focused on the logs pillar of observability and a network-alert correctness fix.

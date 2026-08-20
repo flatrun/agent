@@ -58,6 +58,7 @@ type parameter struct {
 	In       string  `json:"in"`
 	Required bool    `json:"required,omitempty"`
 	Schema   *schema `json:"schema,omitempty"`
+	Rest     bool    `json:"x-rest-of-path,omitempty"`
 }
 
 type requestBody struct {
@@ -146,6 +147,9 @@ func (s *schemaSet) named(t *types.Named, depth int) *schema {
 	}
 	if obj.Pkg().Path() == "time" && obj.Name() == "Duration" {
 		return &schema{Type: "string", Description: "Duration, such as 30s or 1h0m0s"}
+	}
+	if obj.Pkg().Path() == "mime/multipart" && obj.Name() == "FileHeader" {
+		return &schema{Type: "string", Format: "binary"}
 	}
 
 	if _, ok := t.Underlying().(*types.Struct); !ok {
