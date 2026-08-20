@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title></head>
+<body style="margin:0;background:#f8fafc;color:#1e293b;font-family:Ubuntu,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8fafc;padding:32px 16px;"><tr><td align="center">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+{{template "header" .}}
+<tr><td style="padding:24px 28px;">
+{{if .Status}}<span style="display:inline-block;margin-bottom:12px;padding:4px 10px;border-radius:999px;background:{{.AccentSoft}};color:{{.Accent}};font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">{{.Status}}</span>{{end}}
+{{if .Title}}<h1 style="margin:0 0 12px;font-size:18px;line-height:1.35;font-weight:600;color:#1f2937;">{{.Title}}</h1>{{end}}
+<div style="font-size:13px;line-height:1.6;color:#4b5563;white-space:pre-wrap;">{{.Message}}</div>
+{{range .Panels}}<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;"><tr><td style="padding:18px;">
+{{if .Title}}<div style="font-size:13px;font-weight:700;color:#6b7280;">{{.Title}}</div>{{end}}
+{{if .Value}}<div style="margin-top:4px;font-size:26px;font-weight:700;color:#111827;">{{.Value}}</div>{{end}}
+{{if .Detail}}<div style="margin-top:8px;font-size:14px;line-height:1.5;color:#4b5563;">{{.Detail}}</div>{{end}}
+{{if .ImageURL}}<img src="{{.ImageURL}}" alt="{{.Title}}" width="100%" style="display:block;margin-top:16px;max-width:100%;height:auto;border-radius:8px;">{{end}}
+</td></tr></table>{{end}}
+</td></tr>{{template "footer" .}}
+</table></td></tr></table></body></html>

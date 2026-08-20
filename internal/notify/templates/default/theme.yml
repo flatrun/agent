@@ -1,0 +1,11 @@
+schema_version: 1
+id: default
+templates:
+  main: notification.html
+  partials:
+    - header.html
+    - footer.html
+assets:
+  logo:
+    path: assets/logo.png
+    mime: image/png

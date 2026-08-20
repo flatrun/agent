@@ -7,11 +7,16 @@ package notify
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/nicholas-fedor/shoutrrr"
+	"github.com/nicholas-fedor/shoutrrr/pkg/router"
+	"github.com/nicholas-fedor/shoutrrr/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -55,7 +60,6 @@ type Service struct {
 func NewService(basePath string) *Service {
 	return &Service{
 		path: filepath.Join(basePath, ".flatrun", "notifications.yml"),
-		send: shoutrrr.Send,
 	}
 }
 
@@ -106,7 +110,7 @@ func (s *Service) Test(url string) error {
 	if url == "" {
 		return fmt.Errorf("no target url")
 	}
-	return s.send(url, "FlatRun test notification: your target is configured correctly.")
+	return s.deliver(url, Notification{Title: "FlatRun test notification", Message: "Your target is configured correctly."})
 }
 
 // Notify delivers title + message to every enabled target. It returns the first delivery
@@ -118,11 +122,11 @@ func (s *Service) Notify(title, message string) error {
 // NotifyTargets delivers to a chosen subset of targets by id. An empty list
 // means every enabled target, which is what plain Notify does.
 func (s *Service) NotifyTargets(title, message string, ids []string) error {
+	return s.NotifyNotificationTargets(Notification{Title: title, Message: message}, ids)
+}
+
+func (s *Service) NotifyNotificationTargets(notification Notification, ids []string) error {
 	cfg := s.Load()
-	body := message
-	if title != "" {
-		body = title + "\n\n" + message
-	}
 	var only map[string]bool
 	if len(ids) > 0 {
 		only = make(map[string]bool, len(ids))
@@ -138,9 +142,64 @@ func (s *Service) NotifyTargets(title, message string, ids []string) error {
 		if only != nil && !only[t.ID] {
 			continue
 		}
-		if err := s.send(t.URL, body); err != nil && firstErr == nil {
+		if err := s.deliver(t.URL, notification); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
+}
+
+func (s *Service) deliver(rawURL string, notification Notification) error {
+	targetURL, body, err := formatDelivery(rawURL, notification)
+	if err != nil {
+		return err
+	}
+	if s.send == nil {
+		return sendFormatted(targetURL, notification)
+	}
+	return s.send(targetURL, body)
+}
+
+func sendFormatted(rawURL string, notification Notification) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "smtp" {
+		return shoutrrr.Send(rawURL, plainMessage(notification))
+	}
+	service, err := (&router.ServiceRouter{}).Locate(rawURL)
+	if err != nil {
+		return err
+	}
+	htmlBody, err := RenderEmail(notification)
+	if err != nil {
+		return err
+	}
+	if err := service.SetTemplateString("plain", `{{printf "%s" `+strconv.Quote(plainMessage(notification))+`}}`); err != nil {
+		return err
+	}
+	if err := service.SetTemplateString("HTML", `{{printf "%s" `+strconv.Quote(htmlBody)+`}}`); err != nil {
+		return err
+	}
+	return service.Send("", &types.Params{})
+}
+
+func plainMessage(notification Notification) string {
+	var body strings.Builder
+	if notification.Title != "" {
+		body.WriteString(notification.Title)
+		body.WriteString("\n\n")
+	}
+	body.WriteString(notification.Message)
+	for _, panel := range notification.Panels {
+		body.WriteString("\n\n")
+		body.WriteString(panel.Title)
+		if panel.Value != "" {
+			body.WriteString(": ")
+			body.WriteString(panel.Value)
+		}
+		if panel.Detail != "" {
+			body.WriteString("\n")
+			body.WriteString(panel.Detail)
+		}
+	}
+	return body.String()
 }
