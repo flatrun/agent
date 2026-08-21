@@ -712,16 +712,55 @@ func (m *Manager) EnsureBaseNginxConfig() error {
 	if err != nil {
 		return err
 	}
-	if string(nginxConf) == string(existing) {
-		return nil
-	}
-
-	if err := os.WriteFile(confPath, nginxConf, 0644); err != nil {
+	changed, err := writeFileIfChanged(confPath, nginxConf, 0644)
+	if err != nil {
 		return err
 	}
-	// Best-effort reload: the rewritten config also takes effect on the next nginx
-	// restart, so a reload failure here (e.g. container not yet ready) is not fatal.
-	_ = m.reloadNginx()
+
+	if luaEnabled {
+		luaDir := filepath.Join(nginxDir, "lua")
+		if err := os.MkdirAll(luaDir, 0755); err != nil {
+			return err
+		}
+		agentIP := m.GetDockerHostIP()
+		agentPort := m.GetAgentPort()
+		securityLua, err := templates.GetNginxSecurityLuaWithConfig(agentIP, agentPort, m.config.Security.InternalAPIToken, m.config.Security.TrustedProxies, m.config.Security.TrustCFHeader)
+		if err != nil {
+			return err
+		}
+		securityChanged, err := writeFileIfChanged(filepath.Join(luaDir, "security.lua"), securityLua, 0644)
+		if err != nil {
+			return err
+		}
+		changed = changed || securityChanged
+
+		trafficLua, err := templates.GetNginxTrafficLuaWithConfig(agentIP, agentPort)
+		if err != nil {
+			return err
+		}
+		trafficChanged, err := writeFileIfChanged(filepath.Join(luaDir, "traffic.lua"), trafficLua, 0644)
+		if err != nil {
+			return err
+		}
+		changed = changed || trafficChanged
+
+		errorPage, err := templates.GetErrorPage()
+		if err != nil {
+			return err
+		}
+		errorPagePath := filepath.Join(nginxDir, "html", ".flatrun", "error.html")
+		if err := os.MkdirAll(filepath.Dir(errorPagePath), 0755); err != nil {
+			return err
+		}
+		errorPageChanged, err := writeFileIfChanged(errorPagePath, errorPage, 0644)
+		if err != nil {
+			return err
+		}
+		changed = changed || errorPageChanged
+	}
+	if changed {
+		_ = m.reloadNginx()
+	}
 	return nil
 }
 
@@ -1456,5 +1495,20 @@ func writeNginxErrorPage(nginxDir string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, content, 0644)
+	_, err = writeFileIfChanged(path, content, 0644)
+	return err
+}
+
+func writeFileIfChanged(path string, content []byte, mode os.FileMode) (bool, error) {
+	existing, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(existing, content) {
+		return false, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.WriteFile(path, content, mode); err != nil {
+		return false, err
+	}
+	return true, nil
 }
