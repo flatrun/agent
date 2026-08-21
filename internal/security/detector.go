@@ -109,6 +109,11 @@ func (d *Detector) Classify(event *IngestEvent) *SecurityEvent {
 		severity = SeverityLow
 		message = GetSuspiciousPathDescription(event.RequestPath)
 
+	case event.IncidentID != "" && event.StatusCode >= 400:
+		eventType = EventTypeHTTPError
+		severity = SeverityLow
+		message = fmt.Sprintf("HTTP %d response: %s", event.StatusCode, event.RequestPath)
+
 	default:
 		return nil
 	}
@@ -119,6 +124,7 @@ func (d *Detector) Classify(event *IngestEvent) *SecurityEvent {
 	}
 
 	return &SecurityEvent{
+		IncidentID:     event.IncidentID,
 		EventType:      eventType,
 		Severity:       severity,
 		SourceIP:       event.SourceIP,

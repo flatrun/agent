@@ -499,6 +499,10 @@ func (m *Manager) SetNginxRealtimeCaptureWithStatus(enabled bool) (map[string]in
 		}
 
 		// Ensure conf.d directory and rate limits config exists
+		if err := writeNginxErrorPage(nginxDir); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to write nginx error page: %v", err))
+		}
+
 		confDir := filepath.Join(nginxDir, "conf.d")
 		if err := os.MkdirAll(confDir, 0755); err != nil {
 			errors = append(errors, fmt.Sprintf("failed to create conf.d directory: %v", err))
@@ -1394,6 +1398,9 @@ func (m *Manager) RefreshSecurityScripts() (*RefreshSecurityScriptsResult, error
 		return result, err
 	}
 	result.LuaWritten = true
+	if err := writeNginxErrorPage(nginxDir); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to write nginx error page: %v", err))
+	}
 
 	// Generate and write traffic.lua with injected IP
 	trafficLua, err := templates.GetNginxTrafficLuaWithConfig(agentIP, agentPort)
@@ -1438,4 +1445,16 @@ func (m *Manager) RefreshSecurityScripts() (*RefreshSecurityScriptsResult, error
 	}
 
 	return result, nil
+}
+
+func writeNginxErrorPage(nginxDir string) error {
+	content, err := templates.GetErrorPage()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(nginxDir, "html", ".flatrun", "error.html")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0644)
 }

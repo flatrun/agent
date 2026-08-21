@@ -245,6 +245,12 @@ func (s *Server) aiToolRegistry() map[string]aiTool {
 					if err != nil && !os.IsNotExist(err) {
 						return "", fileLogReadError(err)
 					}
+				} else if source.Type == models.LogSourceContainerFile {
+					command := fmt.Sprintf("tail -n %d -- %s", tail, shellLiteral(source.Path))
+					logs, err = s.manager.ComposeExec(c.Request.Context(), name, source.Service, command)
+					if err != nil {
+						return "", err
+					}
 				} else {
 					logs, err = s.manager.GetDeploymentLogs(name, tail)
 					if err != nil {

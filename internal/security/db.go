@@ -57,6 +57,7 @@ func (db *DB) migrate() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS security_events (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		incident_id TEXT,
 		event_type TEXT NOT NULL,
 		severity TEXT NOT NULL CHECK (severity IN ('low', 'medium', 'high', 'critical')),
 		source_ip TEXT NOT NULL,
@@ -115,7 +116,11 @@ func (db *DB) migrate() error {
 	);
 	`
 
-	_, err := db.conn.Exec(schema)
+	if _, err := db.conn.Exec(schema); err != nil {
+		return err
+	}
+	_, _ = db.conn.Exec(`ALTER TABLE security_events ADD COLUMN incident_id TEXT`)
+	_, err := db.conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_events_incident_id ON security_events(incident_id) WHERE incident_id IS NOT NULL AND incident_id != ''`)
 	return err
 }
 
@@ -126,9 +131,9 @@ func (db *DB) InsertEvent(event *SecurityEvent) (int64, error) {
 
 	result, err := db.conn.Exec(`
 		INSERT INTO security_events
-		(event_type, severity, source_ip, request_path, request_method, status_code, user_agent, message, raw_log, deployment_name, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.EventType, event.Severity, event.SourceIP, event.RequestPath,
+		(incident_id, event_type, severity, source_ip, request_path, request_method, status_code, user_agent, message, raw_log, deployment_name, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.IncidentID, event.EventType, event.Severity, event.SourceIP, event.RequestPath,
 		event.RequestMethod, event.StatusCode, event.UserAgent, event.Message,
 		event.RawLog, event.DeploymentName, event.CreatedAt,
 	)
@@ -143,7 +148,7 @@ func (db *DB) GetEvents(filter *EventFilter) ([]SecurityEvent, int, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	query := "SELECT id, event_type, severity, source_ip, request_path, request_method, status_code, user_agent, message, deployment_name, created_at FROM security_events WHERE 1=1"
+	query := "SELECT id, incident_id, event_type, severity, source_ip, request_path, request_method, status_code, user_agent, message, deployment_name, created_at FROM security_events WHERE 1=1"
 	countQuery := "SELECT COUNT(*) FROM security_events WHERE 1=1"
 	args := []interface{}{}
 
@@ -202,12 +207,13 @@ func (db *DB) GetEvents(filter *EventFilter) ([]SecurityEvent, int, error) {
 	var events []SecurityEvent
 	for rows.Next() {
 		var e SecurityEvent
-		var requestPath, requestMethod, userAgent, deploymentName sql.NullString
+		var incidentID, requestPath, requestMethod, userAgent, deploymentName sql.NullString
 		var statusCode sql.NullInt64
-		if err := rows.Scan(&e.ID, &e.EventType, &e.Severity, &e.SourceIP, &requestPath, &requestMethod, &statusCode, &userAgent, &e.Message, &deploymentName, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &incidentID, &e.EventType, &e.Severity, &e.SourceIP, &requestPath, &requestMethod, &statusCode, &userAgent, &e.Message, &deploymentName, &e.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		e.RequestPath = requestPath.String
+		e.IncidentID = incidentID.String
 		e.RequestMethod = requestMethod.String
 		e.UserAgent = userAgent.String
 		e.DeploymentName = deploymentName.String
@@ -226,13 +232,13 @@ func (db *DB) GetEventByID(id int64) (*SecurityEvent, error) {
 	defer db.mu.RUnlock()
 
 	var e SecurityEvent
-	var requestPath, requestMethod, userAgent, deploymentName sql.NullString
+	var incidentID, requestPath, requestMethod, userAgent, deploymentName sql.NullString
 	var statusCode sql.NullInt64
 
 	err := db.conn.QueryRow(`
-		SELECT id, event_type, severity, source_ip, request_path, request_method, status_code, user_agent, message, deployment_name, created_at
+		SELECT id, incident_id, event_type, severity, source_ip, request_path, request_method, status_code, user_agent, message, deployment_name, created_at
 		FROM security_events WHERE id = ?`, id).Scan(
-		&e.ID, &e.EventType, &e.Severity, &e.SourceIP, &requestPath, &requestMethod,
+		&e.ID, &incidentID, &e.EventType, &e.Severity, &e.SourceIP, &requestPath, &requestMethod,
 		&statusCode, &userAgent, &e.Message, &deploymentName, &e.CreatedAt,
 	)
 	if err != nil {
@@ -240,6 +246,7 @@ func (db *DB) GetEventByID(id int64) (*SecurityEvent, error) {
 	}
 
 	e.RequestPath = requestPath.String
+	e.IncidentID = incidentID.String
 	e.RequestMethod = requestMethod.String
 	e.UserAgent = userAgent.String
 	e.DeploymentName = deploymentName.String
@@ -247,6 +254,33 @@ func (db *DB) GetEventByID(id int64) (*SecurityEvent, error) {
 		e.StatusCode = int(statusCode.Int64)
 	}
 
+	return &e, nil
+}
+
+func (db *DB) GetEventByIncidentID(requestedID string) (*SecurityEvent, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var e SecurityEvent
+	var incidentID, requestPath, requestMethod, userAgent, deploymentName sql.NullString
+	var statusCode sql.NullInt64
+	err := db.conn.QueryRow(`
+		SELECT id, incident_id, event_type, severity, source_ip, request_path, request_method, status_code, user_agent, message, deployment_name, created_at
+		FROM security_events WHERE incident_id = ?`, requestedID).Scan(
+		&e.ID, &incidentID, &e.EventType, &e.Severity, &e.SourceIP, &requestPath, &requestMethod,
+		&statusCode, &userAgent, &e.Message, &deploymentName, &e.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	e.RequestPath = requestPath.String
+	e.IncidentID = incidentID.String
+	e.RequestMethod = requestMethod.String
+	e.UserAgent = userAgent.String
+	e.DeploymentName = deploymentName.String
+	if statusCode.Valid {
+		e.StatusCode = int(statusCode.Int64)
+	}
 	return &e, nil
 }
 
@@ -290,8 +324,8 @@ func (db *DB) GetActiveBlockedIPs() ([]BlockedIP, error) {
 	rows, err := db.conn.Query(`
 		SELECT id, ip, reason, blocked_at, expires_at, auto_blocked
 		FROM blocked_ips
-		WHERE expires_at IS NULL OR expires_at > datetime('now')
-		ORDER BY blocked_at DESC`)
+		WHERE expires_at IS NULL OR expires_at > ?
+		ORDER BY blocked_at DESC`, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -349,8 +383,8 @@ func (db *DB) IsIPBlocked(ip string) (bool, error) {
 	var count int
 	err := db.conn.QueryRow(`
 		SELECT COUNT(*) FROM blocked_ips
-		WHERE ip = ? AND (expires_at IS NULL OR expires_at > datetime('now'))`,
-		ip).Scan(&count)
+		WHERE ip = ? AND (expires_at IS NULL OR expires_at > ?)`,
+		ip, time.Now()).Scan(&count)
 	if err != nil {
 		return false, err
 	}
@@ -563,7 +597,7 @@ func (db *DB) GetStats() (*SecurityStats, error) {
 	_ = db.conn.QueryRow("SELECT COUNT(*) FROM security_events WHERE created_at >= datetime('now', '-7 days')").Scan(&stats.Last7Days)
 
 	// Blocked IPs count
-	_ = db.conn.QueryRow("SELECT COUNT(*) FROM blocked_ips WHERE expires_at IS NULL OR expires_at > datetime('now')").Scan(&stats.BlockedIPsCount)
+	_ = db.conn.QueryRow("SELECT COUNT(*) FROM blocked_ips WHERE expires_at IS NULL OR expires_at > ?", time.Now()).Scan(&stats.BlockedIPsCount)
 
 	// Protected routes count
 	_ = db.conn.QueryRow("SELECT COUNT(*) FROM protected_routes WHERE enabled = 1").Scan(&stats.ProtectedRoutesCount)
@@ -688,7 +722,7 @@ func (db *DB) CleanupExpiredBlocks() (int64, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	result, err := db.conn.Exec("DELETE FROM blocked_ips WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')")
+	result, err := db.conn.Exec("DELETE FROM blocked_ips WHERE expires_at IS NOT NULL AND expires_at <= ?", time.Now())
 	if err != nil {
 		return 0, err
 	}

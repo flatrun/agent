@@ -66,6 +66,24 @@ func TestSecurityLuaSanitizesTrustedProxies(t *testing.T) {
 	}
 }
 
+func TestSecurityLuaBrandsNginxErrors(t *testing.T) {
+	out, err := GetNginxSecurityLuaWithConfig("10.0.0.1", 8080, "tok", nil, false)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	s := string(out)
+	for _, required := range []string{
+		`X-FlatRun-Incident-ID`,
+		`application/problem+json`,
+		`incident_id = incident_id`,
+		`ERROR_TEMPLATE_PATH`,
+	} {
+		if !strings.Contains(s, required) {
+			t.Fatalf("rendered security module does not contain %q", required)
+		}
+	}
+}
+
 func grepLua(s string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(s, "\n") {

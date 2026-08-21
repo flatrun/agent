@@ -219,7 +219,13 @@ func (s *Server) listBlockedIPsInternal(c *gin.Context) {
 		return
 	}
 
-	s.listBlockedIPs(c)
+	ips, err := s.securityManager.GetActiveBlockedIPs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"blocked_ips": ips})
 }
 
 // blockIP blocks an IP address

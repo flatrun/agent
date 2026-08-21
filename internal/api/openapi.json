@@ -4137,6 +4137,44 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/deployments/{name}/diagnostics": {
+      "get": {
+        "operationId": "get-deployments-by-name-diagnostics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "incident_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.DeploymentDiagnostics"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
     "/api/deployments/{name}/domains": {
       "get": {
         "operationId": "get-deployments-by-name-domains",
@@ -10552,6 +10590,93 @@
           "env_prefix"
         ]
       },
+      "api.DeploymentDiagnosticStep": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "label",
+          "status",
+          "detail",
+          "output",
+          "action",
+          "value",
+          "checked_at"
+        ],
+        "x-columns": [
+          "id",
+          "label",
+          "status",
+          "detail",
+          "output",
+          "action",
+          "value",
+          "checked_at"
+        ]
+      },
+      "api.DeploymentDiagnostics": {
+        "type": "object",
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deployment": {
+            "type": "string"
+          },
+          "healthy": {
+            "type": "boolean"
+          },
+          "incident_id": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/api.DeploymentDiagnosticStep"
+            }
+          }
+        },
+        "x-property-order": [
+          "deployment",
+          "incident_id",
+          "healthy",
+          "steps",
+          "checked_at"
+        ],
+        "x-columns": [
+          "deployment",
+          "incident_id",
+          "healthy",
+          "checked_at"
+        ]
+      },
       "api.EnvVar": {
         "type": "object",
         "properties": {
@@ -12649,15 +12774,27 @@
           },
           "path": {
             "type": "string"
+          },
+          "response_contains": {
+            "type": "string"
+          },
+          "success_statuses": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
           }
         },
         "x-property-order": [
           "path",
-          "interval"
+          "interval",
+          "success_statuses",
+          "response_contains"
         ],
         "x-columns": [
           "path",
-          "interval"
+          "interval",
+          "response_contains"
         ]
       },
       "models.LogSource": {

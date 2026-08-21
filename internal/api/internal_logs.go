@@ -72,7 +72,7 @@ func (s *Server) streamInternalLogs(c *gin.Context) {
 
 	sink := func(line string) {
 		record := parseLogRecord(line)
-		if source.Type == models.LogSourceFile && record.Service == "" {
+		if source.Type != models.LogSourceStdout && record.Service == "" {
 			record.Service = source.Name
 		}
 		if err := encoder.Encode(logLine{Type: "log", Line: line, Record: record}); err != nil {
@@ -83,6 +83,10 @@ func (s *Server) streamInternalLogs(c *gin.Context) {
 
 	if source.Type == models.LogSourceFile {
 		_ = streamFileLogs(ctx, filePath, tail, sink)
+		return
+	}
+	if source.Type == models.LogSourceContainerFile {
+		_ = s.manager.StreamContainerFileLogs(ctx, name, deployment.Path, source.Service, source.Path, tail, sink)
 		return
 	}
 	_ = s.manager.StreamDeploymentLogs(ctx, name, deployment.Path, tail, sink, services...)
