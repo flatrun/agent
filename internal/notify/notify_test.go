@@ -3,6 +3,7 @@ package notify
 import (
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -67,10 +68,53 @@ func TestServiceRoundTripAndNotify(t *testing.T) {
 	if len(sent) != 2 {
 		t.Fatalf("expected 2 deliveries (enabled only), got %d: %v", len(sent), sent)
 	}
-	for _, s := range sent {
-		if want := "Alert\n\nweb is unhealthy"; !contains(s, want) {
-			t.Errorf("delivery missing title+body: %q", s)
-		}
+	if !strings.Contains(sent[0], "useHTML=yes") || !strings.Contains(sent[0], "subject=Alert") {
+		t.Errorf("email delivery missing HTML or subject settings: %q", sent[0])
+	}
+	if !strings.Contains(sent[0], "<h1") || !strings.Contains(sent[0], "web is unhealthy") {
+		t.Errorf("email delivery missing rendered template: %q", sent[0])
+	}
+	if want := "Alert\n\nweb is unhealthy"; !strings.Contains(sent[1], want) {
+		t.Errorf("webhook delivery missing plain title and body: %q", sent[1])
+	}
+}
+
+func TestEmailTemplateEscapesContentAndSetsSubject(t *testing.T) {
+	target, body, err := formatDelivery(
+		"smtp://mail.example/?from=ops%40example.com&to=admin%40example.com",
+		Notification{Title: "Disk <critical>", Message: "Usage is {{high}} & rising"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("subject"); got != "Disk <critical>" {
+		t.Errorf("subject = %q", got)
+	}
+	if got := parsed.Query().Get("useHTML"); got != "yes" {
+		t.Errorf("useHTML = %q", got)
+	}
+	if strings.Contains(body, "<critical>") || strings.Contains(body, "Usage is {{high}} & rising") {
+		t.Errorf("email content was not escaped: %s", body)
+	}
+	if !strings.Contains(body, "Disk &lt;critical&gt;") || !strings.Contains(body, "Usage is {{high}} &amp; rising") {
+		t.Errorf("email content is missing: %s", body)
+	}
+}
+
+func TestNonEmailDeliveryRemainsPlainText(t *testing.T) {
+	target, body, err := formatDelivery(
+		"generic+https://example.com/hook",
+		Notification{Title: "Alert", Message: "web is unhealthy"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "generic+https://example.com/hook" || body != "Alert\n\nweb is unhealthy" {
+		t.Errorf("plain delivery = %q | %q", target, body)
 	}
 }
 
@@ -101,11 +145,69 @@ func TestServiceTest(t *testing.T) {
 	if err := s.Test("smtp://x"); err != nil {
 		t.Fatal(err)
 	}
-	if called != "smtp://x" {
+	if !strings.HasPrefix(called, "smtp://x?") || !strings.Contains(called, "subject=FlatRun+test+notification") {
 		t.Errorf("Test sent to %q", called)
 	}
 	if err := s.Test(""); err == nil {
 		t.Error("Test with empty url should error")
+	}
+}
+
+func TestEmailSubjectCannotAddHeaders(t *testing.T) {
+	target, _, err := formatDelivery(
+		"smtp://mail.example",
+		Notification{Title: "Alert\r\nBcc: other@example.com", Message: "message"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("subject"); got != "Alert Bcc: other@example.com" {
+		t.Errorf("subject = %q", got)
+	}
+}
+
+func TestEmailVariantsAndPanels(t *testing.T) {
+	png := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	cases := []struct {
+		kind       Kind
+		label      string
+		color      string
+		showStatus bool
+	}{
+		{KindGeneric, "", "", false},
+		{KindPositive, "Resolved", "#15803d", true},
+		{KindNegative, "Attention required", "#b91c1c", true},
+	}
+	for _, tc := range cases {
+		body, err := RenderEmail(Notification{
+			Kind: tc.kind, Title: "Status", Message: "Details",
+			Panels: []Panel{{Title: "CPU", Value: "82%", Detail: "Last 15 minutes", ImageURL: png}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.showStatus && (!strings.Contains(body, tc.label) || !strings.Contains(body, tc.color)) {
+			t.Errorf("%s template missing status treatment", tc.kind)
+		}
+		if !tc.showStatus && strings.Contains(body, ">Notification</span>") {
+			t.Errorf("%s template has redundant status treatment", tc.kind)
+		}
+		if !strings.Contains(body, "CPU") || !strings.Contains(body, "82%") {
+			t.Errorf("%s template missing panel", tc.kind)
+		}
+		if !strings.Contains(body, "data:image/png;base64,") {
+			t.Errorf("%s template missing PNG panel", tc.kind)
+		}
+		if !strings.Contains(body, "alt=\"FlatRun\"") || !strings.Contains(body, "data:image/png;base64,") {
+			t.Errorf("%s template missing shared header", tc.kind)
+		}
+		if !strings.Contains(body, ">FlatRun</td>") {
+			t.Errorf("%s template missing shared footer", tc.kind)
+		}
 	}
 }
 
@@ -124,16 +226,4 @@ func TestNotifyReturnsFirstError(t *testing.T) {
 	if err := s.Notify("t", "m"); err == nil {
 		t.Error("expected first delivery error surfaced")
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0)
-}
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

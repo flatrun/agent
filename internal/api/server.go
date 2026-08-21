@@ -3385,15 +3385,14 @@ func (s *Server) emitNotification(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Title   string   `json:"title"`
-		Message string   `json:"message"`
+		notify.Notification
 		Targets []string `json:"targets"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	_ = s.notify.NotifyTargets(req.Title, req.Message, req.Targets)
+	_ = s.notify.NotifyNotificationTargets(req.Notification, req.Targets)
 	c.JSON(http.StatusAccepted, gin.H{"status": "queued"})
 }
 

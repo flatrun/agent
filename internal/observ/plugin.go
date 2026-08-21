@@ -55,14 +55,16 @@ func RunPlugin() error {
 	watcher.SetManaged(isManaged)
 
 	watcher.OnRecover(func(ev RecoveryEvent) {
-		emitNotification(
+		emitTypedNotification(
+			"positive",
 			fmt.Sprintf("Auto-recovered %s", ev.Container),
 			fmt.Sprintf("Container %s in deployment %s was unhealthy and has been restarted.", ev.Container, ev.Deployment),
 		)
 	})
 
 	watcher.OnExhausted(func(ev ExhaustedEvent) {
-		emitNotification(
+		emitTypedNotification(
+			"negative",
 			fmt.Sprintf("Still unhealthy: %s", ev.Container),
 			fmt.Sprintf("Container %s in deployment %s is still unhealthy after %d restart attempts. "+
 				"Nothing further will be tried automatically, so it needs attention.",
@@ -110,7 +112,11 @@ func RunPlugin() error {
 	engine := NewAlertEngine(store)
 	engine.SetRules(alertStore.Load())
 	engine.OnAlert(func(ev AlertEvent) {
-		emitNotificationTo(ev.RuleName, ev.Message(), ev.Targets)
+		kind := "negative"
+		if ev.State == AlertOK {
+			kind = "positive"
+		}
+		emitTypedNotificationTo(kind, ev.RuleName, ev.Message(), ev.Targets)
 	})
 	// An opt-in rule action restarts the offending deployment when it fires,
 	// scoped to FlatRun-managed deployments and rate-limited so it cannot flap.
@@ -133,7 +139,7 @@ func RunPlugin() error {
 
 	agentBase, agentToken := pluginsdk.AgentCallback()
 	RegisterResponder(NewNotifyResponder(func(title, message string, targets []string) {
-		emitNotificationTo(title, message, targets)
+		emitTypedNotificationTo("negative", title, message, targets)
 	}))
 
 	if cfg.LogTriage {
@@ -171,19 +177,20 @@ func RunPlugin() error {
 	return pluginsdk.Serve(PluginInfo, handler, buildTools(store, watcher, cfgStore)...)
 }
 
-// emitNotification asks the core to deliver a notification to the operator's configured
-// targets. Delivery config and routing live in the agent, not the plugin.
-func emitNotification(title, message string) {
-	emitNotificationTo(title, message, nil)
+func emitTypedNotification(kind, title, message string) {
+	emitTypedNotificationTo(kind, title, message, nil)
 }
 
-// emitNotificationTo delivers to a chosen subset of targets by id; nil means all.
 func emitNotificationTo(title, message string, targets []string) {
+	emitTypedNotificationTo("generic", title, message, targets)
+}
+
+func emitTypedNotificationTo(kind, title, message string, targets []string) {
 	base, token := pluginsdk.AgentCallback()
 	if base == "" || token == "" {
 		return
 	}
-	body, _ := json.Marshal(map[string]any{"title": title, "message": message, "targets": targets})
+	body, _ := json.Marshal(map[string]any{"type": kind, "title": title, "message": message, "targets": targets})
 	req, err := http.NewRequest(http.MethodPost, base+"/internal/notify/emit", bytes.NewReader(body))
 	if err != nil {
 		return
