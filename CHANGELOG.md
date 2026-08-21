@@ -1,12 +1,21 @@
 # Changelog
 
-## [0.4.0-beta.4] - 2026-08-20
+## [0.4.0-beta.4] - 2026-08-21
+
+Fourth beta of the Albacore release, expanding operations, API discovery, and operator notifications.
 
 ### Added
+- System and deployment log sources, log deletion, log rules, and bounded incident triage
+- Layered deployment diagnostics covering container state, Docker health, configurable application responses, proxy routing, TLS, public access, and incident lookup
+- Branded nginx error responses with incident IDs in HTML and JSON
+- Runtime OpenAPI discovery for routes, permissions, request bodies, and typed responses
 - File and folder copy, move, archive browsing, and extraction
 - Single-request deployment content pushes with optional destination cleanup
+- Branded HTML email notifications with semantic status treatments, metric panels, plain-text fallbacks, and local previews
 
 ### Fixed
+- Deployment log reads once again honor the selected service
+- Paused deployments are reported as paused instead of running
 - Active deployment compose files cannot be moved out of the deployment root or deleted
 
 ## [0.4.0-beta.3] - 2026-08-05
