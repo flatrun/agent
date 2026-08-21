@@ -2574,6 +2574,10 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 			command = fmt.Sprintf("tail -n %d -- %s", tail, shellLiteral(source.Path))
 		}
 		logs, err = s.manager.ComposeExec(c.Request.Context(), name, source.Service, command)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	} else {
 		logs, err = s.manager.GetDeploymentLogs(name, tail, services...)
 		if err != nil {

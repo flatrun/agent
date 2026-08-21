@@ -312,7 +312,7 @@ func validHealthPath(value string) bool {
 		return false
 	}
 	parsed, err := url.ParseRequestURI(value)
-	return err == nil && parsed.IsAbs() == false
+	return err == nil && !parsed.IsAbs()
 }
 
 func shellLiteral(value string) string {
