@@ -522,6 +522,8 @@ github.com/whilesmartgo/agents v0.4.0 h1:DEzeO28Kh31aixHsz55Sq7guYooKEOAUmN2J2Vb
 github.com/whilesmartgo/agents v0.4.0/go.mod h1:MTuXbfen/M5GGphQk3kggnO52i8thPBf3RfywfuxOOM=
 github.com/whilesmartgo/mcp v0.2.0 h1:oXEI2dagW9rFuRvK4U87iLPd7pxZ08RdAi1HSy8hyrY=
 github.com/whilesmartgo/mcp v0.2.0/go.mod h1:GD0Gg3H8rJOSfCQ0o68kXjOg5Kv3QqkAHRwtV4L+xKk=
+github.com/wneessen/go-mail v0.7.2 h1:xxPnhZ6IZLSgxShebmZ6DPKh1b6OJcoHfzy7UjOkzS8=
+github.com/wneessen/go-mail v0.7.2/go.mod h1:+TkW6QP3EVkgTEqHtVmnAE/1MRhmzb8Y9/W3pweuS+k=
 github.com/xhit/go-str2duration/v2 v2.1.0 h1:lxklc02Drh6ynqX+DdPyp5pCKLUQpRT8bp8Ydu2Bstc=
 github.com/xhit/go-str2duration/v2 v2.1.0/go.mod h1:ohY8p+0f07DiV6Em5LKB0s2YpLtXVyJfNt1+BlmyAsU=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=

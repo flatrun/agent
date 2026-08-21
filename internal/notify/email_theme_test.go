@@ -16,7 +16,7 @@ func TestLoadEmailThemeFromManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if theme.main != "notification.html" || theme.logo == "" {
+	if theme.main != "notification.html" || len(theme.logo) == 0 {
 		t.Fatal("theme manifest was not loaded")
 	}
 }

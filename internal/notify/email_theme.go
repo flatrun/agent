@@ -3,7 +3,6 @@ package notify
 import (
 	"bytes"
 	"embed"
-	"encoding/base64"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -30,7 +29,8 @@ type emailThemeManifest struct {
 type emailTheme struct {
 	template *template.Template
 	main     string
-	logo     template.URL
+	logo     []byte
+	logoMIME string
 }
 
 //go:embed templates/default
@@ -75,6 +75,8 @@ func loadEmailTheme(fsys fs.FS, root string) (*emailTheme, error) {
 	if manifest.Assets.Logo.MIME != "image/png" {
 		return nil, fmt.Errorf("unsupported email theme logo type %q", manifest.Assets.Logo.MIME)
 	}
-	logo := "data:" + manifest.Assets.Logo.MIME + ";base64," + base64.StdEncoding.EncodeToString(logoData)
-	return &emailTheme{template: parsed, main: path.Base(manifest.Templates.Main), logo: template.URL(logo)}, nil
+	return &emailTheme{
+		template: parsed, main: path.Base(manifest.Templates.Main),
+		logo: logoData, logoMIME: manifest.Assets.Logo.MIME,
+	}, nil
 }

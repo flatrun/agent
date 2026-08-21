@@ -10,13 +10,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/nicholas-fedor/shoutrrr"
 	"github.com/nicholas-fedor/shoutrrr/pkg/router"
-	"github.com/nicholas-fedor/shoutrrr/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -165,21 +163,7 @@ func sendFormatted(rawURL string, notification Notification) error {
 	if err != nil || parsed.Scheme != "smtp" {
 		return shoutrrr.Send(rawURL, plainMessage(notification))
 	}
-	service, err := (&router.ServiceRouter{}).Locate(rawURL)
-	if err != nil {
-		return err
-	}
-	htmlBody, err := RenderEmail(notification)
-	if err != nil {
-		return err
-	}
-	if err := service.SetTemplateString("plain", `{{printf "%s" `+strconv.Quote(plainMessage(notification))+`}}`); err != nil {
-		return err
-	}
-	if err := service.SetTemplateString("HTML", `{{printf "%s" `+strconv.Quote(htmlBody)+`}}`); err != nil {
-		return err
-	}
-	return service.Send("", &types.Params{})
+	return sendEmail(rawURL, notification, &router.ServiceRouter{})
 }
 
 func plainMessage(notification Notification) string {
