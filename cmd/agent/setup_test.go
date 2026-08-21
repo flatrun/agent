@@ -67,6 +67,7 @@ func TestWriteSetupFiles(t *testing.T) {
 		"nginx.conf",
 		"conf.d/rate_limits.conf",
 		"html/index.html",
+		"html/.flatrun/error.html",
 	}
 	for _, f := range expectedFiles {
 		path := filepath.Join(deployDir, f)

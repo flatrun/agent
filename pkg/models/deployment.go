@@ -163,12 +163,13 @@ func (m *ServiceMetadata) HasMultipleDatabases() bool {
 }
 
 const (
-	LogSourceStdout = "stdout"
-	LogSourceFile   = "file"
+	LogSourceStdout        = "stdout"
+	LogSourceFile          = "file"
+	LogSourceContainerFile = "container_file"
 )
 
-// LogSource is one place a deployment's logs can be read from: container stdout,
-// or a file (Path, relative to the deployment directory) the app writes on the host.
+// LogSource is one place a deployment's logs can be read from: container output,
+// a deployment file on the host, or a file inside one service container.
 type LogSource struct {
 	ID      string `yaml:"id" json:"id"`
 	Name    string `yaml:"name" json:"name"`
@@ -319,14 +320,17 @@ type SSLConfig struct {
 }
 
 type HealthCheckConfig struct {
-	Path     string `yaml:"path" json:"path"`
-	Interval string `yaml:"interval" json:"interval"`
+	Path             string `yaml:"path" json:"path"`
+	Interval         string `yaml:"interval" json:"interval"`
+	SuccessStatuses  []int  `yaml:"success_statuses,omitempty" json:"success_statuses,omitempty"`
+	ResponseContains string `yaml:"response_contains,omitempty" json:"response_contains,omitempty"`
 }
 
 type DeploymentStatus string
 
 const (
 	StatusRunning DeploymentStatus = "running"
+	StatusPaused  DeploymentStatus = "paused"
 	StatusStopped DeploymentStatus = "stopped"
 	StatusError   DeploymentStatus = "error"
 	StatusUnknown DeploymentStatus = "unknown"

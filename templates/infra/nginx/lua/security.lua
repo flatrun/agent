@@ -18,6 +18,8 @@ local TRUST_CF_HEADER = {{if .TrustCFHeader}}true{{else}}false{{end}}
 local CACHE_TTL = 30  -- seconds
 local BLOCKED_IPS_LAST_FETCH = "blocked_ips_last_fetch"
 local WHITELIST_LAST_FETCH = "whitelist_last_fetch"
+local ERROR_TEMPLATE_PATH = "/usr/share/nginx/html/.flatrun/error.html"
+local error_template
 
 -- Suspicious paths patterns
 local suspicious_patterns = {
@@ -431,7 +433,125 @@ function _M.is_scanner(user_agent)
     return false
 end
 
+local function create_incident_id()
+    local request_id = ngx.var.request_id
+    if not request_id or request_id == "" then
+        request_id = ngx.md5(table.concat({ngx.now(), ngx.worker.pid(), ngx.var.connection or "", ngx.var.connection_requests or ""}, ":"))
+    end
+    return "FR-" .. string.upper(request_id:sub(1, 12))
+end
+
+local function error_copy(status)
+    local copy = {
+        [400] = {"Bad request", "The request could not be understood by this server."},
+        [401] = {"Authentication required", "You need to sign in before you can access this page."},
+        [403] = {"Access denied", "This request was blocked by the server's security policy."},
+        [404] = {"Page not found", "The requested page is not available on this server."},
+        [405] = {"Method not allowed", "This server does not accept that request method here."},
+        [408] = {"Request timed out", "The server stopped waiting for the request to finish."},
+        [413] = {"Request too large", "The request is larger than this server accepts."},
+        [429] = {"Too many requests", "This client has sent too many requests in a short time."},
+        [500] = {"Server error", "The server could not complete the request."},
+        [502] = {"Application unavailable", "The server could not get a valid response from the application."},
+        [503] = {"Service unavailable", "The service is temporarily unavailable."},
+        [504] = {"Application timed out", "The application did not respond in time."},
+    }
+    return copy[status] or {"Request failed", "The server could not complete the request."}
+end
+
+local function load_error_template()
+    if error_template then return error_template end
+    local file = io.open(ERROR_TEMPLATE_PATH, "r")
+    if not file then return nil end
+    error_template = file:read("*a")
+    file:close()
+    return error_template
+end
+
+local function send_event(event)
+    local ok, err = ngx.timer.at(0, function(premature)
+        if premature then return end
+        local body, encode_err = cjson.encode(event)
+        if not body then
+            ngx.log(ngx.ERR, "Failed to encode security event: ", encode_err)
+            return
+        end
+        local httpc = http.new()
+        httpc:set_timeout(2000)
+        local conn_ok, conn_err = httpc:connect({host = AGENT_IP, port = AGENT_PORT, scheme = "http"})
+        if not conn_ok then
+            ngx.log(ngx.ERR, "Failed to connect to agent: ", conn_err)
+            return
+        end
+        local res, req_err = httpc:request({
+            method = "POST",
+            path = "/api/security/events/ingest",
+            body = body,
+            headers = { ["Host"] = AGENT_IP .. ":" .. AGENT_PORT, ["Content-Type"] = "application/json" }
+        })
+        if not res then ngx.log(ngx.ERR, "Failed to send security event: ", req_err) end
+        httpc:close()
+    end)
+    if not ok then ngx.log(ngx.ERR, "Failed to create timer for security event: ", err) end
+end
+
+function _M.prepare_error_response()
+    local status = ngx.status
+    if status < 400 or status > 599 then return end
+    local upstream_status = ngx.var.upstream_status or ""
+    local upstream_length = tonumber(ngx.var.upstream_response_length or "0") or 0
+    local gateway_failure = (status == 502 or status == 503 or status == 504) and upstream_length == 0
+    if upstream_status ~= "" and not gateway_failure then return end
+
+    local incident_id = create_incident_id()
+    local copy = error_copy(status)
+    local accept = string.lower(ngx.var.http_accept or "")
+    local wants_json = accept:find("application/json", 1, true)
+        or accept:find("application/problem+json", 1, true)
+        or (ngx.var.uri or ""):find("^/api/")
+    local message = copy[2] .. " If you expected to see something else, contact the server administrator with this incident ID."
+
+    ngx.ctx.flatrun_incident_id = incident_id
+    ngx.header["X-FlatRun-Incident-ID"] = incident_id
+    ngx.header.content_length = nil
+
+    if wants_json then
+        ngx.header.content_type = "application/problem+json; charset=utf-8"
+        ngx.ctx.flatrun_error_body = cjson.encode({
+            type = "about:blank",
+            title = copy[1],
+            status = status,
+            detail = message,
+            incident_id = incident_id,
+        })
+    else
+        ngx.header.content_type = "text/html; charset=utf-8"
+        local template = load_error_template()
+        if template then
+            local marker_start = string.char(123, 123)
+            local marker_end = string.char(125, 125)
+            ngx.ctx.flatrun_error_body = template
+                :gsub(marker_start .. "STATUS_CODE" .. marker_end, tostring(status))
+                :gsub(marker_start .. "TITLE" .. marker_end, copy[1])
+                :gsub(marker_start .. "MESSAGE" .. marker_end, message)
+                :gsub(marker_start .. "INCIDENT_ID" .. marker_end, incident_id)
+        else
+            ngx.ctx.flatrun_error_body = "<!doctype html><title>" .. copy[1] .. "</title><h1>" .. copy[1] .. "</h1><p>" .. message .. "</p><p>Incident ID: <strong>" .. incident_id .. "</strong></p>"
+        end
+    end
+
+end
+
+function _M.filter_error_body()
+    local body = ngx.ctx.flatrun_error_body
+    if not body then return end
+    ngx.arg[1] = body
+    ngx.arg[2] = true
+    ngx.ctx.flatrun_error_body = nil
+end
+
 function _M.capture_event()
+    if ngx.ctx.flatrun_event_sent then return end
     local status = ngx.status
     local uri = ngx.var.uri
     local ip = get_real_client_ip()
@@ -444,7 +564,9 @@ function _M.capture_event()
     local should_capture = false
 
     -- Scanner detection
-    if _M.is_scanner(user_agent) then
+    if ngx.ctx.flatrun_incident_id then
+        should_capture = true
+    elseif _M.is_scanner(user_agent) then
         should_capture = true
     -- Rate limit hit
     elseif status == 429 then
@@ -467,63 +589,25 @@ function _M.capture_event()
         return
     end
 
+    ngx.ctx.flatrun_event_sent = true
+
     -- Extract deployment name from host (remove port if present)
     local deployment_name = host:match("^([^:]+)")
 
-    -- Send event to agent API (non-blocking)
-    local ok, err = ngx.timer.at(0, function(premature)
-        if premature then return end
+    send_event({
+        incident_id = ngx.ctx.flatrun_incident_id,
+        source_ip = ip,
+        request_path = uri,
+        request_method = method,
+        status_code = status,
+        user_agent = user_agent,
+        deployment_name = deployment_name,
+        timestamp = ngx.time()
+    })
+end
 
-        local body, encode_err = cjson.encode({
-            source_ip = ip,
-            request_path = uri,
-            request_method = method,
-            status_code = status,
-            user_agent = user_agent,
-            deployment_name = deployment_name,
-            timestamp = ngx.time()
-        })
-
-        if not body then
-            ngx.log(ngx.ERR, "Failed to encode security event: ", encode_err)
-            return
-        end
-
-        local httpc = http.new()
-        httpc:set_timeout(2000)
-
-        -- Connect directly using injected IP and port
-        local conn_ok, conn_err = httpc:connect({
-            host = AGENT_IP,
-            port = AGENT_PORT,
-            scheme = "http",
-        })
-
-        if not conn_ok then
-            ngx.log(ngx.ERR, "Failed to connect to agent: ", conn_err)
-            return
-        end
-
-        local res, req_err = httpc:request({
-            method = "POST",
-            path = "/api/security/events/ingest",
-            body = body,
-            headers = {
-                ["Host"] = AGENT_IP .. ":" .. AGENT_PORT,
-                ["Content-Type"] = "application/json",
-            }
-        })
-
-        if not res then
-            ngx.log(ngx.ERR, "Failed to send security event: ", req_err)
-        end
-
-        httpc:close()
-    end)
-
-    if not ok then
-        ngx.log(ngx.ERR, "Failed to create timer for security event: ", err)
-    end
+function _M.capture_error_event()
+    if ngx.ctx.flatrun_incident_id then _M.capture_event() end
 end
 
 -- Rate limiting helper using shared dict

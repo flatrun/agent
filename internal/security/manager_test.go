@@ -52,6 +52,77 @@ func TestIngestEventAutoBlocksOnRepeatedAuthFailures(t *testing.T) {
 	}
 }
 
+func TestIngestEventRecordsRequestsDeniedByExistingBlock(t *testing.T) {
+	m := newTestManager(t)
+	if _, err := m.BlockIP("203.0.113.11", "Manual block", 0); err != nil {
+		t.Fatalf("BlockIP: %v", err)
+	}
+
+	result, err := m.IngestEvent(&IngestEvent{
+		SourceIP:       "203.0.113.11",
+		RequestPath:    "/status",
+		RequestMethod:  "GET",
+		StatusCode:     403,
+		UserAgent:      "Mozilla/5.0",
+		DeploymentName: "example",
+	}, time.Hour)
+	if err != nil {
+		t.Fatalf("IngestEvent: %v", err)
+	}
+	if result.Event == nil {
+		t.Fatal("expected denied request to be recorded")
+	}
+	if result.AutoBlocked {
+		t.Fatal("existing block must not be extended by a denied request")
+	}
+}
+
+func TestIngestEventCanBeFoundByIncidentID(t *testing.T) {
+	m := newTestManager(t)
+	const incidentID = "FR-1234ABCDEF56"
+	result, err := m.IngestEvent(&IngestEvent{
+		IncidentID:     incidentID,
+		SourceIP:       "203.0.113.21",
+		RequestPath:    "/checkout",
+		RequestMethod:  "GET",
+		StatusCode:     502,
+		UserAgent:      "Mozilla/5.0",
+		DeploymentName: "shop.example.com",
+	}, time.Hour)
+	if err != nil {
+		t.Fatalf("IngestEvent: %v", err)
+	}
+	if result.Event == nil {
+		t.Fatal("expected nginx error to be recorded")
+	}
+
+	event, err := m.GetEventByIncidentID(incidentID)
+	if err != nil {
+		t.Fatalf("GetEventByIncidentID: %v", err)
+	}
+	if event.IncidentID != incidentID || event.RequestPath != "/checkout" {
+		t.Fatalf("unexpected incident: %#v", event)
+	}
+}
+
+func TestGetActiveBlockedIPsExcludesExpiredRecords(t *testing.T) {
+	m := newTestManager(t)
+	expiresAt := time.Now().Add(-time.Hour)
+	if _, err := m.db.BlockIP("203.0.113.12", "Expired", &expiresAt, true); err != nil {
+		t.Fatalf("BlockIP: %v", err)
+	}
+
+	ips, err := m.GetActiveBlockedIPs()
+	if err != nil {
+		t.Fatalf("GetActiveBlockedIPs: %v", err)
+	}
+	for _, blocked := range ips {
+		if blocked.IP == "203.0.113.12" {
+			t.Fatal("expired record returned as active")
+		}
+	}
+}
+
 // A legitimate client that identifies as a general-purpose HTTP tool must not be
 // blocked on its first request. This reproduces the reported bug where one 404
 // from curl / a Go or Python script locked the caller out immediately.

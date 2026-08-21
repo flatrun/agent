@@ -79,6 +79,15 @@ func (s *Server) deleteDeploymentLogs(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "Log cleared", "source": source.ID})
 		return
 	}
+	if source.Type == models.LogSourceContainerFile {
+		_, truncErr := s.manager.ComposeExec(c.Request.Context(), name, source.Service, ": > "+shellLiteral(source.Path))
+		if truncErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": truncErr.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Log cleared", "source": source.ID})
+		return
+	}
 
 	services, err := s.manager.GetComposeServices(name)
 	if err != nil {

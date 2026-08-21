@@ -47,9 +47,17 @@ func TestStatusFromContainers(t *testing.T) {
 			want:       string(models.StatusRunning),
 		},
 		{
-			name:       "paused counts as running",
+			name:       "paused is paused",
 			containers: []container.Summary{summary(container.StatePaused, "Up 2 hours (Paused)", "app")},
-			want:       string(models.StatusRunning),
+			want:       string(models.StatusPaused),
+		},
+		{
+			name: "running takes precedence over paused",
+			containers: []container.Summary{
+				summary(container.StatePaused, "Up 2 hours (Paused)", "worker"),
+				summary(container.StateRunning, "Up 2 hours", "app"),
+			},
+			want: string(models.StatusRunning),
 		},
 		{
 			name:       "live but nothing up is unknown",

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -496,6 +497,34 @@ func (c *ComposeExecutor) StreamLogs(ctx context.Context, deploymentPath string,
 	return nil
 }
 
+func (c *ComposeExecutor) StreamContainerFileLogs(ctx context.Context, deploymentPath, service, path string, tail int, sink func(string)) error {
+	tailValue := "+1"
+	if tail > 0 {
+		tailValue = strconv.Itoa(tail)
+	}
+	cmd, err := c.composeCommand(ctx, deploymentPath, "exec", "-T", service, "tail", "-n", tailValue, "-F", "--", path)
+	if err != nil {
+		return err
+	}
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	scanner := bufio.NewScanner(pipe)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		sink(scanner.Text())
+	}
+	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		return err
+	}
+	return nil
+}
+
 func runComposeStreaming(cmd *exec.Cmd, sink func(string)) (string, error) {
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -582,6 +611,9 @@ func (c *ComposeExecutor) GetStatus(deploymentPath string) (string, error) {
 
 	// Check for running state in various formats from docker compose ps
 	lower := strings.ToLower(output)
+	if strings.Contains(lower, "paused") {
+		return "paused", nil
+	}
 	if strings.Contains(lower, "\"state\":\"running\"") ||
 		strings.Contains(lower, "\"state\": \"running\"") ||
 		strings.Contains(lower, "running") ||

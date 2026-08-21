@@ -150,3 +150,16 @@ func TestGetWelcomePage(t *testing.T) {
 		t.Fatal("GetWelcomePage() returned empty content")
 	}
 }
+
+func TestGetErrorPage(t *testing.T) {
+	data, err := GetErrorPage()
+	if err != nil {
+		t.Fatalf("GetErrorPage() error = %v", err)
+	}
+	content := string(data)
+	for _, marker := range []string{"{{STATUS_CODE}}", "{{TITLE}}", "{{MESSAGE}}", "{{INCIDENT_ID}}"} {
+		if !strings.Contains(content, marker) {
+			t.Fatalf("GetErrorPage() missing %s", marker)
+		}
+	}
+}

@@ -68,13 +68,10 @@ func (m *Manager) IngestEvent(event *IngestEvent, autoBlockDuration time.Duratio
 		return result, nil
 	}
 
-	// Check if IP is blocked - if so, don't process
+	// Blocked requests still need an audit trail, but must not extend their own block.
 	blocked, err := m.db.IsIPBlocked(event.SourceIP)
 	if err != nil {
 		return nil, err
-	}
-	if blocked {
-		return result, nil
 	}
 
 	// Classify the event
@@ -90,6 +87,9 @@ func (m *Manager) IngestEvent(event *IngestEvent, autoBlockDuration time.Duratio
 	}
 	secEvent.ID = id
 	result.Event = secEvent
+	if blocked {
+		return result, nil
+	}
 
 	// Check if we should auto-block the IP
 	if blocked, reason := m.detector.ShouldAutoBlock(event.SourceIP, secEvent); blocked {
@@ -113,6 +113,10 @@ func (m *Manager) GetEvents(filter *EventFilter) ([]SecurityEvent, int, error) {
 // GetEventByID retrieves a single event
 func (m *Manager) GetEventByID(id int64) (*SecurityEvent, error) {
 	return m.db.GetEventByID(id)
+}
+
+func (m *Manager) GetEventByIncidentID(incidentID string) (*SecurityEvent, error) {
+	return m.db.GetEventByIncidentID(incidentID)
 }
 
 // GetEventsByIP retrieves all events for a specific IP

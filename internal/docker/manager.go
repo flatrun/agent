@@ -96,16 +96,22 @@ func (m *Manager) projectFor(deployment *models.Deployment, index containerIndex
 
 // statusFromContainers collapses a project's live containers into a deployment
 // status. Stopped containers are absent from the index by construction, so a
-// project with none is stopped. A paused container counts as running because it
-// is still up, which is what the compose CLI path reported.
+// project with none is stopped. A running service takes precedence when another
+// service in the same deployment is paused.
 func statusFromContainers(containers []container.Summary) string {
 	if len(containers) == 0 {
 		return string(models.StatusStopped)
 	}
 
 	for _, c := range containers {
-		if c.State == container.StateRunning || c.State == container.StatePaused {
+		if c.State == container.StateRunning {
 			return string(models.StatusRunning)
+		}
+	}
+
+	for _, c := range containers {
+		if c.State == container.StatePaused {
+			return string(models.StatusPaused)
 		}
 	}
 
@@ -876,6 +882,10 @@ func (m *Manager) GetDeploymentLogs(name string, tail int, services ...string) (
 	}
 
 	return m.executor.Logs(deployment.Path, tail, services...)
+}
+
+func (m *Manager) StreamContainerFileLogs(ctx context.Context, name, deploymentPath, service, path string, tail int, sink func(string)) error {
+	return m.executor.StreamContainerFileLogs(ctx, deploymentPath, service, path, tail, sink)
 }
 
 func (m *Manager) UpdateDeployment(name string, composeContent string) error {

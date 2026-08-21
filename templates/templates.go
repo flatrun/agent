@@ -16,6 +16,7 @@ import (
 //go:embed infra/*/metadata.yml infra/*/docker-compose.yml
 //go:embed infra/nginx/nginx.conf infra/nginx/nginx.lua.conf infra/nginx/default.conf infra/nginx/lua/*
 //go:embed welcome/index.html
+//go:embed errors/*.html
 var FS embed.FS
 
 var Categories = []Category{
@@ -108,6 +109,10 @@ func GetFile(templateID, filename string) ([]byte, error) {
 
 func GetWelcomePage() ([]byte, error) {
 	return FS.ReadFile("welcome/index.html")
+}
+
+func GetErrorPage() ([]byte, error) {
+	return FS.ReadFile("errors/error.html")
 }
 
 func GetCategories() []Category {

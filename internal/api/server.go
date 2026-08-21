@@ -457,6 +457,7 @@ func (s *Server) setupRoutes() {
 			// Deployment endpoints
 			protected.GET("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listDeployments)
 			protected.GET("/deployments/:name", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeployment)
+			protected.GET("/deployments/:name/diagnostics", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.diagnoseDeployment)
 			protected.POST("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.createDeployment)
 			protected.PUT("/deployments/:name", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeployment)
 			protected.PUT("/deployments/:name/metadata", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentMetadata)
@@ -1899,6 +1900,12 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		})
 		return
 	}
+	if _, sentHealthCheck := sentFields["healthcheck"]; sentHealthCheck {
+		if err := validateHealthCheckConfig(incoming.HealthCheck); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 
 	metadata := mergeMetadata(deployment.Metadata, &incoming, sentFields)
 
@@ -1923,6 +1930,24 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		"name":         name,
 		"proxy_result": proxyResult,
 	})
+}
+
+func validateHealthCheckConfig(config models.HealthCheckConfig) error {
+	if config.Path != "" && !validHealthPath(config.Path) {
+		return fmt.Errorf("health check path must start with / and contain a valid request path")
+	}
+	if len(config.SuccessStatuses) > 20 {
+		return fmt.Errorf("health check accepts at most 20 status codes")
+	}
+	for _, status := range config.SuccessStatuses {
+		if status < 100 || status > 599 {
+			return fmt.Errorf("health check status codes must be from 100 through 599")
+		}
+	}
+	if len(config.ResponseContains) > 512 {
+		return fmt.Errorf("health check response text cannot exceed 512 characters")
+	}
+	return nil
 }
 
 func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[string]json.RawMessage) *models.ServiceMetadata {
@@ -2543,6 +2568,12 @@ func (s *Server) getDeploymentLogs(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fileLogReadError(err).Error()})
 			return
 		}
+	} else if source.Type == models.LogSourceContainerFile {
+		command := "cat -- " + shellLiteral(source.Path)
+		if tail > 0 {
+			command = fmt.Sprintf("tail -n %d -- %s", tail, shellLiteral(source.Path))
+		}
+		logs, err = s.manager.ComposeExec(c.Request.Context(), name, source.Service, command)
 	} else {
 		logs, err = s.manager.GetDeploymentLogs(name, tail, services...)
 		if err != nil {
@@ -2612,16 +2643,27 @@ func (s *Server) updateDeploymentLogSources(c *gin.Context) {
 
 	cleaned := make([]models.LogSource, 0, len(req.Sources))
 	for _, src := range req.Sources {
-		if src.Type != models.LogSourceFile {
+		if src.Type != models.LogSourceFile && src.Type != models.LogSourceContainerFile {
 			continue
 		}
 		if strings.TrimSpace(src.Path) == "" || strings.TrimSpace(src.Name) == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "each file log source needs a name and a path"})
 			return
 		}
-		if _, err := resolveLogFilePath(deployment.Path, src.Path); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
+		if src.Type == models.LogSourceFile {
+			if _, err := resolveLogFilePath(deployment.Path, src.Path); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		} else {
+			if !filepath.IsAbs(src.Path) || filepath.Clean(src.Path) != src.Path || src.Service == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "container log sources need a service and an absolute file path"})
+				return
+			}
+			if _, err := s.resolveLogServices(name, src.Service); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
 		}
 		if src.ID == "" {
 			src.ID = src.Path

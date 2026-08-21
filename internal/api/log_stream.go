@@ -131,7 +131,7 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 			return
 		}
 		record := parseLogRecord(line)
-		if source.Type == models.LogSourceFile && record.Service == "" {
+		if source.Type != models.LogSourceStdout && record.Service == "" {
 			record.Service = source.Name
 		}
 		payload, err := json.Marshal(logLine{Type: "log", Line: line, Record: record})
@@ -148,6 +148,12 @@ func (s *Server) streamDeploymentLogs(c *gin.Context) {
 			return
 		}
 		err = streamFileLogs(ctx, path, tail, sink)
+		if err != nil && ctx.Err() == nil {
+			sendError(conn, err.Error())
+			return
+		}
+	} else if source.Type == models.LogSourceContainerFile {
+		err = s.manager.StreamContainerFileLogs(ctx, name, deployment.Path, source.Service, source.Path, tail, sink)
 		if err != nil && ctx.Err() == nil {
 			sendError(conn, err.Error())
 			return

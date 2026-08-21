@@ -4,6 +4,7 @@ import "time"
 
 type SecurityEvent struct {
 	ID             int64     `json:"id"`
+	IncidentID     string    `json:"incident_id,omitempty"`
 	EventType      string    `json:"event_type"`
 	Severity       string    `json:"severity"`
 	SourceIP       string    `json:"source_ip"`
@@ -89,6 +90,7 @@ type TrendPoint struct {
 
 // Event types
 const (
+	EventTypeHTTPError          = "http_error"
 	EventTypeUnauthorizedAccess = "unauthorized_access"
 	EventTypeForbiddenAccess    = "forbidden_access"
 	EventTypeNotFoundProbe      = "not_found_probe"
@@ -109,6 +111,7 @@ const (
 
 // IngestEvent is the payload sent from nginx Lua
 type IngestEvent struct {
+	IncidentID     string `json:"incident_id,omitempty"`
 	SourceIP       string `json:"source_ip"`
 	RequestPath    string `json:"request_path"`
 	RequestMethod  string `json:"request_method"`
