@@ -630,6 +630,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/resources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentResources)
 			protected.GET("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentAutoscalePolicy)
 			protected.GET("/deployments/:name/autoscale/compatibility", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentAutoscaleCompatibility)
+			protected.PUT("/deployments/:name/autoscale/workload", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentAutoscaleWorkload)
 			protected.PUT("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentAutoscalePolicy)
 
 			// Image endpoints

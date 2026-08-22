@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/autoscale"
+	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,7 +50,10 @@ func (s *Server) getDeploymentAutoscalePolicy(c *gin.Context) {
 }
 
 func (s *Server) getDeploymentAutoscaleCompatibility(c *gin.Context) {
-	name := c.Param("name")
+	s.writeAutoscaleCompatibility(c, c.Param("name"))
+}
+
+func (s *Server) writeAutoscaleCompatibility(c *gin.Context, name string) {
 	deployment, err := s.manager.GetDeployment(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
@@ -61,6 +65,29 @@ func (s *Server) getDeploymentAutoscaleCompatibility(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, autoscale.AssessCompatibility(deployment, composeContent))
+}
+
+func (s *Server) updateDeploymentAutoscaleWorkload(c *gin.Context) {
+	name := c.Param("name")
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+	var scaling models.ScalingConfig
+	if err := c.ShouldBindJSON(&scaling); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if deployment.Metadata == nil {
+		deployment.Metadata = &models.ServiceMetadata{Name: name}
+	}
+	deployment.Metadata.Scaling = &scaling
+	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	s.writeAutoscaleCompatibility(c, name)
 }
 
 func (s *Server) updateDeploymentAutoscalePolicy(c *gin.Context) {

@@ -47,6 +47,7 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 	protected := router.Group("/api", middleware.RequireAuth())
 	protected.GET("/deployments/:name/autoscale", middleware.RequirePermission(auth.PermDeploymentsRead), middleware.RequireDeploymentAccess(auth.AccessLevelRead), server.getDeploymentAutoscalePolicy)
 	protected.GET("/deployments/:name/autoscale/compatibility", middleware.RequirePermission(auth.PermDeploymentsRead), middleware.RequireDeploymentAccess(auth.AccessLevelRead), server.getDeploymentAutoscaleCompatibility)
+	protected.PUT("/deployments/:name/autoscale/workload", middleware.RequirePermission(auth.PermDeploymentsWrite), middleware.RequireDeploymentAccess(auth.AccessLevelWrite), server.updateDeploymentAutoscaleWorkload)
 	protected.PUT("/deployments/:name/autoscale", middleware.RequirePermission(auth.PermDeploymentsWrite), middleware.RequireDeploymentAccess(auth.AccessLevelWrite), server.updateDeploymentAutoscalePolicy)
 	token := loginAndGetToken(t, router, "admin", "testadminpass")
 
@@ -94,6 +95,22 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !compatibility.Compatible || compatibility.Service != "app" || compatibility.Image != "nginx:alpine" {
+		t.Fatalf("compatibility = %#v", compatibility)
+	}
+
+	workload := bytes.NewBufferString(`{"service":"app","stateless":true,"storage":{"mode":"none"}}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/deployments/shop/autoscale/workload", workload)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &compatibility); err != nil {
+		t.Fatal(err)
+	}
+	if !compatibility.Compatible || len(compatibility.Services) != 1 || compatibility.Services[0] != "app" {
 		t.Fatalf("compatibility = %#v", compatibility)
 	}
 }

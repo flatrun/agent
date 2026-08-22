@@ -2,6 +2,7 @@ package autoscale
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/flatrun/agent/pkg/models"
@@ -14,6 +15,7 @@ type Compatibility struct {
 	Image      string   `json:"image,omitempty"`
 	Blockers   []string `json:"blockers"`
 	Warnings   []string `json:"warnings"`
+	Services   []string `json:"services"`
 }
 
 type composeCompatibilityFile struct {
@@ -62,6 +64,10 @@ func AssessCompatibility(deployment *models.Deployment, composeContent string) C
 		result.Blockers = append(result.Blockers, fmt.Sprintf("Compose configuration cannot be read: %v", err))
 		return result
 	}
+	for name := range compose.Services {
+		result.Services = append(result.Services, name)
+	}
+	sort.Strings(result.Services)
 	service, exists := compose.Services[result.Service]
 	if !exists && result.Service != "" {
 		result.Blockers = append(result.Blockers, fmt.Sprintf("Compose service %q does not exist", result.Service))
