@@ -237,6 +237,9 @@ func TestEmailVariantsAndPanels(t *testing.T) {
 		if !strings.Contains(body, "alt=\"FlatRun\"") || !strings.Contains(body, "data:image/png;base64,") {
 			t.Errorf("%s template missing shared header", tc.kind)
 		}
+		if !strings.Contains(body, "bgcolor=\"#111827\"") {
+			t.Errorf("%s template missing email-client-safe header background", tc.kind)
+		}
 		if !strings.Contains(body, ">FlatRun</td>") {
 			t.Errorf("%s template missing shared footer", tc.kind)
 		}
