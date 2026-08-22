@@ -3,6 +3,9 @@ package autoscale
 import (
 	"testing"
 	"time"
+
+	"github.com/flatrun/agent/internal/orchestrator"
+	"github.com/flatrun/agent/internal/routing"
 )
 
 func TestStorePersistsPolicyAndState(t *testing.T) {
@@ -14,7 +17,11 @@ func TestStorePersistsPolicyAndState(t *testing.T) {
 	policy := DefaultPolicy()
 	policy.MaxReplicas = 7
 	policy.AllowFleetCapacity = true
-	state := State{HighWindows: 2, LastAction: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}
+	state := State{
+		HighWindows: 2, LastAction: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC), Active: true,
+		Provider: orchestrator.ProviderSwarm, Service: "web", Replicas: 2,
+		Route: routing.Route{ID: "shop", Service: "web", Domain: "shop.example.com", Protocol: "http"},
+	}
 	if err := store.SetPolicy("shop", policy); err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +50,13 @@ func TestStorePersistsPolicyAndState(t *testing.T) {
 	}
 	if savedState.HighWindows != 2 || !savedState.LastAction.Equal(state.LastAction) {
 		t.Fatalf("unexpected state: %+v", savedState)
+	}
+	active, err := store.ActiveStates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active["shop"].Route.Domain != "shop.example.com" || active["shop"].Provider != orchestrator.ProviderSwarm {
+		t.Fatalf("unexpected active states: %+v", active)
 	}
 }
 

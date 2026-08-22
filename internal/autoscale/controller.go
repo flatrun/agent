@@ -7,6 +7,7 @@ import (
 
 	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/orchestrator"
+	"github.com/flatrun/agent/internal/routing"
 )
 
 type Action string
@@ -40,6 +41,7 @@ type State struct {
 	Provider    orchestrator.ProviderID `json:"provider,omitempty"`
 	Service     string                  `json:"service,omitempty"`
 	Replicas    int                     `json:"replicas,omitempty"`
+	Route       routing.Route           `json:"route,omitempty"`
 }
 
 type Input struct {

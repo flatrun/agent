@@ -92,6 +92,7 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 	state.Provider = orchestrator.ProviderSwarm
 	state.Service = deployment.Metadata.Scaling.Service
 	state.Replicas = activation.Workload.Desired
+	state.Route = activation.Route
 	state.LastAction = time.Now()
 	if err := s.autoscaleStore.SetState(name, state); err != nil {
 		return autoscale.Activation{}, err

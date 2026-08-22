@@ -120,3 +120,29 @@ func (s *Store) SetState(deployment string, state State) error {
 		ON CONFLICT(deployment) DO UPDATE SET state_json = excluded.state_json, updated_at = CURRENT_TIMESTAMP`, deployment, raw)
 	return err
 }
+
+func (s *Store) ActiveStates() (map[string]State, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.conn.Query(`SELECT deployment, state_json FROM autoscale_states`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	states := make(map[string]State)
+	for rows.Next() {
+		var deployment string
+		var raw string
+		if err := rows.Scan(&deployment, &raw); err != nil {
+			return nil, err
+		}
+		var state State
+		if err := json.Unmarshal([]byte(raw), &state); err != nil {
+			return nil, err
+		}
+		if state.Active {
+			states[deployment] = state
+		}
+	}
+	return states, rows.Err()
+}
