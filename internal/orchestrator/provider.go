@@ -25,14 +25,18 @@ type Health struct {
 }
 
 type Workload struct {
-	ID        string            `json:"id"`
-	Image     string            `json:"image"`
-	Port      int               `json:"port,omitempty"`
-	Replicas  int               `json:"replicas"`
-	Resources Resources         `json:"resources"`
-	Health    Health            `json:"health"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	Stateful  bool              `json:"stateful"`
+	ID          string            `json:"id"`
+	Image       string            `json:"image"`
+	Port        int               `json:"port,omitempty"`
+	Replicas    int               `json:"replicas"`
+	Resources   Resources         `json:"resources"`
+	Health      Health            `json:"health"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
+	Entrypoint  []string          `json:"entrypoint,omitempty"`
+	Command     []string          `json:"command,omitempty"`
+	WorkingDir  string            `json:"working_dir,omitempty"`
+	Stateful    bool              `json:"stateful"`
 }
 
 type Instance struct {

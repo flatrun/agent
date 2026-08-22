@@ -36,7 +36,7 @@ func TestK3sApplyUsesConfiguredClusterAndNamespace(t *testing.T) {
 	provider := NewK3sProvider("/etc/rancher/k3s.yaml", "apps")
 	provider.runner = runner
 
-	status, err := provider.Apply(context.Background(), Workload{ID: "shop", Image: "shop:1", Port: 8080, Replicas: 2})
+	status, err := provider.Apply(context.Background(), Workload{ID: "shop", Image: "shop:1", Port: 8080, Replicas: 2, Environment: map[string]string{"APP_ENV": "production"}, Command: []string{"serve"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +53,13 @@ func TestK3sApplyUsesConfiguredClusterAndNamespace(t *testing.T) {
 	}
 	if manifest["kind"] != "Deployment" {
 		t.Fatalf("manifest = %#v", manifest)
+	}
+	spec := manifest["spec"].(map[string]any)
+	template := spec["template"].(map[string]any)
+	podSpec := template["spec"].(map[string]any)
+	container := podSpec["containers"].([]any)[0].(map[string]any)
+	if len(container["env"].([]any)) != 1 || len(container["args"].([]any)) != 1 {
+		t.Fatalf("container = %#v", container)
 	}
 }
 

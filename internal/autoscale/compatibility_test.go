@@ -21,3 +21,29 @@ func TestAssessCompatibilityExplainsUnsafeComposeFeatures(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestBuildWorkloadCarriesPortableRuntimeInputs(t *testing.T) {
+	deployment := &models.Deployment{Name: "shop", Metadata: &models.ServiceMetadata{
+		Scaling:     &models.ScalingConfig{Service: "web", Stateless: true},
+		Domains:     []models.DomainConfig{{Service: "web", ContainerPort: 8080, Domain: "shop.example.com"}},
+		HealthCheck: models.HealthCheckConfig{Path: "/ready"},
+	}}
+	workload, err := BuildWorkload(deployment, `services:
+  web:
+    image: registry.example.com/shop:1
+    environment:
+      APP_ENV: production
+    entrypoint: ["/app/entrypoint"]
+    command: ["serve", "--port", "8080"]
+    working_dir: /app
+`, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workload.Replicas != 2 || workload.Port != 8080 || workload.Environment["APP_ENV"] != "production" || workload.WorkingDir != "/app" || workload.Health.Path != "/ready" {
+		t.Fatalf("workload = %#v", workload)
+	}
+	if len(workload.Entrypoint) != 1 || len(workload.Command) != 3 {
+		t.Fatalf("workload commands = %#v / %#v", workload.Entrypoint, workload.Command)
+	}
+}

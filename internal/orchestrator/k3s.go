@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -197,6 +198,27 @@ func k3sManifest(workload Workload) map[string]any {
 		labels["flatrun.port"] = strconv.Itoa(workload.Port)
 	}
 	container := map[string]any{"name": workload.ID, "image": workload.Image, "resources": k3sResources(workload.Resources)}
+	if len(workload.Environment) > 0 {
+		keys := make([]string, 0, len(workload.Environment))
+		for key := range workload.Environment {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		environment := make([]any, 0, len(keys))
+		for _, key := range keys {
+			environment = append(environment, map[string]string{"name": key, "value": workload.Environment[key]})
+		}
+		container["env"] = environment
+	}
+	if len(workload.Entrypoint) > 0 {
+		container["command"] = workload.Entrypoint
+	}
+	if len(workload.Command) > 0 {
+		container["args"] = workload.Command
+	}
+	if workload.WorkingDir != "" {
+		container["workingDir"] = workload.WorkingDir
+	}
 	if workload.Port > 0 {
 		container["ports"] = []any{map[string]any{"containerPort": workload.Port}}
 	}

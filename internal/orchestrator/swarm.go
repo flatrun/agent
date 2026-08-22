@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -180,11 +181,24 @@ func swarmSpec(workload Workload) swarm.ServiceSpec {
 	return swarm.ServiceSpec{
 		Annotations: swarm.Annotations{Name: workload.ID, Labels: labels},
 		TaskTemplate: swarm.TaskSpec{
-			ContainerSpec: &swarm.ContainerSpec{Image: workload.Image, Labels: labels},
+			ContainerSpec: &swarm.ContainerSpec{Image: workload.Image, Labels: labels, Env: workloadEnvironment(workload.Environment), Command: workload.Entrypoint, Args: workload.Command, Dir: workload.WorkingDir},
 			Resources:     swarmResources(workload.Resources),
 		},
 		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
 	}
+}
+
+func workloadEnvironment(environment map[string]string) []string {
+	keys := make([]string, 0, len(environment))
+	for key := range environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		values = append(values, key+"="+environment[key])
+	}
+	return values
 }
 
 func servicePort(spec swarm.ServiceSpec) int {

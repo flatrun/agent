@@ -59,7 +59,8 @@ func TestSwarmProviderCreatesReplicatedService(t *testing.T) {
 
 	status, err := provider.Apply(context.Background(), Workload{
 		ID: "shop", Image: "example/shop:1", Port: 8080, Replicas: 1,
-		Resources: Resources{CPURequest: 0.5, CPULimit: 1, MemoryRequest: 256 << 20, MemoryLimit: 512 << 20},
+		Resources:   Resources{CPURequest: 0.5, CPULimit: 1, MemoryRequest: 256 << 20, MemoryLimit: 512 << 20},
+		Environment: map[string]string{"APP_ENV": "production"}, Entrypoint: []string{"/app/entrypoint"}, Command: []string{"serve"}, WorkingDir: "/app",
 	})
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
@@ -69,6 +70,10 @@ func TestSwarmProviderCreatesReplicatedService(t *testing.T) {
 	}
 	if client.created.TaskTemplate.Resources.Limits.NanoCPUs != 1_000_000_000 {
 		t.Fatalf("CPU limit = %d", client.created.TaskTemplate.Resources.Limits.NanoCPUs)
+	}
+	container := client.created.TaskTemplate.ContainerSpec
+	if len(container.Env) != 1 || container.Env[0] != "APP_ENV=production" || container.Command[0] != "/app/entrypoint" || container.Args[0] != "serve" || container.Dir != "/app" {
+		t.Fatalf("container spec = %#v", container)
 	}
 	if status.Desired != 1 || status.Available != 1 || len(status.Instances) != 1 {
 		t.Fatalf("status = %#v", status)

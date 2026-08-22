@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/pkg/models"
 	"gopkg.in/yaml.v3"
 )
@@ -33,6 +34,11 @@ type composeCompatibilityService struct {
 	Privileged  bool           `yaml:"privileged"`
 	NetworkMode string         `yaml:"network_mode"`
 	DependsOn   map[string]any `yaml:"depends_on"`
+	EnvFile     any            `yaml:"env_file"`
+	Environment any            `yaml:"environment"`
+	Entrypoint  any            `yaml:"entrypoint"`
+	Command     any            `yaml:"command"`
+	WorkingDir  string         `yaml:"working_dir"`
 }
 
 func AssessCompatibility(deployment *models.Deployment, composeContent string) Compatibility {
@@ -60,6 +66,9 @@ func AssessCompatibility(deployment *models.Deployment, composeContent string) C
 	if mode == "shared" && strings.TrimSpace(scaling.Storage.Class) == "" {
 		result.Blockers = append(result.Blockers, "Shared storage requires a storage class")
 	}
+	if mode == "shared" {
+		result.Blockers = append(result.Blockers, "Shared storage needs an installed Fleet storage adapter")
+	}
 
 	var compose composeCompatibilityFile
 	if err := yaml.Unmarshal([]byte(composeContent), &compose); err != nil {
@@ -85,6 +94,9 @@ func AssessCompatibility(deployment *models.Deployment, composeContent string) C
 	if len(service.Configs) > 0 || len(service.Secrets) > 0 {
 		result.Blockers = append(result.Blockers, "Compose configs and secrets need a Fleet distribution policy")
 	}
+	if service.EnvFile != nil {
+		result.Blockers = append(result.Blockers, "Environment files must be converted to inline deployment environment values")
+	}
 	if len(service.Devices) > 0 || service.Privileged || service.NetworkMode != "" {
 		result.Blockers = append(result.Blockers, "Host-specific container access cannot move between Fleet servers")
 	}
@@ -96,4 +108,68 @@ func AssessCompatibility(deployment *models.Deployment, composeContent string) C
 	}
 	result.Compatible = len(result.Blockers) == 0
 	return result
+}
+
+func BuildWorkload(deployment *models.Deployment, composeContent string, replicas int) (orchestrator.Workload, error) {
+	compatibility := AssessCompatibility(deployment, composeContent)
+	if !compatibility.Compatible {
+		return orchestrator.Workload{}, fmt.Errorf("workload is not scale-ready: %s", strings.Join(compatibility.Blockers, "; "))
+	}
+	var compose composeCompatibilityFile
+	if err := yaml.Unmarshal([]byte(composeContent), &compose); err != nil {
+		return orchestrator.Workload{}, err
+	}
+	service := compose.Services[compatibility.Service]
+	workload := orchestrator.Workload{
+		ID: deployment.Name, Image: service.Image, Replicas: replicas,
+		Environment: map[string]string{}, Entrypoint: stringList(service.Entrypoint), Command: stringList(service.Command),
+		WorkingDir: service.WorkingDir, Labels: map[string]string{"flatrun.deployment": deployment.Name},
+	}
+	workload.Environment = environmentMap(service.Environment)
+	for _, domain := range deployment.Metadata.GetDomains() {
+		if domain.Service == compatibility.Service {
+			workload.Port = domain.ContainerPort
+			break
+		}
+	}
+	workload.Health.Path = deployment.Metadata.HealthCheck.Path
+	return workload, nil
+}
+
+func environmentMap(value any) map[string]string {
+	result := map[string]string{}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			if item != nil {
+				result[key] = fmt.Sprint(item)
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			parts := strings.SplitN(fmt.Sprint(item), "=", 2)
+			if len(parts) == 2 {
+				result[parts[0]] = parts[1]
+			}
+		}
+	}
+	return result
+}
+
+func stringList(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		return []string{"/bin/sh", "-c", typed}
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, fmt.Sprint(item))
+		}
+		return result
+	default:
+		return nil
+	}
 }
