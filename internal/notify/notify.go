@@ -168,9 +168,17 @@ func (s *Service) Close() error {
 func (s *Service) deliverEvent(event events.Event, action events.NotificationAction, notification Notification) error {
 	cfg := s.Load()
 	selected := matchingRuleTargets(cfg.Rules, event, action)
+	explicitTargets := stringSet(event.TargetIDs)
 	var firstErr error
 	for _, target := range cfg.Targets {
-		if !target.Enabled || target.URL == "" || !targetMatches(target, event) || (len(cfg.Rules) > 0 && !selected[target.ID]) {
+		if !target.Enabled || target.URL == "" {
+			continue
+		}
+		if len(explicitTargets) > 0 {
+			if !explicitTargets[target.ID] {
+				continue
+			}
+		} else if !targetMatches(target, event) || (len(cfg.Rules) > 0 && !selected[target.ID]) {
 			continue
 		}
 		if err := s.deliver(target.URL, notification); err != nil && firstErr == nil {
@@ -178,6 +186,14 @@ func (s *Service) deliverEvent(event events.Event, action events.NotificationAct
 		}
 	}
 	return firstErr
+}
+
+func stringSet(values []string) map[string]bool {
+	result := make(map[string]bool, len(values))
+	for _, value := range values {
+		result[value] = true
+	}
+	return result
 }
 
 func matchingRuleTargets(rules []Rule, event events.Event, action events.NotificationAction) map[string]bool {

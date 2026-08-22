@@ -31,6 +31,7 @@ type Event struct {
 	CorrelationKey string         `json:"correlation_key,omitempty"`
 	OccurredAt     time.Time      `json:"occurred_at"`
 	Attributes     map[string]any `json:"attributes,omitempty"`
+	TargetIDs      []string       `json:"target_ids,omitempty"`
 	Resolved       bool           `json:"resolved,omitempty"`
 }
 
@@ -69,6 +70,9 @@ func (c *Correlator) Ingest(event Event) IngestResult {
 
 	key := CorrelationKey(event)
 	incident, exists := c.incidents[key]
+	if exists && incident.Status == IncidentResolved && event.Resolved {
+		return IngestResult{Incident: incident, Notification: NotificationNone}
+	}
 	action := NotificationNone
 	if !exists || incident.Status == IncidentResolved {
 		incident = Incident{

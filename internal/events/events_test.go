@@ -42,4 +42,9 @@ func TestCorrelatorSendsOneRecoveryNotification(t *testing.T) {
 	if resolved.Notification != NotificationResolved || resolved.Incident.Status != IncidentResolved {
 		t.Fatalf("resolved = %#v", resolved)
 	}
+
+	duplicate := correlator.Ingest(Event{Source: "fleet", Type: "node.available", Severity: SeverityInfo, Title: "prod2 recovered", Scope: Scope{Node: "prod2"}, OccurredAt: started.Add(11 * time.Minute), Resolved: true})
+	if duplicate.Notification != NotificationNone || duplicate.Incident.ID != resolved.Incident.ID {
+		t.Fatalf("duplicate recovery = %#v", duplicate)
+	}
 }

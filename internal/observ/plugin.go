@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/flatrun/agent/internal/events"
 	"github.com/flatrun/agent/pkg/pluginapi"
 	"github.com/flatrun/agent/pkg/pluginsdk"
 )
@@ -112,18 +113,14 @@ func RunPlugin() error {
 	engine := NewAlertEngine(store)
 	engine.SetRules(alertStore.Load())
 	engine.OnAlert(func(ev AlertEvent) {
-		kind := "negative"
-		if ev.State == AlertOK {
-			kind = "positive"
-		}
-		emitTypedNotificationTo(kind, ev.RuleName, ev.Message(), ev.Targets)
+		emitAlertEvent(ev, ev.Message())
 	})
 	// An opt-in rule action restarts the offending deployment when it fires,
 	// scoped to FlatRun-managed deployments and rate-limited so it cannot flap.
 	actioner := NewActionRunner(DockerComposeRestart, isManaged, cfg.restartCooldown(), dataDir)
 	engine.OnAction(func(ev AlertEvent) {
 		if msg := actioner.Run(ev); msg != "" {
-			emitNotificationTo(ev.RuleName, msg, ev.Targets)
+			emitAlertEvent(ev, msg)
 		}
 	})
 	alertStop := make(chan struct{})
@@ -200,5 +197,34 @@ func emitTypedNotificationTo(kind, title, message string, targets []string) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	if resp, err := client.Do(req); err == nil {
 		_ = resp.Body.Close()
+	}
+}
+
+func emitAlertEvent(event AlertEvent, message string) {
+	base, token := pluginsdk.AgentCallback()
+	if base == "" || token == "" {
+		return
+	}
+	payload := alertCoreEvent(event, message)
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, base+"/internal/events", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Plugin-Token", token)
+	client := &http.Client{Timeout: 5 * time.Second}
+	if resp, err := client.Do(req); err == nil {
+		_ = resp.Body.Close()
+	}
+}
+
+func alertCoreEvent(event AlertEvent, message string) events.Event {
+	return events.Event{
+		Source: "observability", Type: "metric.alert", Severity: events.SeverityWarning,
+		Title: event.RuleName, Message: message,
+		Scope:          events.Scope{Deployment: event.Deployment, Container: event.Container},
+		CorrelationKey: "alert:" + event.RuleID,
+		OccurredAt:     event.At, TargetIDs: event.Targets, Resolved: event.incidentResolved,
 	}
 }

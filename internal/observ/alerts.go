@@ -98,8 +98,9 @@ type AlertEvent struct {
 	At         time.Time `json:"at"`
 	// Targets and Action are copied from the rule so the event is self-contained
 	// for the notification and action sinks.
-	Targets []string `json:"targets,omitempty"`
-	Action  string   `json:"action,omitempty"`
+	Targets          []string `json:"targets,omitempty"`
+	Action           string   `json:"action,omitempty"`
+	incidentResolved bool
 	// Snapshot is the top consuming containers at the moment a rule fired, so a
 	// notification and the dashboard can show what was using the resource.
 	Snapshot []Consumer `json:"snapshot,omitempty"`
@@ -389,11 +390,21 @@ func (e *AlertEngine) evaluate() {
 		e.events = e.events[len(e.events)-maxAlertEvents:]
 	}
 	action := e.onAction
+	for i := range fired {
+		fired[i].incidentResolved = fired[i].State == AlertOK && !ruleHasActiveSeries(e.states, fired[i].RuleID)
+	}
 	e.mu.Unlock()
 
 	// Outside the lock: a notification goes over the network and evaluation should not
 	// hold readers while it does.
+	resolvedRules := map[string]bool{}
 	for _, ev := range fired {
+		if ev.State == AlertOK && (!ev.incidentResolved || resolvedRules[ev.RuleID]) {
+			continue
+		}
+		if ev.incidentResolved {
+			resolvedRules[ev.RuleID] = true
+		}
 		if notify != nil {
 			notify(ev)
 		}
@@ -403,6 +414,16 @@ func (e *AlertEngine) evaluate() {
 			action(ev)
 		}
 	}
+}
+
+func ruleHasActiveSeries(states map[string]seriesState, ruleID string) bool {
+	prefix := ruleID + "\x00"
+	for key := range states {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Run evaluates on each tick until stopped.
