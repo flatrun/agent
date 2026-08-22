@@ -1,14 +1,21 @@
 package events
 
 import (
+	"context"
 	"database/sql"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
+	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
+
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
 
 type Store struct {
 	db *sql.DB
@@ -32,21 +39,20 @@ func NewStore(basePath string) (*Store, error) {
 }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS incidents (
-			correlation_key TEXT PRIMARY KEY,
-			payload BLOB NOT NULL,
-			last_event_at DATETIME NOT NULL
-		);
-		CREATE TABLE IF NOT EXISTS events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			incident_id TEXT NOT NULL,
-			payload BLOB NOT NULL,
-			occurred_at DATETIME NOT NULL
-		);
-		CREATE INDEX IF NOT EXISTS idx_events_incident_id ON events(incident_id);
-		CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events(occurred_at);
-	`)
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		return err
+	}
+	provider, err := goose.NewProvider(
+		goose.DialectSQLite3,
+		s.db,
+		migrations,
+		goose.WithTableName("events_schema_version"),
+	)
+	if err != nil {
+		return err
+	}
+	_, err = provider.Up(context.Background())
 	return err
 }
 
