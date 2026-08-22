@@ -165,6 +165,104 @@ func (p *K3sProvider) Status(ctx context.Context, id string) (Status, error) {
 	return status, nil
 }
 
+func (p *K3sProvider) Metrics(ctx context.Context, id string) (Usage, error) {
+	deploymentRaw, err := p.run(ctx, nil, "get", "deployment", id, "-o", "json")
+	if err != nil {
+		return Usage{}, fmt.Errorf("inspect K3s workload resources: %w", err)
+	}
+	var deployment struct {
+		Spec struct {
+			Replicas int `json:"replicas"`
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Resources struct {
+							Limits map[string]string `json:"limits"`
+						} `json:"resources"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(deploymentRaw, &deployment); err != nil {
+		return Usage{}, fmt.Errorf("decode K3s workload resources: %w", err)
+	}
+	if deployment.Spec.Replicas < 1 || len(deployment.Spec.Template.Spec.Containers) == 0 {
+		return Usage{}, fmt.Errorf("K3s workload has no measurable replicas")
+	}
+	limits := deployment.Spec.Template.Spec.Containers[0].Resources.Limits
+	cpuLimit, err := parseCPUQuantity(limits["cpu"])
+	if err != nil || cpuLimit <= 0 {
+		return Usage{}, fmt.Errorf("K3s workload needs a CPU limit for autoscaling")
+	}
+	memoryLimit, err := parseMemoryQuantity(limits["memory"])
+	if err != nil || memoryLimit <= 0 {
+		return Usage{}, fmt.Errorf("K3s workload needs a memory limit for autoscaling")
+	}
+	metricsRaw, err := p.run(ctx, nil, "get", "--raw", "/apis/metrics.k8s.io/v1beta1/namespaces/"+p.namespace+"/pods?labelSelector=flatrun.workload%3D"+id)
+	if err != nil {
+		return Usage{}, fmt.Errorf("read K3s Metrics API: %w", err)
+	}
+	var metrics struct {
+		Items []struct {
+			Containers []struct {
+				Usage map[string]string `json:"usage"`
+			} `json:"containers"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(metricsRaw, &metrics); err != nil {
+		return Usage{}, fmt.Errorf("decode K3s Metrics API: %w", err)
+	}
+	var cpuUsed float64
+	var memoryUsed float64
+	for _, pod := range metrics.Items {
+		for _, container := range pod.Containers {
+			cpu, cpuErr := parseCPUQuantity(container.Usage["cpu"])
+			memory, memoryErr := parseMemoryQuantity(container.Usage["memory"])
+			if cpuErr != nil || memoryErr != nil {
+				return Usage{}, fmt.Errorf("decode K3s container usage")
+			}
+			cpuUsed += cpu
+			memoryUsed += memory
+		}
+	}
+	replicas := float64(deployment.Spec.Replicas)
+	return Usage{
+		CPUPercent:    cpuUsed / (cpuLimit * replicas) * 100,
+		MemoryPercent: memoryUsed / (memoryLimit * replicas) * 100,
+	}, nil
+}
+
+func parseCPUQuantity(value string) (float64, error) {
+	multiplier := 1.0
+	for suffix, factor := range map[string]float64{"n": 1e-9, "u": 1e-6, "m": 1e-3} {
+		if strings.HasSuffix(value, suffix) {
+			multiplier = factor
+			value = strings.TrimSuffix(value, suffix)
+			break
+		}
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	return parsed * multiplier, err
+}
+
+func parseMemoryQuantity(value string) (float64, error) {
+	multipliers := map[string]float64{
+		"Ki": 1 << 10, "Mi": 1 << 20, "Gi": 1 << 30, "Ti": 1 << 40,
+		"K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12,
+	}
+	multiplier := 1.0
+	for suffix, factor := range multipliers {
+		if strings.HasSuffix(value, suffix) {
+			multiplier = factor
+			value = strings.TrimSuffix(value, suffix)
+			break
+		}
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	return parsed * multiplier, err
+}
+
 func (p *K3sProvider) Remove(ctx context.Context, id string) error {
 	if _, err := p.run(ctx, nil, "delete", "deployment", id, "--ignore-not-found=true"); err != nil {
 		return fmt.Errorf("remove K3s workload: %w", err)
@@ -222,13 +320,25 @@ func k3sManifest(workload Workload) map[string]any {
 	if workload.Port > 0 {
 		container["ports"] = []any{map[string]any{"containerPort": workload.Port}}
 	}
-	return map[string]any{
+	deployment := map[string]any{
 		"apiVersion": "apps/v1", "kind": "Deployment",
 		"metadata": map[string]any{"name": workload.ID, "labels": labels},
 		"spec": map[string]any{"replicas": workload.Replicas, "selector": map[string]any{"matchLabels": map[string]string{"flatrun.workload": workload.ID}}, "template": map[string]any{
 			"metadata": map[string]any{"labels": labels}, "spec": map[string]any{"containers": []any{container}},
 		}},
 	}
+	items := []any{deployment}
+	if workload.Port > 0 {
+		items = append(items, map[string]any{
+			"apiVersion": "v1", "kind": "Service",
+			"metadata": map[string]any{"name": workload.ID, "labels": labels},
+			"spec": map[string]any{
+				"selector": map[string]string{"flatrun.workload": workload.ID},
+				"ports":    []any{map[string]any{"name": "http", "port": workload.Port, "targetPort": workload.Port}},
+			},
+		})
+	}
+	return map[string]any{"apiVersion": "v1", "kind": "List", "items": items}
 }
 
 func k3sResources(resources Resources) map[string]any {

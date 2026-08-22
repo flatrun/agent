@@ -68,6 +68,10 @@ func (e *Executor) Execute(ctx context.Context, workloadID string, route routing
 		}
 		status, err = e.orchestrator.Scale(ctx, workloadID, decision.Replicas)
 		result.Status = status
+		if err == nil && e.routing.ID() == routing.ProviderTraefik {
+			result.Route = route
+			return result, nil
+		}
 		if err == nil {
 			updated, routeErr := routeWithReadyInstances(route, status)
 			if routeErr != nil {

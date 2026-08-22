@@ -192,7 +192,7 @@ func (s *Server) checkRouting(ctx context.Context, id routing.ProviderID) error 
 		}
 		return nil
 	case routing.ProviderTraefik:
-		return fmt.Errorf("Traefik adapter is not configured")
+		return orchestrator.NewK3sProvider(s.config.Cluster.K3s.Kubeconfig, s.config.Cluster.K3s.Namespace).Ready(ctx)
 	default:
 		return fmt.Errorf("routing provider %q is not supported", id)
 	}
@@ -212,6 +212,12 @@ func (s *Server) updateClusterProviders(c *gin.Context) {
 	}
 	orchestratorID := orchestrator.ProviderID(strings.TrimSpace(req.Orchestrator))
 	routingID := routing.ProviderID(strings.TrimSpace(req.Routing))
+	if (orchestratorID == orchestrator.ProviderK3s && routingID != routing.ProviderTraefik) ||
+		(orchestratorID == orchestrator.ProviderSwarm && routingID != routing.ProviderNginx) ||
+		(orchestratorID == orchestrator.ProviderStandalone && routingID != routing.ProviderNginx) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "The selected orchestrator and routing providers are incompatible"})
+		return
+	}
 	var orchestratorErr error
 	if orchestratorID == orchestrator.ProviderK3s && s.probeOrchestrator == nil {
 		orchestratorErr = orchestrator.NewK3sProvider(req.K3s.Kubeconfig, req.K3s.Namespace).Ready(c)
@@ -222,8 +228,14 @@ func (s *Server) updateClusterProviders(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": orchestratorErr.Error()})
 		return
 	}
-	if err := s.checkRouting(c, routingID); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+	var routingErr error
+	if routingID == routing.ProviderTraefik && s.probeRouting == nil {
+		routingErr = orchestrator.NewK3sProvider(req.K3s.Kubeconfig, req.K3s.Namespace).Ready(c)
+	} else {
+		routingErr = s.checkRouting(c, routingID)
+	}
+	if routingErr != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": routingErr.Error()})
 		return
 	}
 

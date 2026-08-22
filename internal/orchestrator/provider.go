@@ -61,6 +61,15 @@ type Status struct {
 	Instances []Instance `json:"instances"`
 }
 
+type Usage struct {
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryPercent float64 `json:"memory_percent"`
+}
+
+type MetricsProvider interface {
+	Metrics(context.Context, string) (Usage, error)
+}
+
 type Provider interface {
 	ID() ProviderID
 	Validate(context.Context, Workload) error

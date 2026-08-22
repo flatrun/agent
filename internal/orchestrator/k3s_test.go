@@ -51,10 +51,16 @@ func TestK3sApplyUsesConfiguredClusterAndNamespace(t *testing.T) {
 	if err := json.Unmarshal(runner.calls[0].input, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest["kind"] != "Deployment" {
+	if manifest["kind"] != "List" {
 		t.Fatalf("manifest = %#v", manifest)
 	}
-	spec := manifest["spec"].(map[string]any)
+	items := manifest["items"].([]any)
+	deployment := items[0].(map[string]any)
+	service := items[1].(map[string]any)
+	if deployment["kind"] != "Deployment" || service["kind"] != "Service" {
+		t.Fatalf("items = %#v", items)
+	}
+	spec := deployment["spec"].(map[string]any)
 	template := spec["template"].(map[string]any)
 	podSpec := template["spec"].(map[string]any)
 	container := podSpec["containers"].([]any)[0].(map[string]any)
@@ -77,5 +83,21 @@ func TestK3sStatusReturnsRoutableReadyPods(t *testing.T) {
 	}
 	if len(status.Instances) != 1 || status.Instances[0].Address != "10.42.0.8:8080" || !status.Instances[0].Ready {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestK3sMetricsReturnsLimitUtilization(t *testing.T) {
+	runner := &fakeKubectl{responses: [][]byte{
+		[]byte(`{"spec":{"replicas":2,"template":{"spec":{"containers":[{"resources":{"limits":{"cpu":"500m","memory":"256Mi"}}}]}}}}`),
+		[]byte(`{"items":[{"containers":[{"usage":{"cpu":"250m","memory":"128Mi"}}]},{"containers":[{"usage":{"cpu":"500m","memory":"256Mi"}}]}]}`),
+	}}
+	provider := NewK3sProvider("", "apps")
+	provider.runner = runner
+	usage, err := provider.Metrics(context.Background(), "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.CPUPercent != 75 || usage.MemoryPercent != 75 {
+		t.Fatalf("usage = %#v", usage)
 	}
 }

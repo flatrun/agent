@@ -45,11 +45,17 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 	if s.autoscaleStore == nil {
 		return autoscale.Activation{}, fmt.Errorf("Autoscaling storage is unavailable")
 	}
-	if s.config.Cluster.Orchestrator != string(orchestrator.ProviderSwarm) {
-		return autoscale.Activation{}, fmt.Errorf("Autoscaling activation requires the Swarm orchestrator")
+	orchestratorID := orchestrator.ProviderID(s.config.Cluster.Orchestrator)
+	routingID := routing.ProviderID(s.config.Cluster.Routing)
+	if routingID == "" {
+		routingID = routing.ProviderNginx
 	}
-	if s.config.Cluster.Routing != "" && s.config.Cluster.Routing != string(routing.ProviderNginx) {
-		return autoscale.Activation{}, fmt.Errorf("Autoscaling activation requires Nginx routing")
+	if orchestratorID != orchestrator.ProviderSwarm && orchestratorID != orchestrator.ProviderK3s {
+		return autoscale.Activation{}, fmt.Errorf("Autoscaling activation requires Swarm or K3s")
+	}
+	if (orchestratorID == orchestrator.ProviderSwarm && routingID != routing.ProviderNginx) ||
+		(orchestratorID == orchestrator.ProviderK3s && routingID != routing.ProviderTraefik) {
+		return autoscale.Activation{}, fmt.Errorf("The selected orchestrator and routing providers are incompatible")
 	}
 	deployment, err := s.manager.GetDeployment(name)
 	if err != nil {
@@ -71,20 +77,28 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 	if err != nil {
 		return autoscale.Activation{}, err
 	}
-	swarmProvider, err := orchestrator.NewSwarmProviderFromEnv()
-	if err != nil {
-		return autoscale.Activation{}, fmt.Errorf("create Swarm provider: %w", err)
+	var orchestratorProvider orchestrator.Provider
+	var routeProvider routing.Provider
+	if orchestratorID == orchestrator.ProviderSwarm {
+		swarmProvider, err := orchestrator.NewSwarmProviderFromEnv()
+		if err != nil {
+			return autoscale.Activation{}, fmt.Errorf("create Swarm provider: %w", err)
+		}
+		defer swarmProvider.Close()
+		workload.Placement, err = s.autoscalePlacement(ctx, swarmProvider, policy)
+		if err != nil {
+			return autoscale.Activation{}, err
+		}
+		orchestratorProvider = swarmProvider
+		routeProvider = routing.NewManagedNginxProvider(s.proxyOrchestrator.NginxManager(), s.manager)
+	} else {
+		orchestratorProvider = orchestrator.NewK3sProvider(s.config.Cluster.K3s.Kubeconfig, s.config.Cluster.K3s.Namespace)
+		routeProvider = routing.NewK3sIngressProvider(s.config.Cluster.K3s.Kubeconfig, s.config.Cluster.K3s.Namespace)
 	}
-	defer swarmProvider.Close()
-	workload.Placement, err = s.autoscalePlacement(ctx, swarmProvider, policy)
-	if err != nil {
-		return autoscale.Activation{}, err
-	}
-	routeProvider := routing.NewManagedNginxProvider(s.proxyOrchestrator.NginxManager(), s.manager)
 	stopper := autoscale.ServiceStopperFunc(func(deployment, service string) (string, error) {
 		return s.manager.StopService(deployment, service)
 	})
-	activation, err := autoscale.NewActivator(swarmProvider, routeProvider, stopper).Activate(ctx, name, deployment.Metadata.Scaling.Service, workload, routing.Route{
+	activation, err := autoscale.NewActivator(orchestratorProvider, routeProvider, stopper).Activate(ctx, name, deployment.Metadata.Scaling.Service, workload, routing.Route{
 		ID: name, Service: deployment.Metadata.Scaling.Service, Domain: domain.Domain, Path: domain.PathPrefix, Protocol: "http",
 	})
 	if err != nil {
@@ -95,7 +109,7 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 		return autoscale.Activation{}, err
 	}
 	state.Active = true
-	state.Provider = orchestrator.ProviderSwarm
+	state.Provider = orchestratorID
 	state.Service = deployment.Metadata.Scaling.Service
 	state.Replicas = activation.Workload.Desired
 	state.Route = activation.Route

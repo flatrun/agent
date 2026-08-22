@@ -867,7 +867,7 @@ func TestUpdateClusterProvidersPersistsK3sConnection(t *testing.T) {
 	env.server.probeOrchestrator = func(_ context.Context, _ orchestrator.ProviderID) error { return nil }
 	env.server.probeRouting = func(_ context.Context, _ routing.ProviderID) error { return nil }
 
-	body := bytes.NewBufferString(`{"orchestrator":"k3s","routing":"nginx","k3s":{"kubeconfig":"/etc/rancher/k3s/k3s.yaml","namespace":"flatrun"}}`)
+	body := bytes.NewBufferString(`{"orchestrator":"k3s","routing":"traefik","k3s":{"kubeconfig":"/etc/rancher/k3s/k3s.yaml","namespace":"flatrun"}}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/cluster/providers", body)
 	req.Header.Set("Authorization", "Bearer "+clusterLogin(t, env.router))
 	req.Header.Set("Content-Type", "application/json")
@@ -881,7 +881,7 @@ func TestUpdateClusterProvidersPersistsK3sConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Cluster.K3s.Kubeconfig != "/etc/rancher/k3s/k3s.yaml" || saved.Cluster.K3s.Namespace != "flatrun" {
+	if saved.Cluster.Routing != "traefik" || saved.Cluster.K3s.Kubeconfig != "/etc/rancher/k3s/k3s.yaml" || saved.Cluster.K3s.Namespace != "flatrun" {
 		t.Fatalf("unexpected K3s connection: %+v", saved.Cluster.K3s)
 	}
 }

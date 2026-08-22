@@ -24,6 +24,28 @@ type autoscaleReplicaObservation struct {
 }
 
 func (f autoscaleRuntimeFactory) Build(ctx context.Context, deployment string, state autoscale.State) (autoscale.RuntimeSession, error) {
+	if state.Provider == orchestrator.ProviderK3s {
+		provider := orchestrator.NewK3sProvider(f.server.config.Cluster.K3s.Kubeconfig, f.server.config.Cluster.K3s.Namespace)
+		status, err := provider.Status(ctx, deployment)
+		if err != nil {
+			return autoscale.RuntimeSession{}, err
+		}
+		usage, err := provider.Metrics(ctx, deployment)
+		if err != nil {
+			return autoscale.RuntimeSession{}, err
+		}
+		routeProvider := routing.NewK3sIngressProvider(f.server.config.Cluster.K3s.Kubeconfig, f.server.config.Cluster.K3s.Namespace)
+		if err := routeProvider.Reconcile(ctx, state.Route); err != nil {
+			return autoscale.RuntimeSession{}, fmt.Errorf("restore managed route state: %w", err)
+		}
+		return autoscale.RuntimeSession{
+			Input: autoscale.Input{
+				Replicas: status.Desired, CPUPercent: usage.CPUPercent, MemoryPercent: usage.MemoryPercent,
+				Diagnosis: capacity.Diagnosis{Pressure: capacity.PressureNone, Action: capacity.ActionNone, Reason: "K3s workload metrics are within policy"},
+			},
+			Executor: autoscale.NewExecutor(provider, routeProvider),
+		}, nil
+	}
 	if state.Provider != orchestrator.ProviderSwarm {
 		return autoscale.RuntimeSession{}, fmt.Errorf("orchestrator %q does not support active reconciliation", state.Provider)
 	}
