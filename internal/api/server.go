@@ -342,6 +342,9 @@ func New(cfg *config.Config, configPath string) *Server {
 			}
 		}
 	}
+	if clusterManager != nil {
+		clusterManager.SetEventPublisher(notifyService)
+	}
 
 	s := &Server{
 		config:             cfg,
