@@ -112,6 +112,15 @@ func (c *Correlator) List() []Incident {
 	return result
 }
 
+func (c *Correlator) Restore(incidents []Incident) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, incident := range incidents {
+		c.incidents[incident.CorrelationKey] = incident
+		c.lastNotifiedAt[incident.CorrelationKey] = incident.LastEventAt
+	}
+}
+
 func severityRank(severity Severity) int {
 	switch severity {
 	case SeverityCritical:

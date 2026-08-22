@@ -56,21 +56,39 @@ type Config struct {
 
 // Service loads/saves targets and delivers messages.
 type Service struct {
-	path   string
-	mu     sync.RWMutex
-	send   func(url, message string) error // overridable in tests
-	events *events.Correlator
+	path     string
+	mu       sync.RWMutex
+	send     func(url, message string) error // overridable in tests
+	events   *events.Correlator
+	store    *events.Store
+	storeErr error
 }
 
 func NewService(basePath string) *Service {
-	return &Service{
+	service := &Service{
 		path:   filepath.Join(basePath, ".flatrun", "notifications.yml"),
 		events: events.NewCorrelator(15 * time.Minute),
 	}
+	service.store, service.storeErr = events.NewStore(basePath)
+	if service.storeErr == nil {
+		incidents, err := service.store.ListIncidents()
+		if err != nil {
+			service.storeErr = err
+		} else {
+			service.events.Restore(incidents)
+		}
+	}
+	return service
 }
 
 func (s *Service) Publish(event events.Event) (events.IngestResult, error) {
+	if s.storeErr != nil {
+		return events.IngestResult{}, s.storeErr
+	}
 	result := s.events.Ingest(event)
+	if err := s.store.Record(event, result.Incident); err != nil {
+		return result, err
+	}
 	if result.Notification == events.NotificationNone {
 		return result, nil
 	}
@@ -102,7 +120,18 @@ func (s *Service) Publish(event events.Event) (events.IngestResult, error) {
 }
 
 func (s *Service) Incidents() []events.Incident {
-	return s.events.List()
+	incidents, err := s.store.ListIncidents()
+	if err != nil {
+		return s.events.List()
+	}
+	return incidents
+}
+
+func (s *Service) Close() error {
+	if s.store == nil {
+		return nil
+	}
+	return s.store.Close()
 }
 
 func (s *Service) deliverEvent(event events.Event, notification Notification) error {

@@ -60,3 +60,29 @@ func TestPublishFiltersTargetsByTopicAndNode(t *testing.T) {
 		t.Fatalf("targets = %#v", targets)
 	}
 }
+
+func TestIncidentsSurviveServiceRestart(t *testing.T) {
+	basePath := t.TempDir()
+	service := NewService(basePath)
+	started := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	if _, err := service.Publish(events.Event{Source: "fleet", Type: "node.unavailable", Severity: events.SeverityCritical, Title: "prod2 unavailable", Scope: events.Scope{Node: "prod2"}, OccurredAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := NewService(basePath)
+	defer restarted.Close()
+	incidents := restarted.Incidents()
+	if len(incidents) != 1 || incidents[0].CorrelationKey != "node:prod2" {
+		t.Fatalf("incidents = %#v", incidents)
+	}
+	result, err := restarted.Publish(events.Event{Source: "capacity", Type: "deployment.unavailable", Severity: events.SeverityCritical, Title: "app unavailable", Scope: events.Scope{Node: "prod2", Deployment: "app"}, CorrelationKey: "node:prod2", OccurredAt: started.Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Incident.EventCount != 2 || result.Notification != events.NotificationNone {
+		t.Fatalf("result = %#v", result)
+	}
+}
