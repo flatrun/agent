@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -8,43 +9,139 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/cluster"
+	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/gin-gonic/gin"
 )
 
 func (s *Server) clusterStatus(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"enabled": false,
 		})
 		return
 	}
 
-	peers := s.clusterManager.ListPeers()
+	peers := mgr.ListPeers()
 	c.JSON(http.StatusOK, gin.H{
 		"enabled":     true,
-		"server_name": s.clusterManager.ServerName(),
+		"server_name": mgr.ServerName(),
 		"peer_count":  len(peers),
 		"version":     version.Get(),
 	})
 }
 
+type clusterSetupRequest struct {
+	ServerName   string `json:"server_name" binding:"required"`
+	AdvertiseURL string `json:"advertise_url" binding:"required"`
+}
+
+func (s *Server) clusterSetup(c *gin.Context) {
+	var req clusterSetupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	req.ServerName = strings.TrimSpace(req.ServerName)
+	req.AdvertiseURL = strings.TrimRight(strings.TrimSpace(req.AdvertiseURL), "/")
+	if req.ServerName == "" || strings.ContainsAny(req.ServerName, "/\\") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Server name must not be empty or contain slashes"})
+		return
+	}
+	parsedURL, err := url.ParseRequestURI(req.AdvertiseURL)
+	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Advertise URL must be a valid HTTP or HTTPS URL"})
+		return
+	}
+
+	s.clusterMu.Lock()
+	defer s.clusterMu.Unlock()
+	if s.clusterManager != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Cluster is already enabled"})
+		return
+	}
+
+	clusterDB, err := cluster.NewDB(s.config.DeploymentsPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to initialize cluster database: %v", err)})
+		return
+	}
+	previous := s.config.Cluster
+	s.config.Cluster.Enabled = true
+	s.config.Cluster.ServerName = req.ServerName
+	s.config.Cluster.AdvertiseURL = req.AdvertiseURL
+	if s.config.Cluster.HealthInterval == "" {
+		s.config.Cluster.HealthInterval = "30s"
+	}
+	if s.config.Cluster.RequestTimeout == "" {
+		s.config.Cluster.RequestTimeout = "10s"
+	}
+	if s.configPath != "" {
+		if err := config.Save(s.config, s.configPath); err != nil {
+			s.config.Cluster = previous
+			_ = clusterDB.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save cluster configuration: %v", err)})
+			return
+		}
+	}
+
+	healthInterval, _ := time.ParseDuration(s.config.Cluster.HealthInterval)
+	requestTimeout, _ := time.ParseDuration(s.config.Cluster.RequestTimeout)
+	if healthInterval <= 0 {
+		healthInterval = 30 * time.Second
+	}
+	if requestTimeout <= 0 {
+		requestTimeout = 10 * time.Second
+	}
+	mgr := cluster.NewManager(clusterDB, req.ServerName, healthInterval, requestTimeout, s.config.Auth.JWTSecret)
+	if err := mgr.Start(context.Background()); err != nil {
+		_ = clusterDB.Close()
+		s.config.Cluster = previous
+		if s.configPath != "" {
+			_ = config.Save(s.config, s.configPath)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to start cluster: %v", err)})
+		return
+	}
+	s.clusterManager = mgr
+
+	c.JSON(http.StatusOK, gin.H{
+		"enabled":       true,
+		"server_name":   req.ServerName,
+		"advertise_url": req.AdvertiseURL,
+		"peer_count":    0,
+		"version":       version.Get(),
+	})
+}
+
+func (s *Server) getClusterManager() *cluster.Manager {
+	s.clusterMu.RLock()
+	defer s.clusterMu.RUnlock()
+	return s.clusterManager
+}
+
 func (s *Server) clusterListPeers(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
 		return
 	}
 
-	peers := s.clusterManager.ListPeers()
+	peers := mgr.ListPeers()
 	c.JSON(http.StatusOK, gin.H{"peers": peers})
 }
 
 func (s *Server) clusterInvite(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
 		return
 	}
@@ -70,7 +167,7 @@ func (s *Server) clusterInvite(c *gin.Context) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 
-	if _, err := s.clusterManager.DB().CreateInvite(invite); err != nil {
+	if _, err := mgr.DB().CreateInvite(invite); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create invite"})
 		return
 	}
@@ -82,7 +179,8 @@ func (s *Server) clusterInvite(c *gin.Context) {
 }
 
 func (s *Server) clusterAccept(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
 		return
 	}
@@ -119,7 +217,7 @@ func (s *Server) clusterAccept(c *gin.Context) {
 		InviteToken: req.InviteToken,
 		URL:         callbackURL,
 		APIKey:      ourAPIKeyForThem,
-		Name:        s.clusterManager.ServerName(),
+		Name:        mgr.ServerName(),
 	}
 
 	body, err := json.Marshal(exchangeReq)
@@ -145,7 +243,7 @@ func (s *Server) clusterAccept(c *gin.Context) {
 		return
 	}
 
-	if err := s.clusterManager.AddPeer(exchangeResp.Name, req.PeerURL, exchangeResp.APIKey); err != nil {
+	if err := mgr.AddPeer(exchangeResp.Name, req.PeerURL, exchangeResp.APIKey); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to store peer: %v", err)})
 		return
 	}
@@ -174,7 +272,8 @@ type exchangeResponse struct {
 }
 
 func (s *Server) clusterExchange(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
 		return
 	}
@@ -186,7 +285,7 @@ func (s *Server) clusterExchange(c *gin.Context) {
 	}
 
 	tokenHash := cluster.HashToken(req.InviteToken)
-	invite, err := s.clusterManager.DB().GetInviteByHash(tokenHash)
+	invite, err := mgr.DB().GetInviteByHash(tokenHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid or expired invite token"})
@@ -206,7 +305,7 @@ func (s *Server) clusterExchange(c *gin.Context) {
 		return
 	}
 
-	if err := s.clusterManager.DB().ConsumeInvite(tokenHash, req.Name); err != nil {
+	if err := mgr.DB().ConsumeInvite(tokenHash, req.Name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to consume invite"})
 		return
 	}
@@ -218,7 +317,7 @@ func (s *Server) clusterExchange(c *gin.Context) {
 	}
 	ourAPIKeyForThem := base64.URLEncoding.EncodeToString(apiKeyBytes)
 
-	if err := s.clusterManager.AddPeer(req.Name, req.URL, req.APIKey); err != nil {
+	if err := mgr.AddPeer(req.Name, req.URL, req.APIKey); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to store peer: %v", err)})
 		return
 	}
@@ -229,7 +328,7 @@ func (s *Server) clusterExchange(c *gin.Context) {
 
 	c.JSON(http.StatusOK, exchangeResponse{
 		APIKey: ourAPIKeyForThem,
-		Name:   s.clusterManager.ServerName(),
+		Name:   mgr.ServerName(),
 	})
 }
 
@@ -242,30 +341,57 @@ func (s *Server) createClusterAPIKey(rawKey, peerName string) {
 		1,
 		fmt.Sprintf("cluster-peer-%s", peerName),
 		fmt.Sprintf("Auto-generated API key for cluster peer %s", peerName),
-		auth.RoleAdmin,
-		nil,
+		auth.Role(""),
+		[]string{
+			auth.PermClusterRead.String(),
+			auth.PermDeploymentsRead.String(),
+			auth.PermDeploymentsWrite.String(),
+			auth.PermContainersRead.String(),
+			auth.PermContainersWrite.String(),
+			auth.PermSystemRead.String(),
+			auth.PermTrafficRead.String(),
+		},
 		nil,
 		time.Time{},
 	)
 }
 
 func (s *Server) clusterRemovePeer(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
 		return
 	}
 
 	name := c.Param("name")
-	if err := s.clusterManager.RemovePeer(name); err != nil {
+	if err := mgr.RemovePeer(name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	s.revokeClusterAPIKey(name)
 
 	c.JSON(http.StatusOK, gin.H{"status": "removed", "peer": name})
 }
 
+func (s *Server) revokeClusterAPIKey(peerName string) {
+	if s.authManager == nil {
+		return
+	}
+	keys, err := s.authManager.GetAllAPIKeys()
+	if err != nil {
+		return
+	}
+	name := fmt.Sprintf("cluster-peer-%s", peerName)
+	for _, key := range keys {
+		if key.Name == name {
+			_ = s.authManager.DeactivateAPIKey(key.ID)
+		}
+	}
+}
+
 func (s *Server) clusterProxy(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
 		return
 	}
@@ -273,7 +399,7 @@ func (s *Server) clusterProxy(c *gin.Context) {
 	name := c.Param("name")
 	path := c.Param("path")
 
-	client, err := s.clusterManager.GetPeer(name)
+	client, err := mgr.GetPeer(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -299,7 +425,8 @@ func (s *Server) clusterProxy(c *gin.Context) {
 }
 
 func (s *Server) clusterAggregateDeployments(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
 		return
 	}
@@ -310,18 +437,19 @@ func (s *Server) clusterAggregateDeployments(c *gin.Context) {
 		return
 	}
 
-	localData, err := json.Marshal(deployments)
+	localData, err := json.Marshal(NewList(deployments, "deployments").Also("path", s.manager.BasePath()))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal local deployments"})
 		return
 	}
 
-	result := cluster.AggregateFromPeers(c.Request.Context(), localData, s.clusterManager, "/api/deployments")
+	result := cluster.AggregateFromPeers(c.Request.Context(), localData, mgr, "/api/deployments")
 	c.JSON(http.StatusOK, result)
 }
 
 func (s *Server) clusterAggregateStats(c *gin.Context) {
-	if s.clusterManager == nil {
+	mgr := s.getClusterManager()
+	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
 		return
 	}
@@ -337,6 +465,6 @@ func (s *Server) clusterAggregateStats(c *gin.Context) {
 		return
 	}
 
-	result := cluster.AggregateFromPeers(c.Request.Context(), localData, s.clusterManager, "/api/health")
+	result := cluster.AggregateFromPeers(c.Request.Context(), localData, mgr, "/api/health")
 	c.JSON(http.StatusOK, result)
 }

@@ -98,6 +98,7 @@ type Server struct {
 	auditManager       *audit.Manager
 	auditMiddleware    *audit.Middleware
 	powerDNSManager    *dns.PowerDNSManager
+	clusterMu          sync.RWMutex
 	clusterManager     *cluster.Manager
 	setupManager       *setup.Manager
 	setupHandlers      *setup.Handlers
@@ -872,6 +873,7 @@ func (s *Server) setupRoutes() {
 			clusterGroup.Use(s.authMiddleware.RequirePermission(auth.PermClusterRead))
 			{
 				clusterGroup.GET("/status", s.clusterStatus)
+				clusterGroup.POST("/setup", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterSetup)
 				clusterGroup.GET("/peers", s.clusterListPeers)
 				clusterGroup.POST("/invite", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterInvite)
 				clusterGroup.POST("/accept", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterAccept)

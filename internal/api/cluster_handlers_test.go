@@ -77,6 +77,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 
 	server := &Server{
 		config:         cfg,
+		configPath:     tmpDir + "/config.yml",
 		authManager:    authManager,
 		clusterManager: clusterManager,
 	}
@@ -96,6 +97,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		clusterGroup.Use(authMiddleware.RequirePermission(auth.PermClusterRead))
 		{
 			clusterGroup.GET("/status", server.clusterStatus)
+			clusterGroup.POST("/setup", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterSetup)
 			clusterGroup.GET("/peers", server.clusterListPeers)
 			clusterGroup.POST("/invite", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterInvite)
 			clusterGroup.POST("/accept", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterAccept)
@@ -107,8 +109,8 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 	}
 
 	cleanup := func() {
-		if clusterManager != nil {
-			clusterManager.Stop()
+		if manager := server.getClusterManager(); manager != nil {
+			manager.Stop()
 		}
 		authManager.Close()
 		os.RemoveAll(tmpDir)
@@ -119,6 +121,99 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		router:  router,
 		tmpDir:  tmpDir,
 		cleanup: cleanup,
+	}
+}
+
+func TestClusterSetupEnablesClusterWithoutRestart(t *testing.T) {
+	env := setupClusterTestServer(t, "", false)
+	defer env.cleanup()
+
+	token := clusterLogin(t, env.router)
+	body, _ := json.Marshal(map[string]string{
+		"server_name":   "server-a",
+		"advertise_url": "https://server-a.example.com/",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/cluster/setup", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/cluster/status", nil)
+	statusReq.Header.Set("Authorization", "Bearer "+token)
+	statusWriter := httptest.NewRecorder()
+	env.router.ServeHTTP(statusWriter, statusReq)
+	if statusWriter.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", statusWriter.Code, statusWriter.Body.String())
+	}
+
+	var status map[string]interface{}
+	if err := json.Unmarshal(statusWriter.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["enabled"] != true || status["server_name"] != "server-a" {
+		t.Fatalf("Unexpected status: %s", statusWriter.Body.String())
+	}
+	if env.server.config.Cluster.AdvertiseURL != "https://server-a.example.com" {
+		t.Fatalf("AdvertiseURL = %q", env.server.config.Cluster.AdvertiseURL)
+	}
+}
+
+func TestClusterSetupRejectsInvalidAdvertiseURL(t *testing.T) {
+	env := setupClusterTestServer(t, "", false)
+	defer env.cleanup()
+
+	token := clusterLogin(t, env.router)
+	body, _ := json.Marshal(map[string]string{"server_name": "server-a", "advertise_url": "server-a"})
+	req := httptest.NewRequest(http.MethodPost, "/api/cluster/setup", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if env.server.getClusterManager() != nil {
+		t.Fatal("Cluster manager started after invalid setup")
+	}
+}
+
+func TestClusterAPIKeyUsesExplicitPermissions(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+
+	env.server.createClusterAPIKey("peer-key-for-test", "server-b")
+	keys, err := env.server.authManager.GetAllAPIKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var peerKey *auth.APIKey
+	for i := range keys {
+		if keys[i].Name == "cluster-peer-server-b" {
+			peerKey = &keys[i]
+			break
+		}
+	}
+	if peerKey == nil {
+		t.Fatal("Cluster API key was not created")
+	}
+	if peerKey.Role == auth.RoleAdmin {
+		t.Fatal("Cluster API key has administrator role")
+	}
+	permissions := make(map[string]bool, len(peerKey.Permissions))
+	for _, permission := range peerKey.Permissions {
+		permissions[permission] = true
+	}
+	if !permissions[auth.PermDeploymentsRead.String()] || !permissions[auth.PermDeploymentsWrite.String()] {
+		t.Fatalf("permissions = %#v", peerKey.Permissions)
+	}
+	if permissions[auth.PermUsersWrite.String()] || permissions[auth.PermConfigWrite.String()] {
+		t.Fatalf("permissions include administrative access: %#v", peerKey.Permissions)
 	}
 }
 
