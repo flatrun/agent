@@ -136,7 +136,11 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 			clusterGroup.POST("/invite", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterInvite)
 			clusterGroup.POST("/accept", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterAccept)
 			clusterGroup.DELETE("/peers/:name", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterRemovePeer)
-			clusterGroup.Any("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.GET("/peers/:name/proxy/*path", server.clusterProxy)
+			clusterGroup.POST("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.PUT("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.PATCH("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.DELETE("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
 			clusterGroup.GET("/deployments", server.clusterAggregateDeployments)
 			clusterGroup.GET("/stats", server.clusterAggregateStats)
 			clusterGroup.GET("/capacity", server.clusterAggregateCapacity)
@@ -814,6 +818,47 @@ func TestClusterProxyForwardsToPeer(t *testing.T) {
 	}
 	if resp["proxied_method"] != "GET" {
 		t.Errorf("Proxied method = %s, want GET", resp["proxied_method"])
+	}
+}
+
+func TestClusterProxyAllowsReadWithoutWrite(t *testing.T) {
+	peerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"deployment":{"name":"shop"}}`))
+	}))
+	defer peerServer.Close()
+
+	env := setupClusterTestServer(t, "primary", true)
+	defer env.cleanup()
+	if err := env.server.clusterManager.AddPeer("remote", peerServer.URL, "key"); err != nil {
+		t.Fatal(err)
+	}
+	user, err := env.server.authManager.CreateUser("fleet-reader", "", "password", auth.RoleService, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = env.server.authManager.CreateAPIKeyFromRaw(
+		"fleet-reader-key", user.ID, "fleet-reader", "Fleet reader", auth.Role(""),
+		[]string{auth.PermClusterRead.String()}, nil, time.Time{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/peers/remote/proxy/deployments/shop", nil)
+	req.Header.Set("Authorization", "Bearer fleet-reader-key")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("read status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/cluster/peers/remote/proxy/deployments/shop/restart", nil)
+	req.Header.Set("Authorization", "Bearer fleet-reader-key")
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("write status = %d, body = %s", w.Code, w.Body.String())
 	}
 }
 

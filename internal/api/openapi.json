@@ -1736,6 +1736,162 @@
         "x-permission": "cluster:write"
       }
     },
+    "/api/cluster/peers/{name}/proxy/{path}": {
+      "delete": {
+        "operationId": "delete-cluster-peers-by-name-proxy-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      },
+      "get": {
+        "operationId": "get-cluster-peers-by-name-proxy-by-path",
+        "tags": [
+          "cluster"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patch-cluster-peers-by-name-proxy-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      },
+      "post": {
+        "operationId": "post-cluster-peers-by-name-proxy-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      },
+      "put": {
+        "operationId": "put-cluster-peers-by-name-proxy-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      }
+    },
     "/api/cluster/providers": {
       "get": {
         "operationId": "get-cluster-providers",
