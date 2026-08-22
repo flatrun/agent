@@ -137,11 +137,11 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 	}
 }
 
-func TestActivateDeploymentAutoscaleUsesRequestContext(t *testing.T) {
-	contextCanceled := false
+func TestActivateDeploymentAutoscaleSurvivesRequestCancellation(t *testing.T) {
+	contextCanceled := true
 	server := &Server{runAutoscaleActivation: func(ctx context.Context, _ string) (autoscale.Activation, error) {
-		contextCanceled = ctx.Err() == context.Canceled
-		return autoscale.Activation{}, ctx.Err()
+		contextCanceled = ctx.Err() != nil
+		return autoscale.Activation{}, nil
 	}}
 	router := gin.New()
 	router.POST("/deployments/:name/autoscale/activate", server.activateDeploymentAutoscale)
@@ -152,10 +152,10 @@ func TestActivateDeploymentAutoscaleUsesRequestContext(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if !contextCanceled {
-		t.Fatal("activation did not receive the canceled request context")
+	if contextCanceled {
+		t.Fatal("request cancellation stopped activation")
 	}
-	if w.Code != http.StatusUnprocessableEntity {
+	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
 }

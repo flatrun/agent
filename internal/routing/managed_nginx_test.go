@@ -92,3 +92,18 @@ func TestManagedNginxProviderRestoresRouteWithoutReloading(t *testing.T) {
 		t.Fatalf("manager = %#v", manager)
 	}
 }
+
+func TestManagedNginxProviderOwnsReturnedBackendSlice(t *testing.T) {
+	route := Route{ID: "shop", Backends: []Backend{{ID: "one", Healthy: true}}}
+	provider := NewManagedNginxProvider(&managedNginxRecorder{}, deploymentSourceStub{}, route).(*managedNginxProvider)
+
+	loaded, ok := provider.route("shop")
+	if !ok {
+		t.Fatal("route was not restored")
+	}
+	loaded.Backends[0].Healthy = false
+	stored, _ := provider.route("shop")
+	if !stored.Backends[0].Healthy {
+		t.Fatal("caller mutation changed the stored route")
+	}
+}

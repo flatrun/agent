@@ -143,5 +143,5 @@ func (p *managedNginxProvider) route(id string) (Route, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	route, ok := p.routes[id]
-	return route, ok
+	return cloneRoute(route), ok
 }
