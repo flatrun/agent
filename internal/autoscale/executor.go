@@ -16,6 +16,7 @@ type Executor struct {
 type Execution struct {
 	Decision Decision            `json:"decision"`
 	Status   orchestrator.Status `json:"status"`
+	Route    routing.Route       `json:"route,omitempty"`
 	Pending  bool                `json:"pending"`
 }
 
@@ -51,6 +52,7 @@ func (e *Executor) Execute(ctx context.Context, workloadID string, route routing
 		if err := e.routing.Reconcile(ctx, updated); err != nil {
 			return result, fmt.Errorf("publish scaled route: %w", err)
 		}
+		result.Route = updated
 		return result, nil
 	case ActionRemoveReplica:
 		status, err := e.orchestrator.Status(ctx, workloadID)
@@ -66,6 +68,16 @@ func (e *Executor) Execute(ctx context.Context, workloadID string, route routing
 		}
 		status, err = e.orchestrator.Scale(ctx, workloadID, decision.Replicas)
 		result.Status = status
+		if err == nil {
+			updated, routeErr := routeWithReadyInstances(route, status)
+			if routeErr != nil {
+				return result, routeErr
+			}
+			if routeErr = e.routing.Reconcile(ctx, updated); routeErr != nil {
+				return result, fmt.Errorf("publish scaled route: %w", routeErr)
+			}
+			result.Route = updated
+		}
 		return result, err
 	default:
 		return result, fmt.Errorf("Unknown autoscaling action %q", decision.Action)

@@ -71,3 +71,25 @@ func TestRunnerPublishesCorrelatedBlockedEvent(t *testing.T) {
 		t.Fatalf("unexpected events: %+v", publisher.events)
 	}
 }
+
+func TestRunnerPersistsSuccessfulExecution(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.ScaleUpWindows = 1
+	store := &runnerStore{policy: policy, state: State{Active: true, Replicas: 1}}
+	provider := &fakeOrchestrator{status: orchestrator.Status{
+		Workload: "shop", Desired: 1, Available: 2,
+		Instances: []orchestrator.Instance{
+			{ID: "one", Address: "10.0.0.1:8080", Healthy: true, Ready: true},
+			{ID: "two", Address: "10.0.0.2:8080", Healthy: true, Ready: true},
+		},
+	}}
+	router := &fakeRouter{}
+	runner := NewRunner(store, NewExecutor(provider, router), nil, "prod-1")
+	result, err := runner.Reconcile(context.Background(), "shop", Input{Now: time.Now(), Replicas: 1, CPUPercent: 95}, routing.Route{ID: "shop", Service: "web", Domain: "shop.example.com", Protocol: "http"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State.Replicas != 2 || len(result.State.Route.Backends) != 2 {
+		t.Fatalf("state = %#v", result.State)
+	}
+}

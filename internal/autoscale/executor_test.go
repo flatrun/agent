@@ -27,6 +27,10 @@ func (f *fakeOrchestrator) Resize(_ context.Context, _ string, resources orchest
 func (f *fakeOrchestrator) Scale(_ context.Context, _ string, replicas int) (orchestrator.Status, error) {
 	f.scaledTo = replicas
 	f.status.Desired = replicas
+	if len(f.status.Instances) > replicas {
+		f.status.Instances = f.status.Instances[:replicas]
+		f.status.Available = replicas
+	}
 	return f.status, nil
 }
 func (f *fakeOrchestrator) Status(context.Context, string) (orchestrator.Status, error) {
@@ -101,7 +105,10 @@ func TestExecutorWaitsForNewReplicaBeforeRouting(t *testing.T) {
 func TestExecutorDrainsBeforeRemovingReplica(t *testing.T) {
 	orchestratorProvider := &fakeOrchestrator{status: orchestrator.Status{
 		Workload: "shop", Desired: 2, Available: 2,
-		Instances: []orchestrator.Instance{{ID: "one", Ready: true}, {ID: "two", Ready: true}},
+		Instances: []orchestrator.Instance{
+			{ID: "one", Address: "10.0.0.1:8080", Healthy: true, Ready: true},
+			{ID: "two", Address: "10.0.0.2:8080", Healthy: true, Ready: true},
+		},
 	}}
 	router := &fakeRouter{}
 	_, err := NewExecutor(orchestratorProvider, router).Execute(
@@ -113,7 +120,7 @@ func TestExecutorDrainsBeforeRemovingReplica(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
-	if router.drained != "two" || orchestratorProvider.scaledTo != 1 {
+	if router.drained != "two" || orchestratorProvider.scaledTo != 1 || len(router.reconciled.Backends) != 1 {
 		t.Fatalf("drained = %q, scaled = %d", router.drained, orchestratorProvider.scaledTo)
 	}
 }

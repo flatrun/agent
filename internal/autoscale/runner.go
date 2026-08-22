@@ -67,6 +67,17 @@ func (r *Runner) Reconcile(ctx context.Context, deployment string, input Input, 
 		r.publishFailure(deployment, err.Error(), events.SeverityCritical)
 		return result, fmt.Errorf("execute autoscaling decision: %w", err)
 	}
+	if execution.Pending {
+		return result, nil
+	}
+	nextState.Replicas = execution.Status.Desired
+	if execution.Route.ID != "" {
+		nextState.Route = execution.Route
+	}
+	if err := r.store.SetState(deployment, nextState); err != nil {
+		return result, fmt.Errorf("save autoscaling execution: %w", err)
+	}
+	result.State = nextState
 	return result, nil
 }
 
