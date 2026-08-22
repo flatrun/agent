@@ -137,6 +137,29 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 	}
 }
 
+func TestActivateDeploymentAutoscaleUsesRequestContext(t *testing.T) {
+	contextCanceled := false
+	server := &Server{runAutoscaleActivation: func(ctx context.Context, _ string) (autoscale.Activation, error) {
+		contextCanceled = ctx.Err() == context.Canceled
+		return autoscale.Activation{}, ctx.Err()
+	}}
+	router := gin.New()
+	router.POST("/deployments/:name/autoscale/activate", server.activateDeploymentAutoscale)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/deployments/shop/autoscale/activate", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if !contextCanceled {
+		t.Fatal("activation did not receive the canceled request context")
+	}
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d", w.Code)
+	}
+}
+
 func TestCapacityClaimFitsWorkloadLimits(t *testing.T) {
 	resources := orchestrator.Resources{CPULimit: 2, MemoryLimit: 2 << 30}
 	claim := clusterCapacityClaimResponse{Node: orchestrator.NodeIdentity{ClusterID: "swarm-1"}, MaxCPU: 2, MaxMemory: 2 << 30}

@@ -92,7 +92,7 @@ func (p *routeProvider) Reconcile(ctx context.Context, route Route) error {
 		return err
 	}
 	p.mu.Lock()
-	p.routes[route.ID] = route
+	p.routes[route.ID] = cloneRoute(route)
 	p.mu.Unlock()
 	return nil
 }
@@ -100,6 +100,7 @@ func (p *routeProvider) Reconcile(ctx context.Context, route Route) error {
 func (p *routeProvider) Drain(ctx context.Context, routeID, backendID string) error {
 	p.mu.RLock()
 	route, ok := p.routes[routeID]
+	route = cloneRoute(route)
 	p.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("Route %q is not managed", routeID)

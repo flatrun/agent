@@ -2419,6 +2419,25 @@ func TestAssignUpstreams(t *testing.T) {
 	}
 }
 
+func TestAssignUpstreamsKeepsOverridePortsDistinct(t *testing.T) {
+	servers := []serverData{{Locations: []locationData{
+		{Service: "web", RouteService: "web", ContainerPort: 8080},
+		{Service: "web", RouteService: "web", ContainerPort: 9090},
+	}}}
+	overrides := map[string][]UpstreamBackend{
+		"web:8080": {{Address: "10.0.0.8:8080", Healthy: true}},
+		"web:9090": {{Address: "10.0.0.9:9090", Healthy: true}},
+	}
+
+	upstreams := assignUpstreams(servers, false, overrides)
+	if len(upstreams) != 2 || upstreams[0].Name == upstreams[1].Name {
+		t.Fatalf("upstreams = %#v", upstreams)
+	}
+	if upstreams[0].Targets[0].Address != "10.0.0.8:8080" || upstreams[1].Targets[0].Address != "10.0.0.9:9090" {
+		t.Fatalf("upstreams = %#v", upstreams)
+	}
+}
+
 func TestRenderMultiDomain_BackendOverridesPreserveDeploymentConfig(t *testing.T) {
 	compose := "name: tenant-a\nservices:\n  web:\n    container_name: tenant-a-web\n"
 	m, deployment := newManagerWithDeployment(t, []models.DomainConfig{
@@ -2427,7 +2446,7 @@ func TestRenderMultiDomain_BackendOverridesPreserveDeploymentConfig(t *testing.T
 	deployment.Metadata.Security = &models.DeploymentSecurityConfig{Enabled: true, BlockedIPs: []string{"192.0.2.10"}}
 
 	config, err := m.renderMultiDomainConfigWithBackends(deployment, false, map[string][]UpstreamBackend{
-		"web": {
+		"web:8080": {
 			{Address: "10.42.0.8:8080", Healthy: true, Weight: 2},
 			{Address: "10.42.1.9:8080", Healthy: false, Weight: 1},
 		},
@@ -2436,11 +2455,16 @@ func TestRenderMultiDomain_BackendOverridesPreserveDeploymentConfig(t *testing.T
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"listen 443 ssl", "deny 192.0.2.10", "server 10.42.0.8:8080 weight=2 resolve;",
-		"server 10.42.1.9:8080 weight=1 down resolve;", "set $upstream flatrun_tenant-a-web_8080;",
+		"listen 443 ssl", "deny 192.0.2.10", "server 10.42.0.8:8080 weight=2;",
+		"server 10.42.1.9:8080 weight=1 down;", "set $upstream flatrun_tenant-a-web_8080;",
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("missing %q in:\n%s", expected, config)
+		}
+	}
+	for _, unsupported := range []string{"keepalive 16", " resolve;", "zone flatrun_"} {
+		if strings.Contains(config, unsupported) {
+			t.Fatalf("unsupported upstream directive %q remains in:\n%s", unsupported, config)
 		}
 	}
 	if strings.Contains(config, "server tenant-a-web:8080 resolve;") {

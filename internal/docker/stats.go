@@ -113,15 +113,35 @@ func parseContainerDeploymentLabels(output string) map[string]string {
 }
 
 func GetManagedDeploymentStats(deployment string) ([]ContainerStats, error) {
-	stats, err := GetAllContainerStats()
+	if strings.TrimSpace(deployment) == "" {
+		return []ContainerStats{}, nil
+	}
+	ps := exec.Command("docker", "ps", "-q", "--filter", "label=flatrun.deployment="+deployment)
+	containerIDs, err := ps.Output()
 	if err != nil {
 		return nil, err
 	}
-	result := make([]ContainerStats, 0, len(stats))
-	for _, stat := range stats {
-		if stat.DeploymentName == deployment {
-			result = append(result, stat)
+	ids := strings.Fields(string(containerIDs))
+	if len(ids) == 0 {
+		return []ContainerStats{}, nil
+	}
+	args := append([]string{"stats", "--no-stream", "--format", "{{json .}}"}, ids...)
+	output, err := exec.Command("docker", args...).Output()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ContainerStats, 0, len(ids))
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
 		}
+		var raw dockerStatsJSON
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+		stat := parseStats(&raw)
+		stat.DeploymentName = deployment
+		result = append(result, *stat)
 	}
 	return result, nil
 }

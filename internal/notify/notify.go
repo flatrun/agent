@@ -148,6 +148,9 @@ func (s *Service) Publish(event events.Event) (events.IngestResult, error) {
 }
 
 func (s *Service) Incidents() []events.Incident {
+	if s.store == nil || s.storeErr != nil {
+		return s.events.List()
+	}
 	incidents, err := s.store.ListIncidents()
 	if err != nil {
 		return s.events.List()

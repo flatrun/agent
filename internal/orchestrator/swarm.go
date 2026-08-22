@@ -41,7 +41,7 @@ func NewSwarmProvider(client swarmClient) *SwarmProvider {
 }
 
 func NewSwarmProviderFromEnv() (*SwarmProvider, error) {
-	cli, err := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, err
 	}

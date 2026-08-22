@@ -124,7 +124,7 @@ func TestExecutorPublishesReplicaThatBecameReady(t *testing.T) {
 	}
 }
 
-func TestExecutorDrainsBeforeRemovingReplica(t *testing.T) {
+func TestExecutorRoutesTheReplicaSetChosenByTheOrchestrator(t *testing.T) {
 	orchestratorProvider := &fakeOrchestrator{status: orchestrator.Status{
 		Workload: "shop", Desired: 2, Available: 2,
 		Instances: []orchestrator.Instance{
@@ -142,7 +142,7 @@ func TestExecutorDrainsBeforeRemovingReplica(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
-	if router.drained != "two" || orchestratorProvider.scaledTo != 1 || len(router.reconciled.Backends) != 1 {
+	if router.drained != "" || orchestratorProvider.scaledTo != 1 || len(router.reconciled.Backends) != 1 {
 		t.Fatalf("drained = %q, scaled = %d", router.drained, orchestratorProvider.scaledTo)
 	}
 }

@@ -1548,21 +1548,22 @@
     "/api/cluster/capacity/claim": {
       "post": {
         "operationId": "post-cluster-capacity-claim",
-        "tags": [
-          "cluster"
-        ],
         "responses": {
           "200": {
-            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/api.clusterCapacityClaimResponse"
                 }
               }
-            }
+            },
+            "description": "Success"
           }
-        }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:capacity:claim"
       }
     },
     "/api/cluster/deployments": {

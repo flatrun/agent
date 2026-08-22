@@ -57,6 +57,22 @@ func TestNginxProviderRendersWeightedUpstreamAndDrainsBackend(t *testing.T) {
 	}
 }
 
+func TestNginxProviderOwnsReconciledBackendSlice(t *testing.T) {
+	writer := &memoryConfigWriter{}
+	provider := NewNginxProvider(writer)
+	route := testRoute()
+	if err := provider.Reconcile(context.Background(), route); err != nil {
+		t.Fatal(err)
+	}
+	route.Backends[0].Healthy = false
+	if err := provider.Drain(context.Background(), "shop", "replica-a"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(writer.content, "server 10.0.0.12:8080 weight=1 down;") {
+		t.Fatalf("caller mutation changed the stored route:\n%s", writer.content)
+	}
+}
+
 func TestTraefikProviderExcludesDrainedBackend(t *testing.T) {
 	writer := &memoryConfigWriter{}
 	provider := NewTraefikProvider(writer)

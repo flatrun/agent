@@ -35,10 +35,7 @@ func (f autoscaleRuntimeFactory) Build(ctx context.Context, deployment string, s
 		if err != nil {
 			return autoscale.RuntimeSession{}, err
 		}
-		routeProvider := routing.NewK3sIngressProvider(f.server.config.Cluster.K3s.Kubeconfig, f.server.config.Cluster.K3s.Namespace)
-		if err := routeProvider.Reconcile(ctx, state.Route); err != nil {
-			return autoscale.RuntimeSession{}, fmt.Errorf("restore managed route state: %w", err)
-		}
+		routeProvider := routing.NewK3sIngressProvider(f.server.config.Cluster.K3s.Kubeconfig, f.server.config.Cluster.K3s.Namespace, state.Route)
 		return autoscale.RuntimeSession{
 			Input: autoscale.Input{
 				Replicas: status.Desired, CPUPercent: usage.CPUPercent, MemoryPercent: usage.MemoryPercent,
@@ -93,10 +90,7 @@ func (f autoscaleRuntimeFactory) Build(ctx context.Context, deployment string, s
 		}
 		input.FleetOffer = capacity.Offer{Enabled: available}
 	}
-	routeProvider := routing.NewManagedNginxProvider(f.server.proxyOrchestrator.NginxManager(), f.server.manager)
-	if err := routeProvider.Reconcile(ctx, state.Route); err != nil {
-		return fail(fmt.Errorf("restore managed route state: %w", err))
-	}
+	routeProvider := routing.NewManagedNginxProvider(f.server.proxyOrchestrator.NginxManager(), f.server.manager, state.Route)
 	return autoscale.RuntimeSession{
 		Input: input, Executor: autoscale.NewExecutor(provider, routeProvider), Close: provider.Close,
 	}, nil

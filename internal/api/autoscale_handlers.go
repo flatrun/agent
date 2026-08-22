@@ -33,7 +33,7 @@ func (s *Server) activateDeploymentAutoscale(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Autoscaling activation is unavailable"})
 		return
 	}
-	activation, err := s.runAutoscaleActivation(c, c.Param("name"))
+	activation, err := s.runAutoscaleActivation(c.Request.Context(), c.Param("name"))
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return

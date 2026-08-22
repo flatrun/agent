@@ -32,23 +32,11 @@ func (s *Server) agentURL(c *gin.Context) string {
 	if c.Request.TLS != nil {
 		scheme = "https"
 	}
-	if forwarded := firstForwardedValue(c.GetHeader("X-Forwarded-Proto")); forwarded != "" {
-		scheme = forwarded
-	}
-
 	host := c.Request.Host
-	if forwarded := firstForwardedValue(c.GetHeader("X-Forwarded-Host")); forwarded != "" {
-		host = forwarded
-	}
 	if host == "" {
 		return ""
 	}
 	return scheme + "://" + host
-}
-
-func firstForwardedValue(value string) string {
-	value, _, _ = strings.Cut(value, ",")
-	return strings.TrimSpace(value)
 }
 
 func (s *Server) getNetworkHealth(c *gin.Context) {

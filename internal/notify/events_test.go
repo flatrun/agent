@@ -1,12 +1,25 @@
 package notify
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flatrun/agent/internal/events"
 )
+
+func TestIncidentsFallsBackWhenStoreCannotOpen(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(base, []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(base)
+	if incidents := service.Incidents(); len(incidents) != 0 {
+		t.Fatalf("incidents = %#v", incidents)
+	}
+}
 
 func TestPublishSendsOneNotificationForCorrelatedFailure(t *testing.T) {
 	service := NewService(t.TempDir())

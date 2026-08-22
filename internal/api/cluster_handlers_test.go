@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -121,7 +122,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		protected.GET("/test/users", authMiddleware.RequirePermission(auth.PermUsersWrite), func(c *gin.Context) {
 			c.Status(http.StatusNoContent)
 		})
-		protected.POST("/cluster/capacity/claim", server.clusterCapacityClaim)
+		protected.POST("/cluster/capacity/claim", authMiddleware.RequirePermission(auth.PermClusterCapacityClaim), server.clusterCapacityClaim)
 		clusterGroup := protected.Group("/cluster")
 		clusterGroup.Use(authMiddleware.RequirePermission(auth.PermClusterRead))
 		{
@@ -232,8 +233,8 @@ func TestUpdateClusterPeerPolicyThroughHTTP(t *testing.T) {
 		t.Fatalf("list API keys: %v", err)
 	}
 	for _, key := range keys {
-		if key.Name == "cluster-peer-server-b" && len(key.Permissions) != 0 {
-			t.Fatalf("capacity offer unexpectedly granted general API permissions: %#v", key.Permissions)
+		if key.Name == "cluster-peer-server-b" && !slices.Equal(key.Permissions, []string{auth.PermClusterCapacityClaim.String()}) {
+			t.Fatalf("capacity offer permissions = %#v", key.Permissions)
 		}
 	}
 	claimReq := httptest.NewRequest(http.MethodPost, "/api/cluster/capacity/claim", nil)
@@ -402,7 +403,7 @@ func TestClusterAPIKeyEnforcesPermissionsThroughHTTP(t *testing.T) {
 	}
 }
 
-func TestCapacityClaimDeniesUnpermittedPeerThroughHTTP(t *testing.T) {
+func TestCapacityClaimRejectsUnpermittedPeerThroughHTTP(t *testing.T) {
 	env := setupClusterTestServer(t, "server-a", true)
 	defer env.cleanup()
 	const rawKey = "peer-capacity-key-for-test"
@@ -416,15 +417,8 @@ func TestCapacityClaimDeniesUnpermittedPeerThroughHTTP(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	w := httptest.NewRecorder()
 	env.router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
+	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
-	}
-	var response clusterCapacityClaimResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Enabled || response.Reason == "" {
-		t.Fatalf("response = %#v", response)
 	}
 }
 

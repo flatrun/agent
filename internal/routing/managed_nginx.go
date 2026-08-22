@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 
 	"github.com/flatrun/agent/internal/nginx"
@@ -29,8 +30,12 @@ type managedNginxProvider struct {
 	routes      map[string]Route
 }
 
-func NewManagedNginxProvider(manager ManagedNginx, deployments DeploymentSource) Provider {
-	return &managedNginxProvider{manager: manager, deployments: deployments, routes: make(map[string]Route)}
+func NewManagedNginxProvider(manager ManagedNginx, deployments DeploymentSource, restored ...Route) Provider {
+	routes := make(map[string]Route, len(restored))
+	for _, route := range restored {
+		routes[route.ID] = cloneRoute(route)
+	}
+	return &managedNginxProvider{manager: manager, deployments: deployments, routes: routes}
 }
 
 func (p *managedNginxProvider) ID() ProviderID { return ProviderNginx }
@@ -57,7 +62,11 @@ func (p *managedNginxProvider) Reconcile(ctx context.Context, route Route) error
 	for _, backend := range route.Backends {
 		backends = append(backends, nginx.UpstreamBackend{Address: backend.Address, Healthy: backend.Healthy, Weight: backend.Weight})
 	}
-	content, err := p.manager.RenderVirtualHostWithBackends(deployment, map[string][]nginx.UpstreamBackend{route.Service: backends})
+	_, port, err := net.SplitHostPort(route.Backends[0].Address)
+	if err != nil {
+		return fmt.Errorf("resolve managed backend port: %w", err)
+	}
+	content, err := p.manager.RenderVirtualHostWithBackends(deployment, map[string][]nginx.UpstreamBackend{route.Service + ":" + port: backends})
 	if err != nil {
 		return fmt.Errorf("render deployment route: %w", err)
 	}
@@ -75,9 +84,14 @@ func (p *managedNginxProvider) Reconcile(ctx context.Context, route Route) error
 		return fmt.Errorf("reload Nginx: %w", err)
 	}
 	p.mu.Lock()
-	p.routes[route.ID] = route
+	p.routes[route.ID] = cloneRoute(route)
 	p.mu.Unlock()
 	return nil
+}
+
+func cloneRoute(route Route) Route {
+	route.Backends = append([]Backend(nil), route.Backends...)
+	return route
 }
 
 func (p *managedNginxProvider) Drain(ctx context.Context, routeID, backendID string) error {

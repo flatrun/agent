@@ -90,7 +90,7 @@ func (p *K3sProvider) Resize(ctx context.Context, id string, resources Resources
 		"name": id, "resources": k3sResources(resources),
 	}}}}}}
 	encoded, _ := json.Marshal(patch)
-	if _, err := p.run(ctx, nil, "patch", "deployment", id, "--type", "merge", "-p", string(encoded)); err != nil {
+	if _, err := p.run(ctx, nil, "patch", "deployment", id, "--type", "strategic", "-p", string(encoded)); err != nil {
 		return Status{}, fmt.Errorf("resize K3s workload: %w", err)
 	}
 	return p.Status(ctx, id)

@@ -32,14 +32,18 @@ type K3sIngressProvider struct {
 	routes     map[string]Route
 }
 
-func NewK3sIngressProvider(kubeconfig, namespace string) Provider {
+func NewK3sIngressProvider(kubeconfig, namespace string, restored ...Route) Provider {
 	if strings.TrimSpace(namespace) == "" {
 		namespace = "default"
 	}
-	return &K3sIngressProvider{
+	provider := &K3sIngressProvider{
 		runner: kubectlCommand{}, kubeconfig: strings.TrimSpace(kubeconfig),
 		namespace: strings.TrimSpace(namespace), routes: make(map[string]Route),
 	}
+	for _, route := range restored {
+		provider.routes[route.ID] = cloneRoute(route)
+	}
+	return provider
 }
 
 func NewK3sIngressProviderWithRunner(kubeconfig, namespace string, runner KubernetesRunner) Provider {
@@ -95,7 +99,7 @@ func (p *K3sIngressProvider) Reconcile(ctx context.Context, route Route) error {
 		return fmt.Errorf("apply K3s ingress: %w", err)
 	}
 	p.mu.Lock()
-	p.routes[route.ID] = route
+	p.routes[route.ID] = cloneRoute(route)
 	p.mu.Unlock()
 	return nil
 }

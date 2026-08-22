@@ -339,16 +339,13 @@ func New(cfg *config.Config, configPath string) *Server {
 				requestTimeout = 10 * time.Second
 			}
 			clusterManager = cluster.NewManager(clusterDB, cfg.Cluster.ServerName, healthInterval, requestTimeout, cfg.Auth.JWTSecret)
+			clusterManager.SetEventPublisher(notifyService)
 			if startErr := clusterManager.Start(context.Background()); startErr != nil {
 				log.Printf("Warning: Failed to start cluster manager: %v", startErr)
 				clusterManager = nil
 			}
 		}
 	}
-	if clusterManager != nil {
-		clusterManager.SetEventPublisher(notifyService)
-	}
-
 	s := &Server{
 		config:             cfg,
 		configPath:         configPath,
@@ -907,7 +904,7 @@ func (s *Server) setupRoutes() {
 			_ = s.firewall.RegisterRoutes(protected)
 
 			// Cluster endpoints
-			protected.POST("/cluster/capacity/claim", s.clusterCapacityClaim)
+			protected.POST("/cluster/capacity/claim", s.authMiddleware.RequirePermission(auth.PermClusterCapacityClaim), s.clusterCapacityClaim)
 			clusterGroup := protected.Group("/cluster")
 			clusterGroup.Use(s.authMiddleware.RequirePermission(auth.PermClusterRead))
 			{

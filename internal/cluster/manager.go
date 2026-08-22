@@ -26,6 +26,7 @@ type PeerStatus struct {
 	Online   bool      `json:"online"`
 	LastSeen time.Time `json:"last_seen"`
 	Error    string    `json:"error,omitempty"`
+	Probed   bool      `json:"-"`
 }
 
 type Result struct {
@@ -142,9 +143,10 @@ func (m *Manager) checkAllPeers(ctx context.Context) {
 		m.mu.Lock()
 		st, exists := m.status[p.name]
 		wasOnline := exists && st.Online
-		wasKnown := exists && (st.Online || st.Error != "" || !st.LastSeen.IsZero())
+		wasKnown := exists && st.Probed
 		publisher := m.publisher
 		if exists {
+			st.Probed = true
 			if err != nil {
 				st.Online = false
 				st.Error = err.Error()

@@ -339,6 +339,7 @@ func (s *Server) clusterSetup(c *gin.Context) {
 		requestTimeout = 10 * time.Second
 	}
 	mgr := cluster.NewManager(clusterDB, req.ServerName, healthInterval, requestTimeout, s.config.Auth.JWTSecret)
+	mgr.SetEventPublisher(s.notify)
 	if err := mgr.Start(context.Background()); err != nil {
 		_ = clusterDB.Close()
 		s.config.Cluster = previous
@@ -710,6 +711,8 @@ func clusterPolicyAccess(policy cluster.PeerPolicy) ([]string, auth.DeploymentAc
 			unrestrictedDeployments = mergeClusterDeploymentAccess(deployments, grant.Deployments, auth.AccessLevelWrite, unrestrictedDeployments)
 		case cluster.CapabilityCapacityRead:
 			permissions[auth.PermSystemRead.String()] = true
+		case cluster.CapabilityCapacityOffer:
+			permissions[auth.PermClusterCapacityClaim.String()] = true
 		case cluster.CapabilityRoutingManage:
 			permissions[auth.PermInfrastructureRead.String()] = true
 			permissions[auth.PermInfrastructureWrite.String()] = true

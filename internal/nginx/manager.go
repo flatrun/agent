@@ -752,12 +752,10 @@ func assignUpstreams(servers []serverData, keepalive bool, backendOverrides map[
 		for li := range servers[si].Locations {
 			loc := &servers[si].Locations[li]
 			target := fmt.Sprintf("%s:%d", loc.Service, loc.ContainerPort)
-			overrides := backendOverrides[loc.RouteService]
-			if len(overrides) == 0 {
-				overrides = backendOverrides[loc.Service]
-			}
+			overrideKey := fmt.Sprintf("%s:%d", loc.RouteService, loc.ContainerPort)
+			overrides := backendOverrides[overrideKey]
 			if len(overrides) > 0 {
-				target = "override:" + loc.Service
+				target = "override:" + overrideKey
 			}
 			name, ok := byTarget[target]
 			if !ok {
@@ -767,7 +765,7 @@ func assignUpstreams(servers []serverData, keepalive bool, backendOverrides map[
 				if len(overrides) > 0 {
 					targets = append([]UpstreamBackend(nil), overrides...)
 				}
-				upstreams = append(upstreams, upstreamData{Name: name, Targets: targets})
+				upstreams = append(upstreams, upstreamData{Name: name, Targets: targets, Keepalive: keepalive})
 			}
 			loc.Upstream = name
 		}
@@ -972,8 +970,9 @@ type multiRouteTemplateData struct {
 }
 
 type upstreamData struct {
-	Name    string
-	Targets []UpstreamBackend
+	Name      string
+	Targets   []UpstreamBackend
+	Keepalive bool
 }
 
 type serverData struct {
@@ -1158,15 +1157,20 @@ server {
 // container-restart rediscovery that the variable proxy_pass path provided,
 // while keepalive reuses connections across ordinary requests.
 const upstreamBlocks = `{{- range .Upstreams}}
+{{- $pool := .}}
 upstream {{.Name}} {
+{{- if .Keepalive}}
     zone {{.Name}} 64k;
     resolver 127.0.0.11 valid=30s ipv6=off;
-{{- range .Targets}}
-    server {{.Address}}{{if .Weight}} weight={{.Weight}}{{end}}{{if not .Healthy}} down{{end}} resolve;
 {{- end}}
+{{- range .Targets}}
+    server {{.Address}}{{if .Weight}} weight={{.Weight}}{{end}}{{if not .Healthy}} down{{end}}{{if $pool.Keepalive}} resolve{{end}};
+{{- end}}
+{{- if .Keepalive}}
     keepalive 16;
     keepalive_timeout 60s;
     keepalive_requests 1000;
+{{- end}}
 }
 {{end -}}
 `

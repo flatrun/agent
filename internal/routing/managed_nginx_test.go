@@ -47,14 +47,14 @@ func TestManagedNginxProviderReconcilesAndDrainsDeploymentBackends(t *testing.T)
 	if err := provider.Reconcile(context.Background(), route); err != nil {
 		t.Fatal(err)
 	}
-	if manager.content != "preserved deployment config" || manager.reloads != 1 || len(manager.backends["web"]) != 2 {
+	if manager.content != "preserved deployment config" || manager.reloads != 1 || len(manager.backends["web:8080"]) != 2 {
 		t.Fatalf("manager = %#v", manager)
 	}
 	if err := provider.Drain(context.Background(), "shop", "two"); err != nil {
 		t.Fatal(err)
 	}
-	if manager.backends["web"][1].Healthy || manager.reloads != 2 {
-		t.Fatalf("drained backends = %#v", manager.backends["web"])
+	if manager.backends["web:8080"][1].Healthy || manager.reloads != 2 {
+		t.Fatalf("drained backends = %#v", manager.backends["web:8080"])
 	}
 }
 
@@ -73,6 +73,22 @@ func TestManagedNginxProviderRestoresComposeRouteOnRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 	if manager.content != "compose deployment config" || manager.reloads != 1 {
+		t.Fatalf("manager = %#v", manager)
+	}
+}
+
+func TestManagedNginxProviderRestoresRouteWithoutReloading(t *testing.T) {
+	manager := &managedNginxRecorder{}
+	route := Route{ID: "shop", Service: "web", Domain: "shop.example.com", Protocol: "http", Backends: []Backend{{ID: "one", Address: "10.42.0.8:8080", Healthy: true}}}
+	provider := NewManagedNginxProvider(manager, deploymentSourceStub{deployment: &models.Deployment{Name: "shop"}}, route)
+
+	if manager.reloads != 0 {
+		t.Fatalf("reloads = %d", manager.reloads)
+	}
+	if err := provider.Drain(context.Background(), "shop", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if manager.reloads != 1 || manager.backends["web:8080"][0].Healthy {
 		t.Fatalf("manager = %#v", manager)
 	}
 }

@@ -106,7 +106,7 @@ func TestGetServerInfo(t *testing.T) {
 	}
 }
 
-func TestGetServerInfoUsesForwardedAgentURL(t *testing.T) {
+func TestGetServerInfoIgnoresUntrustedForwardedAgentURL(t *testing.T) {
 	router, token, cleanup := setupServerInfoTestServer(t)
 	defer cleanup()
 
@@ -124,8 +124,8 @@ func TestGetServerInfoUsesForwardedAgentURL(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-	if resp.Server.AgentURL != "https://agent.example.com" {
-		t.Errorf("agent_url = %q, want %q", resp.Server.AgentURL, "https://agent.example.com")
+	if resp.Server.AgentURL != "http://example.com" {
+		t.Errorf("agent_url = %q, want %q", resp.Server.AgentURL, "http://example.com")
 	}
 }
 

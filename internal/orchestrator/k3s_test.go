@@ -86,6 +86,24 @@ func TestK3sStatusReturnsRoutableReadyPods(t *testing.T) {
 	}
 }
 
+func TestK3sResizeUsesStrategicMerge(t *testing.T) {
+	runner := &fakeKubectl{responses: [][]byte{
+		nil,
+		[]byte(`{"metadata":{"labels":{"flatrun.port":"8080"}},"spec":{"replicas":1},"status":{"availableReplicas":1}}`),
+		[]byte(`{"items":[]}`),
+	}}
+	provider := NewK3sProvider("", "apps")
+	provider.runner = runner
+
+	if _, err := provider.Resize(context.Background(), "shop", Resources{CPURequest: 0.25, CPULimit: 0.5, MemoryRequest: 128 << 20, MemoryLimit: 256 << 20}); err != nil {
+		t.Fatal(err)
+	}
+	wantPrefix := []string{"--namespace", "apps", "patch", "deployment", "shop", "--type", "strategic", "-p"}
+	if len(runner.calls) == 0 || !reflect.DeepEqual(runner.calls[0].args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("patch args = %#v", runner.calls[0].args)
+	}
+}
+
 func TestK3sMetricsReturnsLimitUtilization(t *testing.T) {
 	runner := &fakeKubectl{responses: [][]byte{
 		[]byte(`{"spec":{"replicas":2,"template":{"spec":{"containers":[{"resources":{"limits":{"cpu":"500m","memory":"256Mi"}}}]}}}}`),

@@ -75,19 +75,12 @@ func (e *Executor) Execute(ctx context.Context, workloadID string, route routing
 		result.Route = updated
 		return result, nil
 	case ActionRemoveReplica:
-		status, err := e.orchestrator.Status(ctx, workloadID)
-		if err != nil {
-			return result, err
-		}
-		backendID := retiringBackend(route, status)
-		if backendID == "" {
-			return result, fmt.Errorf("No routable replica is available to drain")
-		}
-		if err := e.routing.Drain(ctx, route.ID, backendID); err != nil {
-			return result, fmt.Errorf("drain replica: %w", err)
-		}
-		status, err = e.orchestrator.Scale(ctx, workloadID, decision.Replicas)
+		status, err := e.orchestrator.Scale(ctx, workloadID, decision.Replicas)
 		result.Status = status
+		if err == nil && status.Available != status.Desired {
+			result.Pending = true
+			return result, nil
+		}
 		if err == nil && e.routing.ID() == routing.ProviderTraefik {
 			result.Route = route
 			return result, nil
@@ -124,17 +117,4 @@ func routeWithReadyInstances(route routing.Route, status orchestrator.Status) (r
 	}
 	route.Backends = backends
 	return route, nil
-}
-
-func retiringBackend(route routing.Route, status orchestrator.Status) string {
-	ready := make(map[string]bool, len(status.Instances))
-	for _, instance := range status.Instances {
-		ready[instance.ID] = instance.Ready
-	}
-	for index := len(route.Backends) - 1; index >= 0; index-- {
-		if ready[route.Backends[index].ID] {
-			return route.Backends[index].ID
-		}
-	}
-	return ""
 }
