@@ -48,6 +48,21 @@ func (s *Server) getDeploymentAutoscalePolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, autoscalePolicyResponse{autoscalePolicyRequest: policyRequest(policy), State: state})
 }
 
+func (s *Server) getDeploymentAutoscaleCompatibility(c *gin.Context) {
+	name := c.Param("name")
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+	composeContent, _, err := s.manager.GetComposeFile(name)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Compose configuration is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, autoscale.AssessCompatibility(deployment, composeContent))
+}
+
 func (s *Server) updateDeploymentAutoscalePolicy(c *gin.Context) {
 	if s.autoscaleStore == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Autoscaling storage is unavailable"})

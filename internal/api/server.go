@@ -629,6 +629,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/stats", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentContainerStats)
 			protected.GET("/deployments/:name/resources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentResources)
 			protected.GET("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentAutoscalePolicy)
+			protected.GET("/deployments/:name/autoscale/compatibility", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentAutoscaleCompatibility)
 			protected.PUT("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentAutoscalePolicy)
 
 			// Image endpoints
@@ -2026,6 +2027,9 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	}
 	if _, ok := sentFields["backup"]; ok {
 		merged.Backup = incoming.Backup
+	}
+	if _, ok := sentFields["scaling"]; ok {
+		merged.Scaling = incoming.Scaling
 	}
 	if _, ok := sentFields["protected_mode"]; ok {
 		merged.ProtectedMode = incoming.ProtectedMode

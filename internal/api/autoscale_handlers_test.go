@@ -25,6 +25,9 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(deploymentDir, "compose.yml"), []byte("services:\n  app:\n    image: nginx:alpine\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(deploymentDir, "service.yml"), []byte("name: shop\nscaling:\n  service: app\n  stateless: true\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{DeploymentsPath: dir, Auth: config.AuthConfig{Enabled: true, JWTSecret: "autoscale-test-secret"}}
 	t.Setenv("FLATRUN_ADMIN_PASSWORD", "testadminpass")
 	authManager, err := auth.NewManager(dir, &cfg.Auth, true)
@@ -43,6 +46,7 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 	router.POST("/api/auth/login", middleware.Login)
 	protected := router.Group("/api", middleware.RequireAuth())
 	protected.GET("/deployments/:name/autoscale", middleware.RequirePermission(auth.PermDeploymentsRead), middleware.RequireDeploymentAccess(auth.AccessLevelRead), server.getDeploymentAutoscalePolicy)
+	protected.GET("/deployments/:name/autoscale/compatibility", middleware.RequirePermission(auth.PermDeploymentsRead), middleware.RequireDeploymentAccess(auth.AccessLevelRead), server.getDeploymentAutoscaleCompatibility)
 	protected.PUT("/deployments/:name/autoscale", middleware.RequirePermission(auth.PermDeploymentsWrite), middleware.RequireDeploymentAccess(auth.AccessLevelWrite), server.updateDeploymentAutoscalePolicy)
 	token := loginAndGetToken(t, router, "admin", "testadminpass")
 
@@ -76,5 +80,20 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 	}
 	if response.MaxReplicas != 6 || response.CooldownSeconds != 120 || !response.AllowFleetCapacity {
 		t.Fatalf("unexpected response: %+v", response)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/deployments/shop/autoscale/compatibility", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var compatibility autoscale.Compatibility
+	if err := json.Unmarshal(w.Body.Bytes(), &compatibility); err != nil {
+		t.Fatal(err)
+	}
+	if !compatibility.Compatible || compatibility.Service != "app" || compatibility.Image != "nginx:alpine" {
+		t.Fatalf("compatibility = %#v", compatibility)
 	}
 }
