@@ -24,10 +24,30 @@ func setupNotifyTest(t *testing.T) (*Server, *gin.Engine) {
 	r := gin.New()
 	r.GET("/notifications/targets", s.getNotificationTargets)
 	r.GET("/notifications/incidents", s.listNotificationIncidents)
+	r.GET("/notifications/rules", s.listNotificationRules)
+	r.PUT("/notifications/rules", s.updateNotificationRules)
 	r.PUT("/notifications/targets", s.updateNotificationTargets)
 	r.POST("/internal/notify/emit", s.emitNotification)
 	r.POST("/internal/events", s.emitEvent)
 	return s, r
+}
+
+func TestNotificationRulesRoundTripThroughHTTP(t *testing.T) {
+	_, r := setupNotifyTest(t)
+	payload := `{"rules":[{"id":"critical-fleet","name":"Critical fleet incidents","enabled":true,"topics":["fleet"],"severities":["critical"],"target_ids":["email"]}]}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/notifications/rules", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/notifications/rules", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"critical-fleet"`) {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
 }
 
 func TestEmitEventCorrelatesIncidentThroughHTTP(t *testing.T) {

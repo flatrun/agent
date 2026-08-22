@@ -52,6 +52,20 @@ func (t Target) MarshalJSON() ([]byte, error) {
 // Config is the persisted notification settings.
 type Config struct {
 	Targets []Target `yaml:"targets" json:"targets"`
+	Rules   []Rule   `yaml:"rules,omitempty" json:"rules,omitempty"`
+}
+
+type Rule struct {
+	ID            string                      `yaml:"id" json:"id"`
+	Name          string                      `yaml:"name" json:"name"`
+	Enabled       bool                        `yaml:"enabled" json:"enabled"`
+	Topics        []string                    `yaml:"topics,omitempty" json:"topics,omitempty"`
+	EventTypes    []string                    `yaml:"event_types,omitempty" json:"event_types,omitempty"`
+	Severities    []events.Severity           `yaml:"severities,omitempty" json:"severities,omitempty"`
+	Nodes         []string                    `yaml:"nodes,omitempty" json:"nodes,omitempty"`
+	Deployments   []string                    `yaml:"deployments,omitempty" json:"deployments,omitempty"`
+	Notifications []events.NotificationAction `yaml:"notifications,omitempty" json:"notifications,omitempty"`
+	TargetIDs     []string                    `yaml:"target_ids" json:"target_ids"`
 }
 
 // Service loads/saves targets and delivers messages.
@@ -116,7 +130,7 @@ func (s *Service) Publish(event events.Event) (events.IngestResult, error) {
 			Detail: fmt.Sprintf("Source: %s", event.Source),
 		}},
 	}
-	return result, s.deliverEvent(event, notification)
+	return result, s.deliverEvent(event, result.Notification, notification)
 }
 
 func (s *Service) Incidents() []events.Incident {
@@ -134,11 +148,12 @@ func (s *Service) Close() error {
 	return s.store.Close()
 }
 
-func (s *Service) deliverEvent(event events.Event, notification Notification) error {
+func (s *Service) deliverEvent(event events.Event, action events.NotificationAction, notification Notification) error {
 	cfg := s.Load()
+	selected := matchingRuleTargets(cfg.Rules, event, action)
 	var firstErr error
 	for _, target := range cfg.Targets {
-		if !target.Enabled || target.URL == "" || !targetMatches(target, event) {
+		if !target.Enabled || target.URL == "" || !targetMatches(target, event) || (len(cfg.Rules) > 0 && !selected[target.ID]) {
 			continue
 		}
 		if err := s.deliver(target.URL, notification); err != nil && firstErr == nil {
@@ -146,6 +161,33 @@ func (s *Service) deliverEvent(event events.Event, notification Notification) er
 		}
 	}
 	return firstErr
+}
+
+func matchingRuleTargets(rules []Rule, event events.Event, action events.NotificationAction) map[string]bool {
+	selected := make(map[string]bool)
+	for _, rule := range rules {
+		if !rule.Enabled || !matchesString(rule.Topics, event.Source) || !matchesString(rule.EventTypes, event.Type) ||
+			!matchesSeverity(rule.Severities, event.Severity) || !matchesString(rule.Nodes, event.Scope.Node) ||
+			!matchesString(rule.Deployments, event.Scope.Deployment) || !matchesAction(rule.Notifications, action) {
+			continue
+		}
+		for _, id := range rule.TargetIDs {
+			selected[id] = true
+		}
+	}
+	return selected
+}
+
+func matchesAction(filter []events.NotificationAction, value events.NotificationAction) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, candidate := range filter {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func targetMatches(target Target, event events.Event) bool {
@@ -209,6 +251,7 @@ func (s *Service) Save(cfg Config) error {
 // unchanged must not overwrite the real URL with the mask.
 func (s *Service) Update(cfg Config) error {
 	stored := s.Load()
+	cfg.Rules = stored.Rules
 	byID := make(map[string]string, len(stored.Targets))
 	for _, t := range stored.Targets {
 		byID[t.ID] = t.URL
@@ -218,6 +261,12 @@ func (s *Service) Update(cfg Config) error {
 			cfg.Targets[i].URL = byID[cfg.Targets[i].ID]
 		}
 	}
+	return s.Save(cfg)
+}
+
+func (s *Service) UpdateRules(rules []Rule) error {
+	cfg := s.Load()
+	cfg.Rules = rules
 	return s.Save(cfg)
 }
 

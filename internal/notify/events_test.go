@@ -86,3 +86,30 @@ func TestIncidentsSurviveServiceRestart(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestPublishUsesMatchingRules(t *testing.T) {
+	service := NewService(t.TempDir())
+	defer service.Close()
+	if err := service.Save(Config{
+		Targets: []Target{
+			{ID: "email", URL: "generic+https://email.example.test", Enabled: true},
+			{ID: "webhook", URL: "generic+https://hook.example.test", Enabled: true},
+		},
+		Rules: []Rule{{ID: "critical", Enabled: true, Topics: []string{"fleet"}, Severities: []events.Severity{events.SeverityCritical}, TargetIDs: []string{"email"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var targets []string
+	service.send = func(target, _ string) error {
+		targets = append(targets, target)
+		return nil
+	}
+
+	_, err := service.Publish(events.Event{Source: "fleet", Type: "node.unavailable", Severity: events.SeverityCritical, Title: "prod2 unavailable", Scope: events.Scope{Node: "prod2"}, OccurredAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || !strings.Contains(targets[0], "email.example.test") {
+		t.Fatalf("targets = %#v", targets)
+	}
+}

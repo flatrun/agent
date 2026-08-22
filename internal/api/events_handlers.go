@@ -5,8 +5,28 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/events"
+	"github.com/flatrun/agent/internal/notify"
 	"github.com/gin-gonic/gin"
 )
+
+func (s *Server) listNotificationRules(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"rules": s.notify.Load().Rules})
+}
+
+func (s *Server) updateNotificationRules(c *gin.Context) {
+	var req struct {
+		Rules []notify.Rule `json:"rules"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if err := s.notify.UpdateRules(req.Rules); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rules": s.notify.Load().Rules})
+}
 
 func (s *Server) listNotificationIncidents(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"incidents": s.notify.Incidents()})
