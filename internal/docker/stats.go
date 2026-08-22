@@ -81,24 +81,49 @@ func GetAllContainerStats() ([]ContainerStats, error) {
 
 func listContainerDeploymentLabels() map[string]string {
 	labels := make(map[string]string)
-	cmd := exec.Command("docker", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Label \"com.docker.compose.project\"}}")
+	cmd := exec.Command("docker", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Label \"com.docker.compose.project\"}}|{{.Label \"flatrun.deployment\"}}")
 	output, err := cmd.Output()
 	if err != nil {
 		log.Printf("warning: failed to list container deployment labels: %v", err)
 		return labels
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+	return parseContainerDeploymentLabels(string(output))
+}
+
+func parseContainerDeploymentLabels(output string) map[string]string {
+	labels := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 3)
-		if len(parts) != 3 || parts[2] == "" {
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) != 4 {
 			continue
 		}
-		labels[parts[0]] = parts[2]
-		labels[parts[1]] = parts[2]
+		deployment := parts[3]
+		if deployment == "" {
+			deployment = parts[2]
+		}
+		if deployment != "" {
+			labels[parts[0]] = deployment
+			labels[parts[1]] = deployment
+		}
 	}
 	return labels
+}
+
+func GetManagedDeploymentStats(deployment string) ([]ContainerStats, error) {
+	stats, err := GetAllContainerStats()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ContainerStats, 0, len(stats))
+	for _, stat := range stats {
+		if stat.DeploymentName == deployment {
+			result = append(result, stat)
+		}
+	}
+	return result, nil
 }
 
 func GetDeploymentStats(projectName string) ([]ContainerStats, error) {

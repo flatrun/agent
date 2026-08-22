@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -65,6 +66,11 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 	if err != nil {
 		return autoscale.Activation{}, err
 	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		return autoscale.Activation{}, fmt.Errorf("resolve local Swarm node: %w", err)
+	}
+	workload.Placement.Constraints = []string{"node.hostname==" + hostname}
 	domain, err := autoscaleDomain(deployment, workload)
 	if err != nil {
 		return autoscale.Activation{}, err

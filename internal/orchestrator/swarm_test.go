@@ -61,7 +61,7 @@ func TestSwarmProviderCreatesReplicatedService(t *testing.T) {
 		ID: "shop", Image: "example/shop:1", Port: 8080, Replicas: 1,
 		Resources:   Resources{CPURequest: 0.5, CPULimit: 1, MemoryRequest: 256 << 20, MemoryLimit: 512 << 20},
 		Environment: map[string]string{"APP_ENV": "production"}, Entrypoint: []string{"/app/entrypoint"}, Command: []string{"serve"}, WorkingDir: "/app",
-		Networks: []string{"proxy"},
+		Networks: []string{"proxy"}, Placement: Placement{Constraints: []string{"node.hostname==prod-1"}},
 	})
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
@@ -78,6 +78,9 @@ func TestSwarmProviderCreatesReplicatedService(t *testing.T) {
 	}
 	if len(client.created.TaskTemplate.Networks) != 1 || client.created.TaskTemplate.Networks[0].Target != "proxy" {
 		t.Fatalf("networks = %#v", client.created.TaskTemplate.Networks)
+	}
+	if len(client.created.TaskTemplate.Placement.Constraints) != 1 || client.created.TaskTemplate.Placement.Constraints[0] != "node.hostname==prod-1" {
+		t.Fatalf("placement = %#v", client.created.TaskTemplate.Placement)
 	}
 	if status.Desired != 1 || status.Available != 1 || len(status.Instances) != 1 {
 		t.Fatalf("status = %#v", status)

@@ -184,6 +184,7 @@ func swarmSpec(workload Workload) swarm.ServiceSpec {
 			ContainerSpec: &swarm.ContainerSpec{Image: workload.Image, Labels: labels, Env: workloadEnvironment(workload.Environment), Command: workload.Entrypoint, Args: workload.Command, Dir: workload.WorkingDir},
 			Resources:     swarmResources(workload.Resources),
 			Networks:      swarmNetworks(workload.Networks),
+			Placement:     &swarm.Placement{Constraints: workload.Placement.Constraints},
 		},
 		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
 	}

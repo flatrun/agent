@@ -17,6 +17,7 @@ type ActiveStore interface {
 type RuntimeSession struct {
 	Input    Input
 	Executor ActionExecutor
+	Close    func() error
 }
 
 type RuntimeFactory interface {
@@ -64,6 +65,11 @@ func (s *Supervisor) Tick(ctx context.Context) error {
 		session, err := s.factory.Build(ctx, deployment, state)
 		if err == nil {
 			_, err = NewRunner(s.store, session.Executor, s.publisher, s.node).Reconcile(ctx, deployment, session.Input, state.Route)
+			if session.Close != nil {
+				if closeErr := session.Close(); err == nil {
+					err = closeErr
+				}
+			}
 		}
 		if err != nil {
 			s.publishFailure(deployment, err)

@@ -117,6 +117,7 @@ type Server struct {
 	mcpHandler         http.Handler
 
 	runAutoscaleActivation func(context.Context, string) (autoscale.Activation, error)
+	autoscaleCancel        context.CancelFunc
 
 	jobs *jobRegistry
 	// runDeploymentAction runs a deployment action and streams each output
@@ -391,6 +392,16 @@ func New(cfg *config.Config, configPath string) *Server {
 	s.runDeploymentAction = s.defaultRunDeploymentAction
 	s.runServiceAction = s.defaultRunServiceAction
 	s.runAutoscaleActivation = s.defaultRunAutoscaleActivation
+	if s.autoscaleStore != nil {
+		autoscaleContext, cancelAutoscale := context.WithCancel(context.Background())
+		s.autoscaleCancel = cancelAutoscale
+		node := cfg.Cluster.ServerName
+		if node == "" {
+			node, _ = os.Hostname()
+		}
+		supervisor := autoscale.NewSupervisor(s.autoscaleStore, autoscaleRuntimeFactory{server: s}, s.notify, node, 30*time.Second)
+		go supervisor.Run(autoscaleContext)
+	}
 
 	// Built unconditionally: it is stateless and starts nothing, so requests are
 	// gated on the live config flag instead, letting mcp.enabled toggle at runtime.
@@ -979,6 +990,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	if s.autoscaleCancel != nil {
+		s.autoscaleCancel()
+	}
 	if s.pluginHost != nil {
 		s.pluginHost.Stop()
 	}

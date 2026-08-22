@@ -24,6 +24,10 @@ type Health struct {
 	HealthyThreshold int    `json:"healthy_threshold,omitempty"`
 }
 
+type Placement struct {
+	Constraints []string `json:"constraints,omitempty"`
+}
+
 type Workload struct {
 	ID          string            `json:"id"`
 	Image       string            `json:"image"`
@@ -37,6 +41,7 @@ type Workload struct {
 	Command     []string          `json:"command,omitempty"`
 	WorkingDir  string            `json:"working_dir,omitempty"`
 	Networks    []string          `json:"networks,omitempty"`
+	Placement   Placement         `json:"placement,omitempty"`
 	Stateful    bool              `json:"stateful"`
 }
 
