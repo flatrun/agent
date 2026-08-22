@@ -178,10 +178,6 @@ func emitTypedNotification(kind, title, message string) {
 	emitTypedNotificationTo(kind, title, message, nil)
 }
 
-func emitNotificationTo(title, message string, targets []string) {
-	emitTypedNotificationTo("generic", title, message, targets)
-}
-
 func emitTypedNotificationTo(kind, title, message string, targets []string) {
 	base, token := pluginsdk.AgentCallback()
 	if base == "" || token == "" {
