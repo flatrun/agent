@@ -46,7 +46,21 @@ func (t Target) MarshalJSON() ([]byte, error) {
 	if masked.URL != "" {
 		masked.URL = MaskedURL
 	}
-	return json.Marshal(masked)
+	return json.Marshal(struct {
+		alias
+		Kind string `json:"kind"`
+	}{alias: masked, Kind: targetKind(t.URL)})
+}
+
+func targetKind(rawURL string) string {
+	switch {
+	case strings.HasPrefix(rawURL, "smtp://"):
+		return "email"
+	case strings.HasPrefix(rawURL, "generic+"):
+		return "webhook"
+	default:
+		return "custom"
+	}
 }
 
 // Config is the persisted notification settings.
@@ -288,6 +302,18 @@ func (s *Service) Notify(title, message string) error {
 // means every enabled target, which is what plain Notify does.
 func (s *Service) NotifyTargets(title, message string, ids []string) error {
 	return s.NotifyNotificationTargets(Notification{Title: title, Message: message}, ids)
+}
+
+func (s *Service) TestTarget(id string) error {
+	for _, target := range s.Load().Targets {
+		if target.ID == id {
+			if !target.Enabled {
+				return fmt.Errorf("target is disabled")
+			}
+			return s.deliver(target.URL, Notification{Title: "FlatRun test", Message: "Notification delivery is working."})
+		}
+	}
+	return fmt.Errorf("target not found")
 }
 
 func (s *Service) NotifyNotificationTargets(notification Notification, ids []string) error {

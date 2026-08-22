@@ -3439,13 +3439,20 @@ func (s *Server) updateNotificationTargets(c *gin.Context) {
 
 func (s *Server) testNotification(c *gin.Context) {
 	var req struct {
-		URL string `json:"url"`
+		URL      string `json:"url"`
+		TargetID string `json:"target_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	if err := s.notify.Test(req.URL); err != nil {
+	var err error
+	if req.TargetID != "" {
+		err = s.notify.TestTarget(req.TargetID)
+	} else {
+		err = s.notify.Test(req.URL)
+	}
+	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "delivery failed: " + err.Error()})
 		return
 	}

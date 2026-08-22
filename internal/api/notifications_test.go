@@ -27,6 +27,7 @@ func setupNotifyTest(t *testing.T) (*Server, *gin.Engine) {
 	r.GET("/notifications/rules", s.listNotificationRules)
 	r.PUT("/notifications/rules", s.updateNotificationRules)
 	r.PUT("/notifications/targets", s.updateNotificationTargets)
+	r.POST("/notifications/test", s.testNotification)
 	r.POST("/internal/notify/emit", s.emitNotification)
 	r.POST("/internal/events", s.emitEvent)
 	return s, r
@@ -97,6 +98,29 @@ func TestGetNotificationTargetsMasksSecret(t *testing.T) {
 	}
 	if !strings.Contains(body, notify.MaskedURL) {
 		t.Errorf("response should mask the target URL: %s", body)
+	}
+	if !strings.Contains(body, `"kind":"email"`) {
+		t.Errorf("response should identify the safe target kind: %s", body)
+	}
+}
+
+func TestNotificationTargetByIDThroughHTTP(t *testing.T) {
+	s, r := setupNotifyTest(t)
+	if err := s.notify.Save(notify.Config{Targets: []notify.Target{
+		{ID: "ops", Name: "Operations", URL: "generic+https://example.com/hook", Enabled: false},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/notifications/test", strings.NewReader(`{"target_id":"ops"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "target is disabled") {
+		t.Fatalf("saved target was not selected: %s", w.Body.String())
 	}
 }
 
