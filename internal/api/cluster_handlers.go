@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/cluster"
+	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/gin-gonic/gin"
@@ -466,5 +468,38 @@ func (s *Server) clusterAggregateStats(c *gin.Context) {
 	}
 
 	result := cluster.AggregateFromPeers(c.Request.Context(), localData, mgr, "/api/health")
+	c.JSON(http.StatusOK, result)
+}
+
+func (s *Server) clusterAggregateCapacity(c *gin.Context) {
+	mgr := s.getClusterManager()
+	if mgr == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
+		return
+	}
+
+	hostStats, err := system.GetSystemStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	host := capacity.Host{
+		CPUCores:        float64(hostStats.CPU.Cores),
+		CPUUsagePercent: hostStats.CPU.UsagePercent,
+		MemoryTotal:     hostStats.Memory.Total,
+		MemoryAvailable: hostStats.Memory.Available,
+	}
+	policy := capacity.PolicyFromConfig(s.config.Capacity)
+	localData, err := json.Marshal(gin.H{
+		"host":   host,
+		"policy": policy,
+		"offer":  capacity.FleetOffer(host, policy, s.config.Capacity.OfferToFleet),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal local capacity"})
+		return
+	}
+
+	result := cluster.AggregateFromPeers(c.Request.Context(), localData, mgr, "/api/capacity")
 	c.JSON(http.StatusOK, result)
 }

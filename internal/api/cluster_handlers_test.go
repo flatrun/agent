@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
@@ -93,6 +94,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 	protected := api.Group("")
 	protected.Use(authMiddleware.RequireAuth())
 	{
+		protected.GET("/capacity", authMiddleware.RequirePermission(auth.PermSystemRead), server.getCapacityStatus)
 		clusterGroup := protected.Group("/cluster")
 		clusterGroup.Use(authMiddleware.RequirePermission(auth.PermClusterRead))
 		{
@@ -105,6 +107,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 			clusterGroup.Any("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
 			clusterGroup.GET("/deployments", server.clusterAggregateDeployments)
 			clusterGroup.GET("/stats", server.clusterAggregateStats)
+			clusterGroup.GET("/capacity", server.clusterAggregateCapacity)
 		}
 	}
 
@@ -121,6 +124,39 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		router:  router,
 		tmpDir:  tmpDir,
 		cleanup: cleanup,
+	}
+}
+
+func TestClusterCapacityIncludesLocalOfferPolicy(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+
+	token := clusterLogin(t, env.router)
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/capacity", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Servers map[string]struct {
+			Online bool `json:"online"`
+			Data   struct {
+				Offer capacity.Offer `json:"offer"`
+			} `json:"data"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	local, ok := response.Servers["server-a"]
+	if !ok || !local.Online {
+		t.Fatalf("local server = %#v", local)
+	}
+	if local.Data.Offer.Enabled {
+		t.Fatal("fleet capacity should require explicit permission")
 	}
 }
 

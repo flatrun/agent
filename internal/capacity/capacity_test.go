@@ -60,3 +60,29 @@ func TestPolicyFromConfigPreservesExplicitScalingChoices(t *testing.T) {
 		t.Fatalf("defaults were not retained: %#v", policy)
 	}
 }
+
+func TestFleetOfferKeepsHostReserve(t *testing.T) {
+	policy := DefaultPolicy()
+	offer := FleetOffer(Host{
+		CPUCores:        8,
+		CPUUsagePercent: 25,
+		MemoryAvailable: 8 << 30,
+	}, policy, true)
+
+	if !offer.Enabled {
+		t.Fatalf("offer = %#v", offer)
+	}
+	if offer.AvailableCPU != 5.75 {
+		t.Fatalf("available CPU = %.2f", offer.AvailableCPU)
+	}
+	if offer.AvailableMemory != 7680<<20 {
+		t.Fatalf("available memory = %d", offer.AvailableMemory)
+	}
+}
+
+func TestFleetOfferRequiresOperatorPermission(t *testing.T) {
+	offer := FleetOffer(Host{CPUCores: 8, MemoryAvailable: 8 << 30}, DefaultPolicy(), false)
+	if offer.Enabled || offer.AvailableCPU != 0 || offer.AvailableMemory != 0 {
+		t.Fatalf("offer = %#v", offer)
+	}
+}

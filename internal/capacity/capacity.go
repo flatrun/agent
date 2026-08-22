@@ -62,6 +62,13 @@ type Diagnosis struct {
 	Reason           string   `json:"reason"`
 }
 
+type Offer struct {
+	Enabled         bool    `json:"enabled"`
+	AvailableCPU    float64 `json:"available_cpu"`
+	AvailableMemory uint64  `json:"available_memory"`
+	Reason          string  `json:"reason"`
+}
+
 func DefaultPolicy() Policy {
 	return Policy{
 		AllocationThresholdPercent: 90,
@@ -145,6 +152,27 @@ func Diagnose(host Host, container Container, policy Policy) Diagnosis {
 	}
 
 	return Diagnosis{Pressure: PressureNone, Action: ActionNone, Reason: "Container allocation and host capacity are within policy"}
+}
+
+func FleetOffer(host Host, policy Policy, enabled bool) Offer {
+	if !enabled {
+		return Offer{Reason: "This server has not permitted fleet workloads"}
+	}
+
+	availableCPU := host.CPUCores*math.Max(0, 100-host.CPUUsagePercent)/100 - policy.HostCPUReserve
+	if availableCPU < 0 {
+		availableCPU = 0
+	}
+	availableMemory := uint64(0)
+	if host.MemoryAvailable > policy.HostMemoryReserve {
+		availableMemory = host.MemoryAvailable - policy.HostMemoryReserve
+	}
+	enabled = availableCPU > 0 && availableMemory > 0
+	reason := "CPU and memory are available above the host safety reserve"
+	if !enabled {
+		reason = "Host capacity is at or below its safety reserve"
+	}
+	return Offer{Enabled: enabled, AvailableCPU: availableCPU, AvailableMemory: availableMemory, Reason: reason}
 }
 
 func grow(current, percent, maximum float64) float64 {

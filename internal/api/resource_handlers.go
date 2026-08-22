@@ -10,6 +10,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func (s *Server) getCapacityStatus(c *gin.Context) {
+	hostStats, err := system.GetSystemStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	host := capacity.Host{
+		CPUCores:        float64(hostStats.CPU.Cores),
+		CPUUsagePercent: hostStats.CPU.UsagePercent,
+		MemoryTotal:     hostStats.Memory.Total,
+		MemoryAvailable: hostStats.Memory.Available,
+	}
+	policy := capacity.PolicyFromConfig(s.config.Capacity)
+	c.JSON(http.StatusOK, gin.H{
+		"host":   host,
+		"policy": policy,
+		"offer":  capacity.FleetOffer(host, policy, s.config.Capacity.OfferToFleet),
+	})
+}
+
 func (s *Server) getContainerResources(c *gin.Context) {
 	id := c.Param("id")
 	if !s.requireContainerAccess(c, id, auth.AccessLevelRead) {

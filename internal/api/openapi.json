@@ -1257,6 +1257,20 @@
         "x-permission": "backups:write"
       }
     },
+    "/api/capacity": {
+      "get": {
+        "operationId": "get-capacity",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "capacity"
+        ],
+        "x-permission": "system:read"
+      }
+    },
     "/api/certificates": {
       "get": {
         "operationId": "get-certificates",
@@ -1509,6 +1523,26 @@
           "cluster"
         ],
         "x-permission": "cluster:write"
+      }
+    },
+    "/api/cluster/capacity": {
+      "get": {
+        "operationId": "get-cluster-capacity",
+        "tags": [
+          "cluster"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/cluster.AggregatedResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/cluster/deployments": {

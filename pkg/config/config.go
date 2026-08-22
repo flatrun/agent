@@ -32,6 +32,7 @@ type CapacityConfig struct {
 	MaxCPU                     float64 `yaml:"max_cpu" json:"max_cpu"`
 	AllowVertical              *bool   `yaml:"allow_vertical" json:"allow_vertical"`
 	AllowHorizontal            *bool   `yaml:"allow_horizontal" json:"allow_horizontal"`
+	OfferToFleet               bool    `yaml:"offer_to_fleet" json:"offer_to_fleet"`
 }
 
 type Config struct {
