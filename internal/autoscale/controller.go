@@ -33,9 +33,13 @@ type Policy struct {
 }
 
 type State struct {
-	HighWindows int       `json:"high_windows"`
-	LowWindows  int       `json:"low_windows"`
-	LastAction  time.Time `json:"last_action,omitempty"`
+	HighWindows int                     `json:"high_windows"`
+	LowWindows  int                     `json:"low_windows"`
+	LastAction  time.Time               `json:"last_action,omitempty"`
+	Active      bool                    `json:"active"`
+	Provider    orchestrator.ProviderID `json:"provider,omitempty"`
+	Service     string                  `json:"service,omitempty"`
+	Replicas    int                     `json:"replicas,omitempty"`
 }
 
 type Input struct {
@@ -71,7 +75,9 @@ func Reconcile(policy Policy, state State, input Input) (State, Decision) {
 		return state, Decision{Action: ActionNotify, Reason: err.Error()}
 	}
 	if !policy.Enabled {
-		return State{}, Decision{Action: ActionNone, Reason: "Autoscaling is disabled"}
+		state.HighWindows = 0
+		state.LowWindows = 0
+		return state, Decision{Action: ActionNone, Reason: "Autoscaling is disabled"}
 	}
 	if input.Now.IsZero() {
 		input.Now = time.Now()

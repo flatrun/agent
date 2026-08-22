@@ -72,3 +72,18 @@ func TestReconcileHonorsCooldown(t *testing.T) {
 		t.Fatalf("state = %#v, decision = %#v", unchanged, decision)
 	}
 }
+
+func TestReconcileDisabledPreservesManagedWorkloadState(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.Enabled = false
+	state, decision := Reconcile(policy, State{
+		HighWindows: 2, LowWindows: 3, Active: true,
+		Provider: orchestrator.ProviderSwarm, Service: "web", Replicas: 2,
+	}, Input{})
+	if decision.Action != ActionNone || state.HighWindows != 0 || state.LowWindows != 0 {
+		t.Fatalf("state = %#v, decision = %#v", state, decision)
+	}
+	if !state.Active || state.Provider != orchestrator.ProviderSwarm || state.Service != "web" || state.Replicas != 2 {
+		t.Fatalf("runtime state was cleared: %#v", state)
+	}
+}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,8 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/autoscale"
 	"github.com/flatrun/agent/internal/docker"
+	"github.com/flatrun/agent/internal/orchestrator"
+	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
@@ -40,7 +43,17 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := &Server{config: cfg, manager: docker.NewManager(dir), authManager: authManager, autoscaleStore: store}
+	activated := ""
+	server := &Server{
+		config: cfg, manager: docker.NewManager(dir), authManager: authManager, autoscaleStore: store,
+		runAutoscaleActivation: func(_ context.Context, name string) (autoscale.Activation, error) {
+			activated = name
+			return autoscale.Activation{
+				Workload: orchestrator.Status{Workload: name, Desired: 2, Available: 2},
+				Route:    routing.Route{ID: name, Domain: "shop.example.com", Protocol: "http"},
+			}, nil
+		},
+	}
 	middleware := auth.NewMiddlewareWithManager(&cfg.Auth, authManager)
 	router := gin.New()
 	router.POST("/api/auth/login", middleware.Login)
@@ -49,6 +62,7 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 	protected.GET("/deployments/:name/autoscale/compatibility", middleware.RequirePermission(auth.PermDeploymentsRead), middleware.RequireDeploymentAccess(auth.AccessLevelRead), server.getDeploymentAutoscaleCompatibility)
 	protected.PUT("/deployments/:name/autoscale/workload", middleware.RequirePermission(auth.PermDeploymentsWrite), middleware.RequireDeploymentAccess(auth.AccessLevelWrite), server.updateDeploymentAutoscaleWorkload)
 	protected.PUT("/deployments/:name/autoscale", middleware.RequirePermission(auth.PermDeploymentsWrite), middleware.RequireDeploymentAccess(auth.AccessLevelWrite), server.updateDeploymentAutoscalePolicy)
+	protected.POST("/deployments/:name/autoscale/activate", middleware.RequirePermission(auth.PermDeploymentsWrite), middleware.RequireDeploymentAccess(auth.AccessLevelWrite), server.activateDeploymentAutoscale)
 	token := loginAndGetToken(t, router, "admin", "testadminpass")
 
 	payload := autoscalePolicyRequest{
@@ -112,5 +126,13 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 	}
 	if !compatibility.Compatible || len(compatibility.Services) != 1 || compatibility.Services[0] != "app" {
 		t.Fatalf("compatibility = %#v", compatibility)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/deployments/shop/autoscale/activate", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || activated != "shop" {
+		t.Fatalf("activation returned %d for %q: %s", w.Code, activated, w.Body.String())
 	}
 }

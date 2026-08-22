@@ -116,6 +116,8 @@ type Server struct {
 	aiAgents           *ai.AgentStore
 	mcpHandler         http.Handler
 
+	runAutoscaleActivation func(context.Context, string) (autoscale.Activation, error)
+
 	jobs *jobRegistry
 	// runDeploymentAction runs a deployment action and streams each output
 	// line to emit. Overridable in tests so they need not shell out to docker.
@@ -388,6 +390,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	}
 	s.runDeploymentAction = s.defaultRunDeploymentAction
 	s.runServiceAction = s.defaultRunServiceAction
+	s.runAutoscaleActivation = s.defaultRunAutoscaleActivation
 
 	// Built unconditionally: it is stateless and starts nothing, so requests are
 	// gated on the live config flag instead, letting mcp.enabled toggle at runtime.
@@ -632,6 +635,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/autoscale/compatibility", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentAutoscaleCompatibility)
 			protected.PUT("/deployments/:name/autoscale/workload", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentAutoscaleWorkload)
 			protected.PUT("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentAutoscalePolicy)
+			protected.POST("/deployments/:name/autoscale/activate", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.activateDeploymentAutoscale)
 
 			// Image endpoints
 			protected.GET("/images", s.authMiddleware.RequirePermission(auth.PermImagesRead), s.listImages)

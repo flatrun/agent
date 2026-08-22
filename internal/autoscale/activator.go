@@ -13,6 +13,12 @@ type ServiceStopper interface {
 	StopService(string, string) (string, error)
 }
 
+type ServiceStopperFunc func(string, string) (string, error)
+
+func (f ServiceStopperFunc) StopService(deployment, service string) (string, error) {
+	return f(deployment, service)
+}
+
 type Activator struct {
 	orchestrator orchestrator.Provider
 	routing      routing.Provider
