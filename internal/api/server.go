@@ -606,6 +606,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/containers/stats", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getAllContainerStats)
 			protected.POST("/containers/:id/exec", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.containerExecHTTP)
 			protected.GET("/containers/:id/resources", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getContainerResources)
+			protected.GET("/containers/:id/capacity", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.diagnoseContainerCapacity)
 			protected.PUT("/containers/:id/resources", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.updateContainerResources)
 			protected.GET("/deployments/:name/stats", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentContainerStats)
 			protected.GET("/deployments/:name/resources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentResources)
