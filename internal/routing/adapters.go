@@ -39,8 +39,8 @@ func (p *routeProvider) ID() ProviderID {
 }
 
 func (p *routeProvider) Validate(_ context.Context, route Route) error {
-	if strings.TrimSpace(route.ID) == "" {
-		return fmt.Errorf("Route ID is required")
+	if !safeRouteID.MatchString(route.ID) {
+		return fmt.Errorf("Route ID is invalid")
 	}
 	if strings.TrimSpace(route.Domain) == "" || strings.ContainsAny(route.Domain, " /\\") {
 		return fmt.Errorf("Route domain is invalid")
@@ -125,6 +125,7 @@ func (p *routeProvider) Remove(ctx context.Context, routeID string) error {
 
 var safeID = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 var safeHost = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+var safeRouteID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 func renderNginx(route Route) ([]byte, error) {
 	name := "flatrun_" + safeID.ReplaceAllString(route.ID, "_")
