@@ -44,6 +44,13 @@ func (p *SwarmProvider) Ready(ctx context.Context) error {
 	return nil
 }
 
+func (p *SwarmProvider) Close() error {
+	if closer, ok := p.client.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 func (p *SwarmProvider) ID() ProviderID {
 	return ProviderSwarm
 }

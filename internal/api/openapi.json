@@ -1715,6 +1715,48 @@
         "x-permission": "cluster:write"
       }
     },
+    "/api/cluster/providers": {
+      "get": {
+        "operationId": "get-cluster-providers",
+        "tags": [
+          "cluster"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.clusterProvidersResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-cluster-providers",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.updateClusterProvidersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      }
+    },
     "/api/cluster/setup": {
       "post": {
         "operationId": "post-cluster-setup",
@@ -11218,6 +11260,56 @@
           "tail"
         ]
       },
+      "api.clusterProviderOption": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "active",
+          "available",
+          "reason"
+        ],
+        "x-columns": [
+          "id",
+          "active",
+          "available",
+          "reason"
+        ]
+      },
+      "api.clusterProvidersResponse": {
+        "type": "object",
+        "properties": {
+          "orchestrators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/api.clusterProviderOption"
+            }
+          },
+          "routing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/api.clusterProviderOption"
+            }
+          }
+        },
+        "x-property-order": [
+          "orchestrators",
+          "routing"
+        ]
+      },
       "api.clusterSetupRequest": {
         "type": "object",
         "properties": {
@@ -11474,6 +11566,29 @@
         ],
         "required": [
           "deployment"
+        ]
+      },
+      "api.updateClusterProvidersRequest": {
+        "type": "object",
+        "properties": {
+          "orchestrator": {
+            "type": "string"
+          },
+          "routing": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "orchestrator",
+          "routing"
+        ],
+        "x-columns": [
+          "orchestrator",
+          "routing"
+        ],
+        "required": [
+          "orchestrator",
+          "routing"
         ]
       },
       "audit.ActorStats": {

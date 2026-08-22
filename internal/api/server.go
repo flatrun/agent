@@ -40,9 +40,11 @@ import (
 	"github.com/flatrun/agent/internal/infra"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/notify"
+	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/internal/plan"
 	"github.com/flatrun/agent/internal/pluginhost"
 	"github.com/flatrun/agent/internal/proxy"
+	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/setup"
@@ -100,6 +102,8 @@ type Server struct {
 	powerDNSManager    *dns.PowerDNSManager
 	clusterMu          sync.RWMutex
 	clusterManager     *cluster.Manager
+	probeOrchestrator  func(context.Context, orchestrator.ProviderID) error
+	probeRouting       func(context.Context, routing.ProviderID) error
 	setupManager       *setup.Manager
 	setupHandlers      *setup.Handlers
 	certRenewer        *ssl.Renewer
@@ -889,6 +893,8 @@ func (s *Server) setupRoutes() {
 				clusterGroup.GET("/deployments", s.clusterAggregateDeployments)
 				clusterGroup.GET("/stats", s.clusterAggregateStats)
 				clusterGroup.GET("/capacity", s.clusterAggregateCapacity)
+				clusterGroup.GET("/providers", s.clusterProviders)
+				clusterGroup.PUT("/providers", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.updateClusterProviders)
 			}
 		}
 

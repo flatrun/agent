@@ -19,6 +19,8 @@ type ClusterConfig struct {
 	AdvertiseURL   string `yaml:"advertise_url"`
 	HealthInterval string `yaml:"health_interval"`
 	RequestTimeout string `yaml:"request_timeout"`
+	Orchestrator   string `yaml:"orchestrator" json:"orchestrator"`
+	Routing        string `yaml:"routing" json:"routing"`
 }
 
 type CapacityConfig struct {
@@ -400,6 +402,12 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.DefaultTimeout == 0 {
 		cfg.DefaultTimeout = 2 * time.Minute
+	}
+	if cfg.Cluster.Orchestrator == "" {
+		cfg.Cluster.Orchestrator = "standalone"
+	}
+	if cfg.Cluster.Routing == "" {
+		cfg.Cluster.Routing = "nginx"
 	}
 	if cfg.Capacity.AllocationThresholdPercent == 0 {
 		cfg.Capacity.AllocationThresholdPercent = 90

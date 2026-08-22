@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/cluster"
+	"github.com/flatrun/agent/internal/orchestrator"
+	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
@@ -105,6 +108,8 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		clusterGroup.Use(authMiddleware.RequirePermission(auth.PermClusterRead))
 		{
 			clusterGroup.GET("/status", server.clusterStatus)
+			clusterGroup.GET("/providers", server.clusterProviders)
+			clusterGroup.PUT("/providers", authMiddleware.RequirePermission(auth.PermClusterWrite), server.updateClusterProviders)
 			clusterGroup.POST("/setup", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterSetup)
 			clusterGroup.GET("/peers", server.clusterListPeers)
 			clusterGroup.GET("/peers/:name/policy", server.clusterPeerPolicy)
@@ -746,6 +751,94 @@ func TestClusterUnauthorizedAccess(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Expected 401, got %d", w.Code)
+	}
+}
+
+func TestClusterProvidersReportActiveAndAvailableAdapters(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	env.server.probeOrchestrator = func(_ context.Context, id orchestrator.ProviderID) error {
+		if id == orchestrator.ProviderK3s {
+			return fmt.Errorf("k3s adapter is not configured")
+		}
+		return nil
+	}
+	env.server.probeRouting = func(_ context.Context, id routing.ProviderID) error {
+		if id == routing.ProviderTraefik {
+			return fmt.Errorf("Traefik adapter is not configured")
+		}
+		return nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/providers", nil)
+	req.Header.Set("Authorization", "Bearer "+clusterLogin(t, env.router))
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response clusterProvidersResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Orchestrators[0].Active || !response.Orchestrators[0].Available {
+		t.Fatalf("unexpected standalone provider: %+v", response.Orchestrators[0])
+	}
+	if response.Orchestrators[2].Available || response.Orchestrators[2].Reason == "" {
+		t.Fatalf("unexpected k3s provider: %+v", response.Orchestrators[2])
+	}
+	if !response.Routing[0].Active || !response.Routing[0].Available {
+		t.Fatalf("unexpected Nginx provider: %+v", response.Routing[0])
+	}
+}
+
+func TestUpdateClusterProvidersPersistsAvailableSelection(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	env.server.probeOrchestrator = func(_ context.Context, _ orchestrator.ProviderID) error { return nil }
+	env.server.probeRouting = func(_ context.Context, _ routing.ProviderID) error { return nil }
+
+	body := bytes.NewBufferString(`{"orchestrator":"swarm","routing":"nginx"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/cluster/providers", body)
+	req.Header.Set("Authorization", "Bearer "+clusterLogin(t, env.router))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	saved, err := config.Load(env.server.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Cluster.Orchestrator != "swarm" || saved.Cluster.Routing != "nginx" {
+		t.Fatalf("unexpected saved providers: %+v", saved.Cluster)
+	}
+}
+
+func TestUpdateClusterProvidersRejectsUnavailableSelection(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	env.server.probeOrchestrator = func(_ context.Context, id orchestrator.ProviderID) error {
+		if id == orchestrator.ProviderK3s {
+			return fmt.Errorf("k3s adapter is not configured")
+		}
+		return nil
+	}
+	env.server.probeRouting = func(_ context.Context, _ routing.ProviderID) error { return nil }
+
+	body := bytes.NewBufferString(`{"orchestrator":"k3s","routing":"nginx"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/cluster/providers", body)
+	req.Header.Set("Authorization", "Bearer "+clusterLogin(t, env.router))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+	if env.server.config.Cluster.Orchestrator != "" {
+		t.Fatalf("unexpected orchestrator change: %q", env.server.config.Cluster.Orchestrator)
 	}
 }
 

@@ -17,11 +17,144 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/cluster"
+	"github.com/flatrun/agent/internal/orchestrator"
+	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/gin-gonic/gin"
 )
+
+type clusterProviderOption struct {
+	ID        string `json:"id"`
+	Active    bool   `json:"active"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type clusterProvidersResponse struct {
+	Orchestrators []clusterProviderOption `json:"orchestrators"`
+	Routing       []clusterProviderOption `json:"routing"`
+}
+
+func (s *Server) clusterProviders(c *gin.Context) {
+	orchestratorID := s.config.Cluster.Orchestrator
+	if orchestratorID == "" {
+		orchestratorID = string(orchestrator.ProviderStandalone)
+	}
+	routingID := s.config.Cluster.Routing
+	if routingID == "" {
+		routingID = string(routing.ProviderNginx)
+	}
+
+	c.JSON(http.StatusOK, clusterProvidersResponse{
+		Orchestrators: []clusterProviderOption{
+			s.orchestratorOption(c, orchestrator.ProviderStandalone, orchestratorID),
+			s.orchestratorOption(c, orchestrator.ProviderSwarm, orchestratorID),
+			s.orchestratorOption(c, orchestrator.ProviderK3s, orchestratorID),
+		},
+		Routing: []clusterProviderOption{
+			s.routingOption(c, routing.ProviderNginx, routingID),
+			s.routingOption(c, routing.ProviderTraefik, routingID),
+		},
+	})
+}
+
+func (s *Server) orchestratorOption(c *gin.Context, id orchestrator.ProviderID, active string) clusterProviderOption {
+	option := clusterProviderOption{ID: string(id), Active: active == string(id)}
+	if err := s.checkOrchestrator(c, id); err != nil {
+		option.Reason = err.Error()
+		return option
+	}
+	option.Available = true
+	return option
+}
+
+func (s *Server) routingOption(c *gin.Context, id routing.ProviderID, active string) clusterProviderOption {
+	option := clusterProviderOption{ID: string(id), Active: active == string(id)}
+	if err := s.checkRouting(c, id); err != nil {
+		option.Reason = err.Error()
+		return option
+	}
+	option.Available = true
+	return option
+}
+
+func (s *Server) checkOrchestrator(ctx context.Context, id orchestrator.ProviderID) error {
+	if s.probeOrchestrator != nil {
+		return s.probeOrchestrator(ctx, id)
+	}
+	switch id {
+	case orchestrator.ProviderStandalone:
+		return nil
+	case orchestrator.ProviderSwarm:
+		provider, err := orchestrator.NewSwarmProviderFromEnv()
+		if err != nil {
+			return err
+		}
+		defer provider.Close()
+		return provider.Ready(ctx)
+	case orchestrator.ProviderK3s:
+		return fmt.Errorf("k3s adapter is not configured")
+	default:
+		return fmt.Errorf("orchestrator %q is not supported", id)
+	}
+}
+
+func (s *Server) checkRouting(ctx context.Context, id routing.ProviderID) error {
+	if s.probeRouting != nil {
+		return s.probeRouting(ctx, id)
+	}
+	switch id {
+	case routing.ProviderNginx:
+		if !s.config.Nginx.Enabled {
+			return fmt.Errorf("Nginx is not enabled")
+		}
+		return nil
+	case routing.ProviderTraefik:
+		return fmt.Errorf("Traefik adapter is not configured")
+	default:
+		return fmt.Errorf("routing provider %q is not supported", id)
+	}
+}
+
+type updateClusterProvidersRequest struct {
+	Orchestrator string `json:"orchestrator" binding:"required"`
+	Routing      string `json:"routing" binding:"required"`
+}
+
+func (s *Server) updateClusterProviders(c *gin.Context) {
+	var req updateClusterProvidersRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	orchestratorID := orchestrator.ProviderID(strings.TrimSpace(req.Orchestrator))
+	routingID := routing.ProviderID(strings.TrimSpace(req.Routing))
+	if err := s.checkOrchestrator(c, orchestratorID); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.checkRouting(c, routingID); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+
+	previous := s.config.Cluster
+	s.config.Cluster.Orchestrator = string(orchestratorID)
+	s.config.Cluster.Routing = string(routingID)
+	if s.configPath != "" {
+		if err := config.Save(s.config, s.configPath); err != nil {
+			s.config.Cluster = previous
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to save provider configuration: %v", err)})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"orchestrator": s.config.Cluster.Orchestrator,
+		"routing":      s.config.Cluster.Routing,
+	})
+}
 
 func (s *Server) clusterStatus(c *gin.Context) {
 	mgr := s.getClusterManager()
