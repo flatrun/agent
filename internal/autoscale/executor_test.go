@@ -12,6 +12,7 @@ type fakeOrchestrator struct {
 	status      orchestrator.Status
 	scaledTo    int
 	resizedWith orchestrator.Resources
+	removed     string
 }
 
 func (f *fakeOrchestrator) ID() orchestrator.ProviderID                           { return orchestrator.ProviderSwarm }
@@ -31,11 +32,15 @@ func (f *fakeOrchestrator) Scale(_ context.Context, _ string, replicas int) (orc
 func (f *fakeOrchestrator) Status(context.Context, string) (orchestrator.Status, error) {
 	return f.status, nil
 }
-func (f *fakeOrchestrator) Remove(context.Context, string) error { return nil }
+func (f *fakeOrchestrator) Remove(_ context.Context, id string) error {
+	f.removed = id
+	return nil
+}
 
 type fakeRouter struct {
 	reconciled routing.Route
 	drained    string
+	removed    string
 }
 
 func (f *fakeRouter) ID() routing.ProviderID                        { return routing.ProviderNginx }
@@ -48,7 +53,10 @@ func (f *fakeRouter) Drain(_ context.Context, _, backendID string) error {
 	f.drained = backendID
 	return nil
 }
-func (f *fakeRouter) Remove(context.Context, string) error { return nil }
+func (f *fakeRouter) Remove(_ context.Context, id string) error {
+	f.removed = id
+	return nil
+}
 
 func TestExecutorPublishesOnlyReadyScaledReplicas(t *testing.T) {
 	orchestratorProvider := &fakeOrchestrator{status: orchestrator.Status{
