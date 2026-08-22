@@ -95,6 +95,12 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 	protected.Use(authMiddleware.RequireAuth())
 	{
 		protected.GET("/capacity", authMiddleware.RequirePermission(auth.PermSystemRead), server.getCapacityStatus)
+		protected.GET("/test/deployments", authMiddleware.RequirePermission(auth.PermDeploymentsRead), func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
+		protected.GET("/test/users", authMiddleware.RequirePermission(auth.PermUsersWrite), func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
 		clusterGroup := protected.Group("/cluster")
 		clusterGroup.Use(authMiddleware.RequirePermission(auth.PermClusterRead))
 		{
@@ -168,6 +174,9 @@ func TestUpdateClusterPeerPolicyThroughHTTP(t *testing.T) {
 	if err := env.server.clusterManager.AddPeer("server-b", "https://server-b.example.com", "peer-key"); err != nil {
 		t.Fatalf("AddPeer failed: %v", err)
 	}
+	if err := env.server.createClusterAPIKey("server-b-inbound-key", "server-b"); err != nil {
+		t.Fatalf("createClusterAPIKey failed: %v", err)
+	}
 
 	token := clusterLogin(t, env.router)
 	body := []byte(`{"grants":[{"capability":"capacity.offer","max_cpu":2,"max_memory":2147483648,"max_replicas":2}]}`)
@@ -194,6 +203,40 @@ func TestUpdateClusterPeerPolicyThroughHTTP(t *testing.T) {
 	}
 	if len(policy.Grants) != 1 || policy.Grants[0].MaxCPU != 2 || policy.Grants[0].MaxReplicas != 2 {
 		t.Fatalf("policy = %#v", policy)
+	}
+	keys, err := env.server.authManager.GetAllAPIKeys()
+	if err != nil {
+		t.Fatalf("list API keys: %v", err)
+	}
+	for _, key := range keys {
+		if key.Name == "cluster-peer-server-b" && len(key.Permissions) != 0 {
+			t.Fatalf("capacity offer unexpectedly granted general API permissions: %#v", key.Permissions)
+		}
+	}
+}
+
+func TestClusterPolicyAccessScopesDeployments(t *testing.T) {
+	permissions, deployments := clusterPolicyAccess(cluster.PeerPolicy{Grants: []cluster.Grant{
+		{Capability: cluster.CapabilityDeploymentsRead, Deployments: []string{"public-site", "docs"}},
+		{Capability: cluster.CapabilityDeploymentsRun, Deployments: []string{"public-site"}},
+		{Capability: cluster.CapabilityCapacityRead},
+	}})
+
+	if deployments["public-site"] != auth.AccessLevelWrite || deployments["docs"] != auth.AccessLevelRead {
+		t.Fatalf("deployment access = %#v", deployments)
+	}
+	wanted := map[string]bool{
+		auth.PermDeploymentsRead.String():  true,
+		auth.PermDeploymentsWrite.String(): true,
+		auth.PermContainersRead.String():   true,
+		auth.PermContainersWrite.String():  true,
+		auth.PermSystemRead.String():       true,
+	}
+	for _, permission := range permissions {
+		delete(wanted, permission)
+	}
+	if len(wanted) != 0 {
+		t.Fatalf("missing permissions = %#v", wanted)
 	}
 }
 
@@ -260,7 +303,9 @@ func TestClusterAPIKeyUsesExplicitPermissions(t *testing.T) {
 	env := setupClusterTestServer(t, "server-a", true)
 	defer env.cleanup()
 
-	env.server.createClusterAPIKey("peer-key-for-test", "server-b")
+	if err := env.server.createClusterAPIKey("peer-key-for-test", "server-b"); err != nil {
+		t.Fatalf("createClusterAPIKey failed: %v", err)
+	}
 	keys, err := env.server.authManager.GetAllAPIKeys()
 	if err != nil {
 		t.Fatal(err)
@@ -278,6 +323,20 @@ func TestClusterAPIKeyUsesExplicitPermissions(t *testing.T) {
 	if peerKey.Role == auth.RoleAdmin {
 		t.Fatal("Cluster API key has administrator role")
 	}
+	owner, err := env.server.authManager.GetUser(peerKey.UserID)
+	if err != nil {
+		t.Fatalf("get key owner: %v", err)
+	}
+	if owner.Role != auth.RoleService {
+		t.Fatalf("key owner role = %q", owner.Role)
+	}
+	actor, err := env.server.authManager.BuildActorContext(owner, peerKey)
+	if err != nil {
+		t.Fatalf("build actor: %v", err)
+	}
+	if actor.HasPermission(auth.PermUsersWrite) || !actor.HasPermission(auth.PermDeploymentsWrite) {
+		t.Fatalf("effective actor = %#v", actor)
+	}
 	permissions := make(map[string]bool, len(peerKey.Permissions))
 	for _, permission := range peerKey.Permissions {
 		permissions[permission] = true
@@ -287,6 +346,29 @@ func TestClusterAPIKeyUsesExplicitPermissions(t *testing.T) {
 	}
 	if permissions[auth.PermUsersWrite.String()] || permissions[auth.PermConfigWrite.String()] {
 		t.Fatalf("permissions include administrative access: %#v", peerKey.Permissions)
+	}
+}
+
+func TestClusterAPIKeyEnforcesPermissionsThroughHTTP(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	const rawKey = "peer-http-key-for-test"
+	if err := env.server.createClusterAPIKey(rawKey, "server-b"); err != nil {
+		t.Fatalf("createClusterAPIKey failed: %v", err)
+	}
+
+	request := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+rawKey)
+		w := httptest.NewRecorder()
+		env.router.ServeHTTP(w, req)
+		return w.Code
+	}
+	if status := request("/api/test/deployments"); status != http.StatusNoContent {
+		t.Fatalf("deployment read status = %d", status)
+	}
+	if status := request("/api/test/users"); status != http.StatusForbidden {
+		t.Fatalf("user write status = %d", status)
 	}
 }
 

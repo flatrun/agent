@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -187,12 +188,26 @@ func (s *Server) updateClusterPeerPolicy(c *gin.Context) {
 		}
 		seen[grant.Capability] = true
 	}
+	previous, err := mgr.DB().GetPeerPolicy(policy.Peer)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Peer not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if err := mgr.DB().SetPeerPolicy(policy); err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Peer not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.applyClusterPeerPolicy(policy); err != nil {
+		_ = mgr.DB().SetPeerPolicy(*previous)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply peer policy: " + err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, policy)
@@ -308,7 +323,11 @@ func (s *Server) clusterAccept(c *gin.Context) {
 	}
 
 	if s.authManager != nil {
-		s.createClusterAPIKey(ourAPIKeyForThem, exchangeResp.Name)
+		if err := s.createClusterAPIKey(ourAPIKeyForThem, exchangeResp.Name); err != nil {
+			_ = mgr.RemovePeer(exchangeResp.Name)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create peer credential"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -382,7 +401,11 @@ func (s *Server) clusterExchange(c *gin.Context) {
 	}
 
 	if s.authManager != nil {
-		s.createClusterAPIKey(ourAPIKeyForThem, req.Name)
+		if err := s.createClusterAPIKey(ourAPIKeyForThem, req.Name); err != nil {
+			_ = mgr.RemovePeer(req.Name)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create peer credential"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, exchangeResponse{
@@ -391,28 +414,114 @@ func (s *Server) clusterExchange(c *gin.Context) {
 	})
 }
 
-func (s *Server) createClusterAPIKey(rawKey, peerName string) {
+func (s *Server) createClusterAPIKey(rawKey, peerName string) error {
 	if s.authManager == nil {
-		return
+		return fmt.Errorf("Authentication manager is not available")
 	}
-	_, _ = s.authManager.CreateAPIKeyFromRaw(
+	userID, err := s.clusterServiceUserID()
+	if err != nil {
+		return err
+	}
+	permissions, deployments := clusterPolicyAccess(cluster.PeerPolicy{Peer: peerName, Grants: cluster.DefaultPeerGrants()})
+	_, err = s.authManager.CreateAPIKeyFromRaw(
 		rawKey,
-		1,
+		userID,
 		fmt.Sprintf("cluster-peer-%s", peerName),
 		fmt.Sprintf("Auto-generated API key for cluster peer %s", peerName),
 		auth.Role(""),
-		[]string{
-			auth.PermClusterRead.String(),
-			auth.PermDeploymentsRead.String(),
-			auth.PermDeploymentsWrite.String(),
-			auth.PermContainersRead.String(),
-			auth.PermContainersWrite.String(),
-			auth.PermSystemRead.String(),
-			auth.PermTrafficRead.String(),
-		},
-		nil,
+		permissions,
+		deployments,
 		time.Time{},
 	)
+	return err
+}
+
+func (s *Server) clusterServiceUserID() (int64, error) {
+	const username = "__flatrun_cluster"
+	user, err := s.authManager.GetUserByUsername(username)
+	if err == nil {
+		if user.Role != auth.RoleService {
+			return 0, fmt.Errorf("Reserved Fleet identity has an invalid role")
+		}
+		return user.ID, nil
+	}
+	passwordBytes := make([]byte, 32)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		return 0, err
+	}
+	user, err = s.authManager.CreateUser(username, "", base64.RawURLEncoding.EncodeToString(passwordBytes), auth.RoleService, nil)
+	if err != nil {
+		return 0, err
+	}
+	return user.ID, nil
+}
+
+func clusterPolicyAccess(policy cluster.PeerPolicy) ([]string, auth.DeploymentAccess) {
+	permissions := make(map[string]bool)
+	deployments := make(auth.DeploymentAccess)
+	unrestrictedDeployments := false
+	for _, grant := range policy.Grants {
+		switch grant.Capability {
+		case cluster.CapabilityFleetRead:
+			permissions[auth.PermClusterRead.String()] = true
+		case cluster.CapabilityDeploymentsRead:
+			permissions[auth.PermDeploymentsRead.String()] = true
+			permissions[auth.PermContainersRead.String()] = true
+			unrestrictedDeployments = mergeClusterDeploymentAccess(deployments, grant.Deployments, auth.AccessLevelRead, unrestrictedDeployments)
+		case cluster.CapabilityDeploymentsRun:
+			permissions[auth.PermDeploymentsRead.String()] = true
+			permissions[auth.PermDeploymentsWrite.String()] = true
+			permissions[auth.PermContainersRead.String()] = true
+			permissions[auth.PermContainersWrite.String()] = true
+			unrestrictedDeployments = mergeClusterDeploymentAccess(deployments, grant.Deployments, auth.AccessLevelWrite, unrestrictedDeployments)
+		case cluster.CapabilityCapacityRead:
+			permissions[auth.PermSystemRead.String()] = true
+		case cluster.CapabilityRoutingManage:
+			permissions[auth.PermInfrastructureRead.String()] = true
+			permissions[auth.PermInfrastructureWrite.String()] = true
+		}
+	}
+	result := make([]string, 0, len(permissions))
+	for permission := range permissions {
+		result = append(result, permission)
+	}
+	slices.Sort(result)
+	if unrestrictedDeployments {
+		deployments = nil
+	}
+	return result, deployments
+}
+
+func mergeClusterDeploymentAccess(access auth.DeploymentAccess, names []string, level string, unrestricted bool) bool {
+	if unrestricted || len(names) == 0 {
+		return true
+	}
+	for _, name := range names {
+		if current, ok := access[name]; !ok || current == auth.AccessLevelRead && level == auth.AccessLevelWrite {
+			access[name] = level
+		}
+	}
+	return false
+}
+
+func (s *Server) applyClusterPeerPolicy(policy cluster.PeerPolicy) error {
+	if s.authManager == nil {
+		return fmt.Errorf("Authentication manager is not available")
+	}
+	keys, err := s.authManager.GetAllAPIKeys()
+	if err != nil {
+		return err
+	}
+	name := fmt.Sprintf("cluster-peer-%s", policy.Peer)
+	for _, key := range keys {
+		if key.Name != name || !key.IsActive {
+			continue
+		}
+		permissions, deployments := clusterPolicyAccess(policy)
+		_, err := s.authManager.UpdateAPIKey(key.ID, key.Name, key.Description, key.Role, permissions, deployments, key.ExpiresAt)
+		return err
+	}
+	return fmt.Errorf("Active peer credential not found")
 }
 
 func (s *Server) clusterRemovePeer(c *gin.Context) {
