@@ -389,6 +389,9 @@ func New(cfg *config.Config, configPath string) *Server {
 	s.runDeploymentAction = s.defaultRunDeploymentAction
 	s.runServiceAction = s.defaultRunServiceAction
 	s.runAutoscaleActivation = s.defaultRunAutoscaleActivation
+	if err := s.reconcileClusterPeerPolicies(); err != nil {
+		log.Printf("Warning: Failed to reconcile Fleet peer access: %v", err)
+	}
 	if s.autoscaleStore != nil {
 		autoscaleContext, cancelAutoscale := context.WithCancel(context.Background())
 		s.autoscaleCancel = cancelAutoscale

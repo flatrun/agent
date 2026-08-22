@@ -53,6 +53,106 @@ func TestNewDBRecordsSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestNewDBMigratesExistingPeersWithDefaultPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbDir := filepath.Join(tmpDir, ".flatrun")
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		t.Fatalf("create database directory: %v", err)
+	}
+	conn, err := sql.Open("sqlite", "file:"+filepath.Join(dbDir, "cluster.db"))
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	_, err = conn.Exec(`
+		CREATE TABLE peers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			url TEXT NOT NULL,
+			api_key_hash TEXT NOT NULL,
+			api_key_encrypted TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			last_seen_at DATETIME
+		);
+		CREATE TABLE invites (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			token_hash TEXT UNIQUE NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			created_by INTEGER NOT NULL,
+			accepted_peer TEXT,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO peers (name, url, api_key_hash, api_key_encrypted)
+		VALUES ('prod-2', 'https://prod-2.example.com', 'hash', 'encrypted');
+	`)
+	if err != nil {
+		_ = conn.Close()
+		t.Fatalf("seed legacy database: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	db, err := NewDB(tmpDir)
+	if err != nil {
+		t.Fatalf("migrate legacy database: %v", err)
+	}
+	defer db.Close()
+
+	peer, err := db.GetPeer("prod-2")
+	if err != nil {
+		t.Fatalf("read migrated peer: %v", err)
+	}
+	if peer.URL != "https://prod-2.example.com" {
+		t.Fatalf("peer URL = %q", peer.URL)
+	}
+	policy, err := db.GetPeerPolicy("prod-2")
+	if err != nil {
+		t.Fatalf("read migrated peer policy: %v", err)
+	}
+	if len(policy.Grants) != len(DefaultPeerGrants()) {
+		t.Fatalf("policy grants = %#v", policy.Grants)
+	}
+}
+
+func TestNewDBRepairsMissingPeerPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	db, err := NewDB(tmpDir)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	peer := &Peer{
+		Name:            "prod-2",
+		URL:             "https://prod-2.example.com",
+		APIKeyHash:      "hash",
+		APIKeyEncrypted: "encrypted",
+		Status:          "active",
+	}
+	if _, err := db.CreatePeer(peer); err != nil {
+		t.Fatalf("create peer: %v", err)
+	}
+	if _, err := db.conn.Exec(`DELETE FROM peer_policies WHERE peer_name = ?`, peer.Name); err != nil {
+		t.Fatalf("remove peer policy: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+
+	db, err = NewDB(tmpDir)
+	if err != nil {
+		t.Fatalf("reopen database: %v", err)
+	}
+	defer db.Close()
+	policy, err := db.GetPeerPolicy(peer.Name)
+	if err != nil {
+		t.Fatalf("read repaired peer policy: %v", err)
+	}
+	if len(policy.Grants) != len(DefaultPeerGrants()) {
+		t.Fatalf("policy grants = %#v", policy.Grants)
+	}
+}
+
 func TestDBPath(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cluster_test")
 	if err != nil {

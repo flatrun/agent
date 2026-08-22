@@ -68,6 +68,10 @@ func NewDB(deploymentsPath string) (*DB, error) {
 		conn.Close()
 		return nil, err
 	}
+	if err := db.repair(); err != nil {
+		conn.Close()
+		return nil, err
+	}
 
 	return db, nil
 }
@@ -93,6 +97,17 @@ func (db *DB) migrate() error {
 		return err
 	}
 	_, err = provider.Up(context.Background())
+	return err
+}
+
+func (db *DB) repair() error {
+	grants, err := json.Marshal(DefaultPeerGrants())
+	if err != nil {
+		return err
+	}
+	_, err = db.conn.Exec(`
+		INSERT OR IGNORE INTO peer_policies (peer_name, grants_json)
+		SELECT name, ? FROM peers`, grants)
 	return err
 }
 

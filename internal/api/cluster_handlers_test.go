@@ -246,6 +246,53 @@ func TestUpdateClusterPeerPolicyThroughHTTP(t *testing.T) {
 	}
 }
 
+func TestReconcileClusterPeerPoliciesScopesExistingCredentials(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	if err := env.server.clusterManager.AddPeer("server-b", "https://server-b.example.com", "peer-key"); err != nil {
+		t.Fatalf("AddPeer failed: %v", err)
+	}
+	user, err := env.server.authManager.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("get admin: %v", err)
+	}
+	_, err = env.server.authManager.CreateAPIKeyFromRaw(
+		"existing-peer-key",
+		user.ID,
+		"cluster-peer-server-b",
+		"Existing Fleet peer",
+		auth.RoleAdmin,
+		nil,
+		nil,
+		time.Time{},
+	)
+	if err != nil {
+		t.Fatalf("create existing peer credential: %v", err)
+	}
+
+	if err := env.server.reconcileClusterPeerPolicies(); err != nil {
+		t.Fatalf("reconcile peer policies: %v", err)
+	}
+	keys, err := env.server.authManager.GetAllAPIKeys()
+	if err != nil {
+		t.Fatalf("list API keys: %v", err)
+	}
+	for _, key := range keys {
+		if key.Name != "cluster-peer-server-b" {
+			continue
+		}
+		if key.Role != "" {
+			t.Fatalf("peer role = %q", key.Role)
+		}
+		permissions, _ := clusterPolicyAccess(cluster.PeerPolicy{Grants: cluster.DefaultPeerGrants()})
+		if !slices.Equal(key.Permissions, permissions) {
+			t.Fatalf("peer permissions = %#v, want %#v", key.Permissions, permissions)
+		}
+		return
+	}
+	t.Fatal("existing peer credential not found")
+}
+
 func TestClusterPolicyAccessScopesDeployments(t *testing.T) {
 	permissions, deployments := clusterPolicyAccess(cluster.PeerPolicy{Grants: []cluster.Grant{
 		{Capability: cluster.CapabilityDeploymentsRead, Deployments: []string{"public-site", "docs"}},

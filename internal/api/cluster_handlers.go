@@ -755,10 +755,38 @@ func (s *Server) applyClusterPeerPolicy(policy cluster.PeerPolicy) error {
 			continue
 		}
 		permissions, deployments := clusterPolicyAccess(policy)
-		_, err := s.authManager.UpdateAPIKey(key.ID, key.Name, key.Description, key.Role, permissions, deployments, key.ExpiresAt)
+		_, err := s.authManager.UpdateAPIKey(
+			key.ID,
+			key.Name,
+			key.Description,
+			auth.Role(""),
+			permissions,
+			deployments,
+			key.ExpiresAt,
+		)
 		return err
 	}
 	return fmt.Errorf("Active peer credential not found")
+}
+
+func (s *Server) reconcileClusterPeerPolicies() error {
+	if s.clusterManager == nil || s.authManager == nil {
+		return nil
+	}
+	peers, err := s.clusterManager.DB().ListPeers()
+	if err != nil {
+		return err
+	}
+	for _, peer := range peers {
+		policy, err := s.clusterManager.DB().GetPeerPolicy(peer.Name)
+		if err != nil {
+			return err
+		}
+		if err := s.applyClusterPeerPolicy(*policy); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) clusterRemovePeer(c *gin.Context) {
