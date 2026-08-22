@@ -10,12 +10,13 @@ import (
 )
 
 type Compatibility struct {
-	Compatible bool     `json:"compatible"`
-	Service    string   `json:"service,omitempty"`
-	Image      string   `json:"image,omitempty"`
-	Blockers   []string `json:"blockers"`
-	Warnings   []string `json:"warnings"`
-	Services   []string `json:"services"`
+	Compatible bool                  `json:"compatible"`
+	Service    string                `json:"service,omitempty"`
+	Image      string                `json:"image,omitempty"`
+	Blockers   []string              `json:"blockers"`
+	Warnings   []string              `json:"warnings"`
+	Services   []string              `json:"services"`
+	Workload   *models.ScalingConfig `json:"workload,omitempty"`
 }
 
 type composeCompatibilityFile struct {
@@ -41,6 +42,7 @@ func AssessCompatibility(deployment *models.Deployment, composeContent string) C
 		return result
 	}
 	scaling := deployment.Metadata.Scaling
+	result.Workload = scaling
 	result.Service = strings.TrimSpace(scaling.Service)
 	if result.Service == "" {
 		result.Blockers = append(result.Blockers, "Choose the Compose service that may scale")
