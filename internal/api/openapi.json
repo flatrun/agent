@@ -1545,6 +1545,26 @@
         }
       }
     },
+    "/api/cluster/capacity/claim": {
+      "post": {
+        "operationId": "post-cluster-capacity-claim",
+        "tags": [
+          "cluster"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.clusterCapacityClaimResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cluster/deployments": {
       "get": {
         "operationId": "get-cluster-deployments",
@@ -3896,6 +3916,95 @@
                 }
               }
             },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/deployments/{name}/autoscale/activate": {
+      "post": {
+        "operationId": "post-deployments-by-name-autoscale-activate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/autoscale.Activation"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/deployments/{name}/autoscale/compatibility": {
+      "get": {
+        "operationId": "get-deployments-by-name-autoscale-compatibility",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/deployments/{name}/autoscale/workload": {
+      "put": {
+        "operationId": "put-deployments-by-name-autoscale-workload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.ScalingConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
             "description": "Success"
           }
         },
@@ -6867,16 +6976,21 @@
             "application/json": {
               "schema": {
                 "properties": {
+                  "target_id": {
+                    "type": "string"
+                  },
                   "url": {
                     "type": "string"
                   }
                 },
                 "type": "object",
                 "x-columns": [
-                  "url"
+                  "url",
+                  "target_id"
                 ],
                 "x-property-order": [
-                  "url"
+                  "url",
+                  "target_id"
                 ]
               }
             }
@@ -11442,6 +11556,49 @@
           "allow_fleet_capacity"
         ]
       },
+      "api.clusterCapacityClaimResponse": {
+        "type": "object",
+        "properties": {
+          "constraint": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_cpu": {
+            "type": "number"
+          },
+          "max_memory": {
+            "type": "integer"
+          },
+          "max_replicas": {
+            "type": "integer"
+          },
+          "node": {
+            "$ref": "#/components/schemas/orchestrator.NodeIdentity"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "enabled",
+          "reason",
+          "node",
+          "constraint",
+          "max_cpu",
+          "max_memory",
+          "max_replicas"
+        ],
+        "x-columns": [
+          "enabled",
+          "reason",
+          "constraint",
+          "max_cpu",
+          "max_memory",
+          "max_replicas"
+        ]
+      },
       "api.clusterProviderOption": {
         "type": "object",
         "properties": {
@@ -11474,6 +11631,9 @@
       "api.clusterProvidersResponse": {
         "type": "object",
         "properties": {
+          "k3s": {
+            "$ref": "#/components/schemas/config.K3sConfig"
+          },
           "orchestrators": {
             "type": "array",
             "items": {
@@ -11489,7 +11649,8 @@
         },
         "x-property-order": [
           "orchestrators",
-          "routing"
+          "routing",
+          "k3s"
         ]
       },
       "api.clusterSetupRequest": {
@@ -11753,6 +11914,9 @@
       "api.updateClusterProvidersRequest": {
         "type": "object",
         "properties": {
+          "k3s": {
+            "$ref": "#/components/schemas/config.K3sConfig"
+          },
           "orchestrator": {
             "type": "string"
           },
@@ -11762,7 +11926,8 @@
         },
         "x-property-order": [
           "orchestrator",
-          "routing"
+          "routing",
+          "k3s"
         ],
         "x-columns": [
           "orchestrator",
@@ -12000,9 +12165,27 @@
           "count"
         ]
       },
+      "autoscale.Activation": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "$ref": "#/components/schemas/routing.Route"
+          },
+          "workload": {
+            "$ref": "#/components/schemas/orchestrator.Status"
+          }
+        },
+        "x-property-order": [
+          "workload",
+          "route"
+        ]
+      },
       "autoscale.State": {
         "type": "object",
         "properties": {
+          "active": {
+            "type": "boolean"
+          },
           "high_windows": {
             "type": "integer"
           },
@@ -12012,17 +12195,38 @@
           },
           "low_windows": {
             "type": "integer"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "replicas": {
+            "type": "integer"
+          },
+          "route": {
+            "$ref": "#/components/schemas/routing.Route"
+          },
+          "service": {
+            "type": "string"
           }
         },
         "x-property-order": [
           "high_windows",
           "low_windows",
-          "last_action"
+          "last_action",
+          "active",
+          "provider",
+          "service",
+          "replicas",
+          "route"
         ],
         "x-columns": [
           "high_windows",
           "low_windows",
-          "last_action"
+          "last_action",
+          "active",
+          "provider",
+          "service",
+          "replicas"
         ]
       },
       "backup.Backup": {
@@ -12317,6 +12521,25 @@
           "credential_id",
           "use_path_style",
           "enabled"
+        ]
+      },
+      "config.K3sConfig": {
+        "type": "object",
+        "properties": {
+          "kubeconfig": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "kubeconfig",
+          "namespace"
+        ],
+        "x-columns": [
+          "kubeconfig",
+          "namespace"
         ]
       },
       "dashboards.Dashboard": {
@@ -13643,6 +13866,48 @@
           "auto_cert"
         ]
       },
+      "models.ScalingConfig": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "stateless": {
+            "type": "boolean"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/models.ScalingStorageConfig"
+          }
+        },
+        "x-property-order": [
+          "service",
+          "stateless",
+          "storage"
+        ],
+        "x-columns": [
+          "service",
+          "stateless"
+        ]
+      },
+      "models.ScalingStorageConfig": {
+        "type": "object",
+        "properties": {
+          "class": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "mode",
+          "class"
+        ],
+        "x-columns": [
+          "mode",
+          "class"
+        ]
+      },
       "models.Service": {
         "type": "object",
         "properties": {
@@ -13756,6 +14021,9 @@
           "require_plan": {
             "type": "boolean"
           },
+          "scaling": {
+            "$ref": "#/components/schemas/models.ScalingConfig"
+          },
           "security": {
             "$ref": "#/components/schemas/models.DeploymentSecurityConfig"
           },
@@ -13784,6 +14052,7 @@
           "quick_actions",
           "security",
           "backup",
+          "scaling",
           "protected_mode",
           "require_plan",
           "credential_id",
@@ -13949,6 +14218,160 @@
           "name",
           "url",
           "enabled"
+        ]
+      },
+      "orchestrator.Instance": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "healthy": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "node",
+          "address",
+          "healthy",
+          "ready"
+        ],
+        "x-columns": [
+          "id",
+          "node",
+          "address",
+          "healthy",
+          "ready"
+        ]
+      },
+      "orchestrator.NodeIdentity": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "hostname"
+        ],
+        "x-columns": [
+          "id",
+          "hostname"
+        ]
+      },
+      "orchestrator.Status": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "integer"
+          },
+          "desired": {
+            "type": "integer"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/orchestrator.Instance"
+            }
+          },
+          "workload": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "workload",
+          "desired",
+          "available",
+          "instances"
+        ],
+        "x-columns": [
+          "workload",
+          "desired",
+          "available"
+        ]
+      },
+      "routing.Backend": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "healthy": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "address",
+          "healthy",
+          "weight"
+        ],
+        "x-columns": [
+          "id",
+          "address",
+          "healthy",
+          "weight"
+        ]
+      },
+      "routing.Route": {
+        "type": "object",
+        "properties": {
+          "backends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/routing.Backend"
+            }
+          },
+          "domain": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "service",
+          "domain",
+          "path",
+          "protocol",
+          "backends"
+        ],
+        "x-columns": [
+          "id",
+          "service",
+          "domain",
+          "path",
+          "protocol"
         ]
       },
       "scheduler.AgentTaskConfig": {
