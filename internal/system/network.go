@@ -38,6 +38,7 @@ type NetworkInterface struct {
 
 type ServerInfo struct {
 	Hostname   string             `json:"hostname"`
+	AgentURL   string             `json:"agent_url"`
 	PublicIPv4 string             `json:"public_ipv4"`
 	PublicIPv6 string             `json:"public_ipv6"`
 	Interfaces []NetworkInterface `json:"interfaces"`
