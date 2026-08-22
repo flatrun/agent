@@ -65,7 +65,7 @@ func (s *Server) diagnoseContainerCapacity(c *gin.Context) {
 		MemoryUsage: stats.MemoryUsage,
 		MemoryLimit: uint64(max(limits.MemoryLimit, 0)),
 	}
-	policy := capacity.DefaultPolicy()
+	policy := capacity.PolicyFromConfig(s.config.Capacity)
 	c.JSON(http.StatusOK, gin.H{
 		"host":      host,
 		"container": container,

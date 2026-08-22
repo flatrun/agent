@@ -1,6 +1,10 @@
 package capacity
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/flatrun/agent/pkg/config"
+)
 
 func TestDiagnoseIncreasesContainerMemoryBeforeScaling(t *testing.T) {
 	policy := DefaultPolicy()
@@ -34,5 +38,25 @@ func TestDiagnoseReportsUnlimitedContainerAsHealthyWhenHostHasHeadroom(t *testin
 	diagnosis := Diagnose(host, Container{MemoryUsage: 6 << 30, CPUPercent: 200}, policy)
 	if diagnosis.Pressure != PressureNone || diagnosis.Action != ActionNone {
 		t.Fatalf("diagnosis = %#v", diagnosis)
+	}
+}
+
+func TestPolicyFromConfigPreservesExplicitScalingChoices(t *testing.T) {
+	disabled := false
+	policy := PolicyFromConfig(config.CapacityConfig{
+		AllocationThresholdPercent: 75,
+		HostThresholdPercent:       80,
+		AllowVertical:              &disabled,
+		AllowHorizontal:            &disabled,
+	})
+
+	if policy.AllocationThresholdPercent != 75 || policy.HostThresholdPercent != 80 {
+		t.Fatalf("thresholds = %.0f, %.0f", policy.AllocationThresholdPercent, policy.HostThresholdPercent)
+	}
+	if policy.AllowVertical || policy.AllowHorizontal {
+		t.Fatalf("scaling choices = vertical:%t horizontal:%t", policy.AllowVertical, policy.AllowHorizontal)
+	}
+	if policy.HostMemoryReserve == 0 || policy.MemoryStepPercent == 0 {
+		t.Fatalf("defaults were not retained: %#v", policy)
 	}
 }

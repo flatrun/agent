@@ -1612,6 +1612,30 @@
         "x-permission": "cluster:write"
       }
     },
+    "/api/cluster/setup": {
+      "post": {
+        "operationId": "post-cluster-setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.clusterSetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      }
+    },
     "/api/cluster/stats": {
       "get": {
         "operationId": "get-cluster-stats",
@@ -1797,6 +1821,30 @@
           "containers"
         ],
         "x-permission": "containers:delete"
+      }
+    },
+    "/api/containers/{id}/capacity": {
+      "get": {
+        "operationId": "get-containers-by-id-capacity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "containers"
+        ],
+        "x-permission": "containers:read"
       }
     },
     "/api/containers/{id}/exec": {
@@ -6485,6 +6533,67 @@
         "x-permission": "networks:write"
       }
     },
+    "/api/notifications/incidents": {
+      "get": {
+        "operationId": "get-notifications-incidents",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "notifications"
+        ],
+        "x-permission": "settings:read"
+      }
+    },
+    "/api/notifications/rules": {
+      "get": {
+        "operationId": "get-notifications-rules",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "notifications"
+        ],
+        "x-permission": "settings:read"
+      },
+      "put": {
+        "operationId": "put-notifications-rules",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "rules": {
+                    "items": {
+                      "$ref": "#/components/schemas/notify.Rule"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object",
+                "x-property-order": [
+                  "rules"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "notifications"
+        ],
+        "x-permission": "settings:write"
+      }
+    },
     "/api/notifications/targets": {
       "get": {
         "operationId": "get-notifications-targets",
@@ -11006,6 +11115,29 @@
           "tail"
         ]
       },
+      "api.clusterSetupRequest": {
+        "type": "object",
+        "properties": {
+          "advertise_url": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "server_name",
+          "advertise_url"
+        ],
+        "x-columns": [
+          "server_name",
+          "advertise_url"
+        ],
+        "required": [
+          "server_name",
+          "advertise_url"
+        ]
+      },
       "api.deploymentSource": {
         "type": "object",
         "properties": {
@@ -13189,6 +13321,12 @@
       "notify.Config": {
         "type": "object",
         "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/notify.Rule"
+            }
+          },
           "targets": {
             "type": "array",
             "items": {
@@ -13197,12 +13335,92 @@
           }
         },
         "x-property-order": [
-          "targets"
+          "targets",
+          "rules"
+        ]
+      },
+      "notify.Rule": {
+        "type": "object",
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "event_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notifications": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "severities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "x-property-order": [
+          "id",
+          "name",
+          "enabled",
+          "topics",
+          "event_types",
+          "severities",
+          "nodes",
+          "deployments",
+          "notifications",
+          "target_ids"
+        ],
+        "x-columns": [
+          "id",
+          "name",
+          "enabled"
         ]
       },
       "notify.Target": {
         "type": "object",
         "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -13212,6 +13430,24 @@
           "name": {
             "type": "string"
           },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "severities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "url": {
             "type": "string"
           }
@@ -13220,7 +13456,11 @@
           "id",
           "name",
           "url",
-          "enabled"
+          "enabled",
+          "topics",
+          "severities",
+          "nodes",
+          "deployments"
         ],
         "x-columns": [
           "id",

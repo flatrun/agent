@@ -1,6 +1,10 @@
 package capacity
 
-import "math"
+import (
+	"math"
+
+	"github.com/flatrun/agent/pkg/config"
+)
 
 type Pressure string
 
@@ -69,6 +73,37 @@ func DefaultPolicy() Policy {
 		AllowVertical:              true,
 		AllowHorizontal:            true,
 	}
+}
+
+func PolicyFromConfig(cfg config.CapacityConfig) Policy {
+	policy := DefaultPolicy()
+	if cfg.AllocationThresholdPercent > 0 {
+		policy.AllocationThresholdPercent = cfg.AllocationThresholdPercent
+	}
+	if cfg.HostThresholdPercent > 0 {
+		policy.HostThresholdPercent = cfg.HostThresholdPercent
+	}
+	if cfg.HostMemoryReserve > 0 {
+		policy.HostMemoryReserve = cfg.HostMemoryReserve
+	}
+	if cfg.HostCPUReserve > 0 {
+		policy.HostCPUReserve = cfg.HostCPUReserve
+	}
+	if cfg.MemoryStepPercent > 0 {
+		policy.MemoryStepPercent = cfg.MemoryStepPercent
+	}
+	if cfg.CPUStepPercent > 0 {
+		policy.CPUStepPercent = cfg.CPUStepPercent
+	}
+	policy.MaxMemory = cfg.MaxMemory
+	policy.MaxCPU = cfg.MaxCPU
+	if cfg.AllowVertical != nil {
+		policy.AllowVertical = *cfg.AllowVertical
+	}
+	if cfg.AllowHorizontal != nil {
+		policy.AllowHorizontal = *cfg.AllowHorizontal
+	}
+	return policy
 }
 
 func Diagnose(host Host, container Container, policy Policy) Diagnosis {
