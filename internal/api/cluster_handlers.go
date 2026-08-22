@@ -95,7 +95,8 @@ func (s *Server) checkOrchestrator(ctx context.Context, id orchestrator.Provider
 		defer provider.Close()
 		return provider.Ready(ctx)
 	case orchestrator.ProviderK3s:
-		return fmt.Errorf("k3s adapter is not configured")
+		provider := orchestrator.NewK3sProvider(s.config.Cluster.K3s.Kubeconfig, s.config.Cluster.K3s.Namespace)
+		return provider.Ready(ctx)
 	default:
 		return fmt.Errorf("orchestrator %q is not supported", id)
 	}

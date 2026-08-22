@@ -14,13 +14,19 @@ import (
 )
 
 type ClusterConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	ServerName     string `yaml:"server_name"`
-	AdvertiseURL   string `yaml:"advertise_url"`
-	HealthInterval string `yaml:"health_interval"`
-	RequestTimeout string `yaml:"request_timeout"`
-	Orchestrator   string `yaml:"orchestrator" json:"orchestrator"`
-	Routing        string `yaml:"routing" json:"routing"`
+	Enabled        bool      `yaml:"enabled"`
+	ServerName     string    `yaml:"server_name"`
+	AdvertiseURL   string    `yaml:"advertise_url"`
+	HealthInterval string    `yaml:"health_interval"`
+	RequestTimeout string    `yaml:"request_timeout"`
+	Orchestrator   string    `yaml:"orchestrator" json:"orchestrator"`
+	Routing        string    `yaml:"routing" json:"routing"`
+	K3s            K3sConfig `yaml:"k3s" json:"k3s"`
+}
+
+type K3sConfig struct {
+	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig"`
+	Namespace  string `yaml:"namespace" json:"namespace"`
 }
 
 type CapacityConfig struct {
