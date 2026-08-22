@@ -14257,6 +14257,9 @@
       "orchestrator.NodeIdentity": {
         "type": "object",
         "properties": {
+          "cluster_id": {
+            "type": "string"
+          },
           "hostname": {
             "type": "string"
           },
@@ -14266,11 +14269,13 @@
         },
         "x-property-order": [
           "id",
-          "hostname"
+          "hostname",
+          "cluster_id"
         ],
         "x-columns": [
           "id",
-          "hostname"
+          "hostname",
+          "cluster_id"
         ]
       },
       "orchestrator.Status": {

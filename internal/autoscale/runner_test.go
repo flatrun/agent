@@ -93,3 +93,27 @@ func TestRunnerPersistsSuccessfulExecution(t *testing.T) {
 		t.Fatalf("state = %#v", result.State)
 	}
 }
+
+func TestRunnerPublishesPendingReplicaWhenItBecomesReady(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.ScaleUpWindows = 1
+	now := time.Now()
+	store := &runnerStore{policy: policy, state: State{Active: true, Replicas: 1}}
+	provider := &fakeOrchestrator{status: orchestrator.Status{
+		Workload: "shop", Desired: 1, Available: 1,
+		Instances: []orchestrator.Instance{{ID: "one", Address: "10.0.0.1:8080", Healthy: true, Ready: true}},
+	}}
+	router := &fakeRouter{}
+	runner := NewRunner(store, NewExecutor(provider, router), nil, "prod-1")
+	route := routing.Route{ID: "shop", Service: "web", Domain: "shop.example.com", Protocol: "http", Backends: []routing.Backend{{ID: "one", Address: "10.0.0.1:8080", Healthy: true, Weight: 1}}}
+	result, err := runner.Reconcile(context.Background(), "shop", Input{Now: now, Replicas: 1, CPUPercent: 95}, route)
+	if err != nil || result.Execution == nil || !result.Execution.Pending || store.state.Replicas != 2 {
+		t.Fatalf("result = %#v, state = %#v, error = %v", result, store.state, err)
+	}
+	provider.status.Available = 2
+	provider.status.Instances = append(provider.status.Instances, orchestrator.Instance{ID: "two", Address: "10.0.0.2:8080", Healthy: true, Ready: true})
+	result, err = runner.Reconcile(context.Background(), "shop", Input{Now: now.Add(time.Second), Replicas: 2}, route)
+	if err != nil || result.Execution == nil || result.Execution.Pending || len(store.state.Route.Backends) != 2 {
+		t.Fatalf("result = %#v, state = %#v, error = %v", result, store.state, err)
+	}
+}

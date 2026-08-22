@@ -121,6 +121,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		protected.GET("/test/users", authMiddleware.RequirePermission(auth.PermUsersWrite), func(c *gin.Context) {
 			c.Status(http.StatusNoContent)
 		})
+		protected.POST("/cluster/capacity/claim", server.clusterCapacityClaim)
 		clusterGroup := protected.Group("/cluster")
 		clusterGroup.Use(authMiddleware.RequirePermission(auth.PermClusterRead))
 		{
@@ -138,7 +139,6 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 			clusterGroup.GET("/deployments", server.clusterAggregateDeployments)
 			clusterGroup.GET("/stats", server.clusterAggregateStats)
 			clusterGroup.GET("/capacity", server.clusterAggregateCapacity)
-			clusterGroup.POST("/capacity/claim", server.clusterCapacityClaim)
 		}
 	}
 
@@ -235,6 +235,13 @@ func TestUpdateClusterPeerPolicyThroughHTTP(t *testing.T) {
 		if key.Name == "cluster-peer-server-b" && len(key.Permissions) != 0 {
 			t.Fatalf("capacity offer unexpectedly granted general API permissions: %#v", key.Permissions)
 		}
+	}
+	claimReq := httptest.NewRequest(http.MethodPost, "/api/cluster/capacity/claim", nil)
+	claimReq.Header.Set("Authorization", "Bearer server-b-inbound-key")
+	claimWriter := httptest.NewRecorder()
+	env.router.ServeHTTP(claimWriter, claimReq)
+	if claimWriter.Code == http.StatusForbidden || claimWriter.Code == http.StatusUnauthorized {
+		t.Fatalf("capacity offer credential was rejected by middleware: %d: %s", claimWriter.Code, claimWriter.Body.String())
 	}
 }
 

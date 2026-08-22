@@ -37,6 +37,10 @@ func NewActivator(orchestratorProvider orchestrator.Provider, routingProvider ro
 }
 
 func (a *Activator) Activate(ctx context.Context, deployment, service string, workload orchestrator.Workload, route routing.Route) (Activation, error) {
+	return a.ActivateDurably(ctx, deployment, service, workload, route, nil)
+}
+
+func (a *Activator) ActivateDurably(ctx context.Context, deployment, service string, workload orchestrator.Workload, route routing.Route, persist func(Activation) error) (Activation, error) {
 	status, err := a.orchestrator.Apply(ctx, workload)
 	if err != nil {
 		return Activation{}, fmt.Errorf("create managed workload: %w", err)
@@ -59,11 +63,18 @@ func (a *Activator) Activate(ctx context.Context, deployment, service string, wo
 		rollback()
 		return Activation{}, fmt.Errorf("publish managed route: %w", err)
 	}
+	activation := Activation{Workload: status, Route: route}
+	if persist != nil {
+		if err := persist(activation); err != nil {
+			rollback()
+			return Activation{}, fmt.Errorf("save managed workload state: %w", err)
+		}
+	}
 	if _, err := a.stopper.StopService(deployment, service); err != nil {
 		rollback()
 		return Activation{}, fmt.Errorf("stop Compose service after cutover: %w", err)
 	}
-	return Activation{Workload: status, Route: route}, nil
+	return activation, nil
 }
 
 func (a *Activator) waitReady(ctx context.Context, workloadID string, status orchestrator.Status) (orchestrator.Status, error) {

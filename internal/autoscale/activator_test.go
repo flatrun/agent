@@ -50,3 +50,24 @@ func TestActivatorRollsBackWhenComposeCannotStop(t *testing.T) {
 		t.Fatalf("rollback removed workload %q and route %q", provider.removed, router.removed)
 	}
 }
+
+func TestActivatorPersistsBeforeStoppingCompose(t *testing.T) {
+	provider := &fakeOrchestrator{status: orchestrator.Status{Workload: "shop", Desired: 1, Available: 1, Instances: []orchestrator.Instance{{ID: "one", Address: "10.0.0.1:8080", Healthy: true, Ready: true}}}}
+	router := &fakeRouter{}
+	stopper := &activationStopper{}
+	persisted := false
+	_, err := NewActivator(provider, router, stopper).ActivateDurably(
+		context.Background(), "shop", "web", orchestrator.Workload{ID: "shop", Image: "shop:1", Replicas: 1},
+		routing.Route{ID: "shop", Service: "web", Domain: "shop.example.com", Protocol: "http"},
+		func(activation Activation) error {
+			persisted = activation.Workload.Available == 1 && len(activation.Route.Backends) == 1
+			return errors.New("database unavailable")
+		},
+	)
+	if err == nil || !persisted {
+		t.Fatalf("error = %v, persisted = %t", err, persisted)
+	}
+	if stopper.stopped || provider.removed != "shop" || router.removed != "shop" {
+		t.Fatalf("stopped = %t, workload = %q, route = %q", stopper.stopped, provider.removed, router.removed)
+	}
+}

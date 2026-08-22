@@ -54,7 +54,7 @@ func (r *Runner) Reconcile(ctx context.Context, deployment string, input Input, 
 		return ReconcileResult{}, fmt.Errorf("save autoscaling state: %w", err)
 	}
 	result := ReconcileResult{State: nextState, Decision: decision}
-	if decision.Action == ActionNone {
+	if decision.Action == ActionNone && !nextState.Active {
 		return result, nil
 	}
 	if decision.Action == ActionNotify {
@@ -67,9 +67,6 @@ func (r *Runner) Reconcile(ctx context.Context, deployment string, input Input, 
 		r.publishFailure(deployment, err.Error(), events.SeverityCritical)
 		return result, fmt.Errorf("execute autoscaling decision: %w", err)
 	}
-	if execution.Pending {
-		return result, nil
-	}
 	nextState.Replicas = execution.Status.Desired
 	if execution.Route.ID != "" {
 		nextState.Route = execution.Route
@@ -78,6 +75,9 @@ func (r *Runner) Reconcile(ctx context.Context, deployment string, input Input, 
 		return result, fmt.Errorf("save autoscaling execution: %w", err)
 	}
 	result.State = nextState
+	if execution.Pending {
+		return result, nil
+	}
 	return result, nil
 }
 

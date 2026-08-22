@@ -98,23 +98,33 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 	stopper := autoscale.ServiceStopperFunc(func(deployment, service string) (string, error) {
 		return s.manager.StopService(deployment, service)
 	})
-	activation, err := autoscale.NewActivator(orchestratorProvider, routeProvider, stopper).Activate(ctx, name, deployment.Metadata.Scaling.Service, workload, routing.Route{
+	previousState, err := s.autoscaleStore.State(name)
+	if err != nil {
+		return autoscale.Activation{}, err
+	}
+	persisted := false
+	activation, err := autoscale.NewActivator(orchestratorProvider, routeProvider, stopper).ActivateDurably(ctx, name, deployment.Metadata.Scaling.Service, workload, routing.Route{
 		ID: name, Service: deployment.Metadata.Scaling.Service, Domain: domain.Domain, Path: domain.PathPrefix, Protocol: "http",
+	}, func(activation autoscale.Activation) error {
+		state := previousState
+		state.Active = true
+		state.Provider = orchestratorID
+		state.Service = deployment.Metadata.Scaling.Service
+		state.Replicas = activation.Workload.Desired
+		state.Route = activation.Route
+		state.LastAction = time.Now()
+		if err := s.autoscaleStore.SetState(name, state); err != nil {
+			return err
+		}
+		persisted = true
+		return nil
 	})
 	if err != nil {
-		return autoscale.Activation{}, err
-	}
-	state, err := s.autoscaleStore.State(name)
-	if err != nil {
-		return autoscale.Activation{}, err
-	}
-	state.Active = true
-	state.Provider = orchestratorID
-	state.Service = deployment.Metadata.Scaling.Service
-	state.Replicas = activation.Workload.Desired
-	state.Route = activation.Route
-	state.LastAction = time.Now()
-	if err := s.autoscaleStore.SetState(name, state); err != nil {
+		if persisted {
+			if restoreErr := s.autoscaleStore.SetState(name, previousState); restoreErr != nil {
+				return autoscale.Activation{}, fmt.Errorf("%v; restore autoscaling state: %w", err, restoreErr)
+			}
+		}
 		return autoscale.Activation{}, err
 	}
 	return activation, nil
@@ -148,6 +158,7 @@ func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.
 		return data, nil
 	})
 	allowed := 0
+	incompatible := 0
 	maxReplicas := 0
 	constraint := "node.labels." + label + "==true"
 	for _, result := range claims {
@@ -158,7 +169,11 @@ func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.
 		if err := json.Unmarshal(result.Data, &claim); err != nil || !claim.Enabled || claim.Constraint != constraint {
 			continue
 		}
-		if !capacityClaimFits(claim, resources) {
+		if claim.Node.ClusterID != identity.ClusterID {
+			incompatible++
+			continue
+		}
+		if !capacityClaimFits(claim, resources, identity.ClusterID) {
 			continue
 		}
 		allowed++
@@ -167,14 +182,50 @@ func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.
 		}
 	}
 	if allowed == 0 {
+		if incompatible > 0 {
+			return orchestrator.Placement{}, fmt.Errorf("Permitted Fleet servers must join the same Docker Swarm before they can lend capacity")
+		}
 		return local, nil
 	}
 	return orchestrator.Placement{Constraints: []string{constraint}, MaxReplicasPerNode: uint64(maxReplicas)}, nil
 }
 
-func capacityClaimFits(claim clusterCapacityClaimResponse, resources orchestrator.Resources) bool {
-	return (claim.MaxCPU == 0 || resources.CPULimit <= claim.MaxCPU) &&
+func capacityClaimFits(claim clusterCapacityClaimResponse, resources orchestrator.Resources, clusterID string) bool {
+	return clusterID != "" && claim.Node.ClusterID == clusterID &&
+		(claim.MaxCPU == 0 || resources.CPULimit <= claim.MaxCPU) &&
 		(claim.MaxMemory == 0 || resources.MemoryLimit <= claim.MaxMemory)
+}
+
+func (s *Server) fleetCapacityAvailable(ctx context.Context, provider *orchestrator.SwarmProvider, resources orchestrator.Resources) (bool, error) {
+	manager := s.getClusterManager()
+	if manager == nil {
+		return false, nil
+	}
+	identity, err := provider.LocalNodeIdentity(ctx)
+	if err != nil {
+		return false, err
+	}
+	constraint := "node.labels." + capacityNodeLabel(manager.ServerName()) + "==true"
+	claims := manager.ForEachPeer(ctx, func(ctx context.Context, _ string, client *cluster.Client) ([]byte, error) {
+		data, status, err := client.Post(ctx, "/api/cluster/capacity/claim", nil)
+		if err != nil {
+			return nil, err
+		}
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("capacity claim returned status %d", status)
+		}
+		return data, nil
+	})
+	for _, result := range claims {
+		if result.Error != "" {
+			continue
+		}
+		var claim clusterCapacityClaimResponse
+		if err := json.Unmarshal(result.Data, &claim); err == nil && claim.Enabled && claim.Constraint == constraint && capacityClaimFits(claim, resources, identity.ClusterID) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func autoscaleDomain(deployment *models.Deployment, workload orchestrator.Workload) (models.DomainConfig, error) {

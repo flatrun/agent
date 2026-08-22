@@ -3,6 +3,7 @@ package autoscale
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/internal/routing"
@@ -27,7 +28,26 @@ func NewExecutor(orchestrator orchestrator.Provider, routing routing.Provider) *
 func (e *Executor) Execute(ctx context.Context, workloadID string, route routing.Route, decision Decision) (Execution, error) {
 	result := Execution{Decision: decision}
 	switch decision.Action {
-	case ActionNone, ActionNotify:
+	case ActionNone:
+		status, err := e.orchestrator.Status(ctx, workloadID)
+		result.Status = status
+		if err != nil || status.Available < status.Desired {
+			result.Pending = err == nil
+			return result, err
+		}
+		updated, err := routeWithReadyInstances(route, status)
+		if err != nil {
+			return result, err
+		}
+		if slices.Equal(updated.Backends, route.Backends) {
+			return result, nil
+		}
+		if err := e.routing.Reconcile(ctx, updated); err != nil {
+			return result, fmt.Errorf("publish ready route: %w", err)
+		}
+		result.Route = updated
+		return result, nil
+	case ActionNotify:
 		status, err := e.orchestrator.Status(ctx, workloadID)
 		result.Status = status
 		return result, err

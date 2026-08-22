@@ -139,7 +139,7 @@ func TestSwarmProviderLabelsLocalNodeForCapacityGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.ID != "node-1" || identity.Hostname != "prod-1" || client.node.Spec.Labels["flatrun.capacity.origin"] != "true" {
+	if identity.ID != "node-1" || identity.Hostname != "prod-1" || identity.ClusterID != "swarm-1" || client.node.Spec.Labels["flatrun.capacity.origin"] != "true" {
 		t.Fatalf("identity = %#v, node = %#v", identity, client.node)
 	}
 }

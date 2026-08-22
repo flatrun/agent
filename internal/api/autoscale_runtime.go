@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/flatrun/agent/internal/autoscale"
 	"github.com/flatrun/agent/internal/capacity"
@@ -81,6 +82,17 @@ func (f autoscaleRuntimeFactory) Build(ctx context.Context, deployment string, s
 		observations = append(observations, autoscaleReplicaObservation{Stats: stat, Limits: *limits})
 	}
 	input := autoscaleInput(observations, status, hostStats, f.server.config.Capacity)
+	placement, err := provider.Placement(ctx, deployment)
+	if err != nil {
+		return fail(fmt.Errorf("read managed workload placement: %w", err))
+	}
+	if usesFleetPlacement(placement) {
+		available, err := f.server.fleetCapacityAvailable(ctx, provider, input.CurrentResources)
+		if err != nil {
+			return fail(fmt.Errorf("read permitted Fleet capacity: %w", err))
+		}
+		input.FleetOffer = capacity.Offer{Enabled: available}
+	}
 	routeProvider := routing.NewManagedNginxProvider(f.server.proxyOrchestrator.NginxManager(), f.server.manager)
 	if err := routeProvider.Reconcile(ctx, state.Route); err != nil {
 		return fail(fmt.Errorf("restore managed route state: %w", err))
@@ -88,6 +100,15 @@ func (f autoscaleRuntimeFactory) Build(ctx context.Context, deployment string, s
 	return autoscale.RuntimeSession{
 		Input: input, Executor: autoscale.NewExecutor(provider, routeProvider), Close: provider.Close,
 	}, nil
+}
+
+func usesFleetPlacement(placement orchestrator.Placement) bool {
+	for _, constraint := range placement.Constraints {
+		if strings.HasPrefix(constraint, "node.labels.flatrun.capacity.") {
+			return true
+		}
+	}
+	return false
 }
 
 func autoscaleInput(observations []autoscaleReplicaObservation, status orchestrator.Status, hostStats *system.SystemStats, configPolicy config.CapacityConfig) autoscale.Input {

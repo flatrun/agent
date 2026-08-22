@@ -139,13 +139,20 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 
 func TestCapacityClaimFitsWorkloadLimits(t *testing.T) {
 	resources := orchestrator.Resources{CPULimit: 2, MemoryLimit: 2 << 30}
-	if !capacityClaimFits(clusterCapacityClaimResponse{MaxCPU: 2, MaxMemory: 2 << 30}, resources) {
+	claim := clusterCapacityClaimResponse{Node: orchestrator.NodeIdentity{ClusterID: "swarm-1"}, MaxCPU: 2, MaxMemory: 2 << 30}
+	if !capacityClaimFits(claim, resources, "swarm-1") {
 		t.Fatal("matching capacity grant was rejected")
 	}
-	if capacityClaimFits(clusterCapacityClaimResponse{MaxCPU: 1, MaxMemory: 4 << 30}, resources) {
+	claim.MaxCPU, claim.MaxMemory = 1, 4<<30
+	if capacityClaimFits(claim, resources, "swarm-1") {
 		t.Fatal("CPU limit above the capacity grant was accepted")
 	}
-	if capacityClaimFits(clusterCapacityClaimResponse{MaxCPU: 4, MaxMemory: 1 << 30}, resources) {
+	claim.MaxCPU, claim.MaxMemory = 4, 1<<30
+	if capacityClaimFits(claim, resources, "swarm-1") {
 		t.Fatal("memory limit above the capacity grant was accepted")
+	}
+	claim.MaxCPU, claim.MaxMemory = 4, 4<<30
+	if capacityClaimFits(claim, resources, "swarm-2") {
+		t.Fatal("capacity from a different Swarm was accepted")
 	}
 }

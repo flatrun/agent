@@ -25,3 +25,12 @@ func TestAutoscaleInputUsesMostConstrainedReplica(t *testing.T) {
 		t.Fatalf("diagnosis = %#v, input = %#v", input.Diagnosis, input)
 	}
 }
+
+func TestUsesFleetPlacementOnlyForCapacityLabels(t *testing.T) {
+	if !usesFleetPlacement(orchestrator.Placement{Constraints: []string{"node.labels.flatrun.capacity.a1b2==true"}}) {
+		t.Fatal("Fleet capacity placement was not detected")
+	}
+	if usesFleetPlacement(orchestrator.Placement{Constraints: []string{"node.hostname==prod-1"}}) {
+		t.Fatal("local placement was treated as Fleet capacity")
+	}
+}

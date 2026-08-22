@@ -102,6 +102,28 @@ func TestExecutorWaitsForNewReplicaBeforeRouting(t *testing.T) {
 	}
 }
 
+func TestExecutorPublishesReplicaThatBecameReady(t *testing.T) {
+	orchestratorProvider := &fakeOrchestrator{status: orchestrator.Status{
+		Workload: "shop", Desired: 2, Available: 2,
+		Instances: []orchestrator.Instance{
+			{ID: "one", Address: "10.0.0.1:8080", Healthy: true, Ready: true},
+			{ID: "two", Address: "10.0.0.2:8080", Healthy: true, Ready: true},
+		},
+	}}
+	router := &fakeRouter{}
+	execution, err := NewExecutor(orchestratorProvider, router).Execute(
+		context.Background(), "shop",
+		routing.Route{ID: "shop", Service: "web", Domain: "shop.example.com", Protocol: "http", Backends: []routing.Backend{{ID: "one", Address: "10.0.0.1:8080", Healthy: true, Weight: 1}}},
+		Decision{Action: ActionNone},
+	)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if execution.Pending || len(execution.Route.Backends) != 2 || len(router.reconciled.Backends) != 2 {
+		t.Fatalf("execution = %#v, route = %#v", execution, router.reconciled)
+	}
+}
+
 func TestExecutorDrainsBeforeRemovingReplica(t *testing.T) {
 	orchestratorProvider := &fakeOrchestrator{status: orchestrator.Status{
 		Workload: "shop", Desired: 2, Available: 2,
