@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,6 +38,81 @@ type clusterProvidersResponse struct {
 	Orchestrators []clusterProviderOption `json:"orchestrators"`
 	Routing       []clusterProviderOption `json:"routing"`
 	K3s           config.K3sConfig        `json:"k3s"`
+}
+
+type clusterCapacityClaimResponse struct {
+	Enabled     bool                      `json:"enabled"`
+	Reason      string                    `json:"reason"`
+	Node        orchestrator.NodeIdentity `json:"node"`
+	Constraint  string                    `json:"constraint,omitempty"`
+	MaxCPU      float64                   `json:"max_cpu,omitempty"`
+	MaxMemory   uint64                    `json:"max_memory,omitempty"`
+	MaxReplicas int                       `json:"max_replicas,omitempty"`
+}
+
+func (s *Server) clusterCapacityClaim(c *gin.Context) {
+	peer, err := clusterPeerFromActor(auth.GetActorFromContext(c))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	mgr := s.getClusterManager()
+	if mgr == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
+		return
+	}
+	policy, err := mgr.DB().GetPeerPolicy(peer)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Capacity has not been granted to this peer"})
+		return
+	}
+	grant, ok := capacityOfferGrant(*policy)
+	if !ok {
+		c.JSON(http.StatusOK, clusterCapacityClaimResponse{Reason: "This server has not permitted Fleet workloads from this peer"})
+		return
+	}
+	provider, err := orchestrator.NewSwarmProviderFromEnv()
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	defer provider.Close()
+	label := capacityNodeLabel(peer)
+	node, err := provider.EnsureLocalNodeLabel(c, label, "true")
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, clusterCapacityClaimResponse{
+		Enabled: true, Reason: "This node permits Fleet workloads from this peer", Node: node,
+		Constraint: "node.labels." + label + "==true",
+		MaxCPU:     grant.MaxCPU, MaxMemory: grant.MaxMemory, MaxReplicas: grant.MaxReplicas,
+	})
+}
+
+func clusterPeerFromActor(actor *auth.ActorContext) (string, error) {
+	if actor == nil || actor.APIKey == nil {
+		return "", fmt.Errorf("A Fleet peer credential is required")
+	}
+	peer, ok := strings.CutPrefix(actor.APIKey.Name, "cluster-peer-")
+	if !ok || strings.TrimSpace(peer) == "" {
+		return "", fmt.Errorf("A Fleet peer credential is required")
+	}
+	return peer, nil
+}
+
+func capacityOfferGrant(policy cluster.PeerPolicy) (cluster.Grant, bool) {
+	for _, grant := range policy.Grants {
+		if grant.Capability == cluster.CapabilityCapacityOffer {
+			return grant, true
+		}
+	}
+	return cluster.Grant{}, false
+}
+
+func capacityNodeLabel(peer string) string {
+	sum := sha256.Sum256([]byte(peer))
+	return "flatrun.capacity." + hex.EncodeToString(sum[:6])
 }
 
 func (s *Server) clusterProviders(c *gin.Context) {

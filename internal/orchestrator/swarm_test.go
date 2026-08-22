@@ -7,6 +7,7 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/swarm"
+	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/client"
 )
 
@@ -15,6 +16,20 @@ type fakeSwarmClient struct {
 	tasks   []swarm.Task
 	created *swarm.ServiceSpec
 	updated *swarm.ServiceSpec
+	node    swarm.Node
+}
+
+func (f *fakeSwarmClient) Info(_ context.Context, _ client.InfoOptions) (client.SystemInfoResult, error) {
+	return client.SystemInfoResult{Info: system.Info{Swarm: swarm.Info{NodeID: f.node.ID}}}, nil
+}
+
+func (f *fakeSwarmClient) NodeInspect(_ context.Context, _ string, _ client.NodeInspectOptions) (client.NodeInspectResult, error) {
+	return client.NodeInspectResult{Node: f.node}, nil
+}
+
+func (f *fakeSwarmClient) NodeUpdate(_ context.Context, _ string, options client.NodeUpdateOptions) (client.NodeUpdateResult, error) {
+	f.node.Spec = options.Spec
+	return client.NodeUpdateResult{}, nil
 }
 
 func (f *fakeSwarmClient) SwarmInspect(_ context.Context, _ client.SwarmInspectOptions) (client.SwarmInspectResult, error) {
@@ -115,5 +130,16 @@ func TestSwarmProviderRejectsUnsafeStatefulReplication(t *testing.T) {
 	err := provider.Validate(context.Background(), Workload{ID: "database", Image: "postgres:17", Replicas: 2, Stateful: true})
 	if err == nil {
 		t.Fatal("stateful replication should require a storage policy")
+	}
+}
+
+func TestSwarmProviderLabelsLocalNodeForCapacityGrant(t *testing.T) {
+	client := &fakeSwarmClient{node: swarm.Node{ID: "node-1", Description: swarm.NodeDescription{Hostname: "prod-1"}}}
+	identity, err := NewSwarmProvider(client).EnsureLocalNodeLabel(context.Background(), "flatrun.capacity.origin", "true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ID != "node-1" || identity.Hostname != "prod-1" || client.node.Spec.Labels["flatrun.capacity.origin"] != "true" {
+		t.Fatalf("identity = %#v, node = %#v", identity, client.node)
 	}
 }

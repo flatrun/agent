@@ -922,6 +922,7 @@ func (s *Server) setupRoutes() {
 				clusterGroup.GET("/deployments", s.clusterAggregateDeployments)
 				clusterGroup.GET("/stats", s.clusterAggregateStats)
 				clusterGroup.GET("/capacity", s.clusterAggregateCapacity)
+				clusterGroup.POST("/capacity/claim", s.clusterCapacityClaim)
 				clusterGroup.GET("/providers", s.clusterProviders)
 				clusterGroup.PUT("/providers", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.updateClusterProviders)
 			}

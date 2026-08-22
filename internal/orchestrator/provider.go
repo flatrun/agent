@@ -25,7 +25,8 @@ type Health struct {
 }
 
 type Placement struct {
-	Constraints []string `json:"constraints,omitempty"`
+	Constraints        []string `json:"constraints,omitempty"`
+	MaxReplicasPerNode uint64   `json:"max_replicas_per_node,omitempty"`
 }
 
 type Workload struct {

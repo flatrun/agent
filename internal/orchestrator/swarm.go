@@ -15,11 +15,19 @@ import (
 
 type swarmClient interface {
 	SwarmInspect(context.Context, client.SwarmInspectOptions) (client.SwarmInspectResult, error)
+	Info(context.Context, client.InfoOptions) (client.SystemInfoResult, error)
+	NodeInspect(context.Context, string, client.NodeInspectOptions) (client.NodeInspectResult, error)
+	NodeUpdate(context.Context, string, client.NodeUpdateOptions) (client.NodeUpdateResult, error)
 	ServiceCreate(context.Context, client.ServiceCreateOptions) (client.ServiceCreateResult, error)
 	ServiceInspect(context.Context, string, client.ServiceInspectOptions) (client.ServiceInspectResult, error)
 	ServiceUpdate(context.Context, string, client.ServiceUpdateOptions) (client.ServiceUpdateResult, error)
 	ServiceRemove(context.Context, string, client.ServiceRemoveOptions) (client.ServiceRemoveResult, error)
 	TaskList(context.Context, client.TaskListOptions) (client.TaskListResult, error)
+}
+
+type NodeIdentity struct {
+	ID       string `json:"id"`
+	Hostname string `json:"hostname"`
 }
 
 type SwarmProvider struct {
@@ -50,6 +58,30 @@ func (p *SwarmProvider) Close() error {
 		return closer.Close()
 	}
 	return nil
+}
+
+func (p *SwarmProvider) EnsureLocalNodeLabel(ctx context.Context, key, value string) (NodeIdentity, error) {
+	info, err := p.client.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		return NodeIdentity{}, fmt.Errorf("inspect Docker host: %w", err)
+	}
+	if info.Info.Swarm.NodeID == "" {
+		return NodeIdentity{}, fmt.Errorf("Docker host is not a Swarm node")
+	}
+	inspected, err := p.client.NodeInspect(ctx, info.Info.Swarm.NodeID, client.NodeInspectOptions{})
+	if err != nil {
+		return NodeIdentity{}, fmt.Errorf("inspect local Swarm node: %w", err)
+	}
+	if inspected.Node.Spec.Labels == nil {
+		inspected.Node.Spec.Labels = make(map[string]string)
+	}
+	if inspected.Node.Spec.Labels[key] != value {
+		inspected.Node.Spec.Labels[key] = value
+		if _, err := p.client.NodeUpdate(ctx, inspected.Node.ID, client.NodeUpdateOptions{Version: inspected.Node.Version, Spec: inspected.Node.Spec}); err != nil {
+			return NodeIdentity{}, fmt.Errorf("label local Swarm node: %w", err)
+		}
+	}
+	return NodeIdentity{ID: inspected.Node.ID, Hostname: inspected.Node.Description.Hostname}, nil
 }
 
 func (p *SwarmProvider) ID() ProviderID {
@@ -184,7 +216,10 @@ func swarmSpec(workload Workload) swarm.ServiceSpec {
 			ContainerSpec: &swarm.ContainerSpec{Image: workload.Image, Labels: labels, Env: workloadEnvironment(workload.Environment), Command: workload.Entrypoint, Args: workload.Command, Dir: workload.WorkingDir},
 			Resources:     swarmResources(workload.Resources),
 			Networks:      swarmNetworks(workload.Networks),
-			Placement:     &swarm.Placement{Constraints: workload.Placement.Constraints},
+			Placement: &swarm.Placement{
+				Constraints: workload.Placement.Constraints,
+				MaxReplicas: workload.Placement.MaxReplicasPerNode,
+			},
 		},
 		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
 	}

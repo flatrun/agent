@@ -2,13 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/flatrun/agent/internal/autoscale"
+	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/pkg/models"
@@ -66,11 +67,6 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 	if err != nil {
 		return autoscale.Activation{}, err
 	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		return autoscale.Activation{}, fmt.Errorf("resolve local Swarm node: %w", err)
-	}
-	workload.Placement.Constraints = []string{"node.hostname==" + hostname}
 	domain, err := autoscaleDomain(deployment, workload)
 	if err != nil {
 		return autoscale.Activation{}, err
@@ -80,6 +76,10 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 		return autoscale.Activation{}, fmt.Errorf("create Swarm provider: %w", err)
 	}
 	defer swarmProvider.Close()
+	workload.Placement, err = s.autoscalePlacement(ctx, swarmProvider, policy)
+	if err != nil {
+		return autoscale.Activation{}, err
+	}
 	routeProvider := routing.NewManagedNginxProvider(s.proxyOrchestrator.NginxManager(), s.manager)
 	stopper := autoscale.ServiceStopperFunc(func(deployment, service string) (string, error) {
 		return s.manager.StopService(deployment, service)
@@ -104,6 +104,52 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 		return autoscale.Activation{}, err
 	}
 	return activation, nil
+}
+
+func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.SwarmProvider, policy autoscale.Policy) (orchestrator.Placement, error) {
+	identity, err := provider.EnsureLocalNodeLabel(ctx, "flatrun.capacity.local", "true")
+	if err != nil {
+		return orchestrator.Placement{}, err
+	}
+	local := orchestrator.Placement{Constraints: []string{"node.hostname==" + identity.Hostname}}
+	manager := s.getClusterManager()
+	if !policy.AllowFleetCapacity || manager == nil {
+		return local, nil
+	}
+	label := capacityNodeLabel(manager.ServerName())
+	if _, err := provider.EnsureLocalNodeLabel(ctx, label, "true"); err != nil {
+		return orchestrator.Placement{}, err
+	}
+	claims := manager.ForEachPeer(ctx, func(ctx context.Context, _ string, client *cluster.Client) ([]byte, error) {
+		data, status, err := client.Post(ctx, "/api/cluster/capacity/claim", nil)
+		if err != nil {
+			return nil, err
+		}
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("capacity claim returned status %d", status)
+		}
+		return data, nil
+	})
+	allowed := 0
+	maxReplicas := 0
+	constraint := "node.labels." + label + "==true"
+	for _, result := range claims {
+		if result.Error != "" {
+			continue
+		}
+		var claim clusterCapacityClaimResponse
+		if err := json.Unmarshal(result.Data, &claim); err != nil || !claim.Enabled || claim.Constraint != constraint {
+			continue
+		}
+		allowed++
+		if claim.MaxReplicas > 0 && (maxReplicas == 0 || claim.MaxReplicas < maxReplicas) {
+			maxReplicas = claim.MaxReplicas
+		}
+	}
+	if allowed == 0 {
+		return local, nil
+	}
+	return orchestrator.Placement{Constraints: []string{constraint}, MaxReplicasPerNode: uint64(maxReplicas)}, nil
 }
 
 func autoscaleDomain(deployment *models.Deployment, workload orchestrator.Workload) (models.DomainConfig, error) {

@@ -20,6 +20,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func TestCapacityClaimUsesPeerSpecificGrant(t *testing.T) {
+	peer, err := clusterPeerFromActor(&auth.ActorContext{APIKey: &auth.APIKey{Name: "cluster-peer-prod1"}})
+	if err != nil || peer != "prod1" {
+		t.Fatalf("peer = %q, error = %v", peer, err)
+	}
+	grant, ok := capacityOfferGrant(cluster.PeerPolicy{Grants: []cluster.Grant{
+		{Capability: cluster.CapabilityCapacityRead},
+		{Capability: cluster.CapabilityCapacityOffer, MaxCPU: 2, MaxMemory: 4 << 30, MaxReplicas: 3},
+	}})
+	if !ok || grant.MaxReplicas != 3 || grant.MaxCPU != 2 {
+		t.Fatalf("grant = %#v, found = %v", grant, ok)
+	}
+	if capacityNodeLabel("prod1") == capacityNodeLabel("prod2") {
+		t.Fatal("peer labels must be isolated")
+	}
+}
+
 type testClusterEnv struct {
 	server  *Server
 	router  *gin.Engine
@@ -121,6 +138,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 			clusterGroup.GET("/deployments", server.clusterAggregateDeployments)
 			clusterGroup.GET("/stats", server.clusterAggregateStats)
 			clusterGroup.GET("/capacity", server.clusterAggregateCapacity)
+			clusterGroup.POST("/capacity/claim", server.clusterCapacityClaim)
 		}
 	}
 
@@ -374,6 +392,32 @@ func TestClusterAPIKeyEnforcesPermissionsThroughHTTP(t *testing.T) {
 	}
 	if status := request("/api/test/users"); status != http.StatusForbidden {
 		t.Fatalf("user write status = %d", status)
+	}
+}
+
+func TestCapacityClaimDeniesUnpermittedPeerThroughHTTP(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	const rawKey = "peer-capacity-key-for-test"
+	if err := env.server.getClusterManager().AddPeer("server-b", "http://server-b.invalid", "remote-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.createClusterAPIKey(rawKey, "server-b"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/cluster/capacity/claim", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var response clusterCapacityClaimResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Enabled || response.Reason == "" {
+		t.Fatalf("response = %#v", response)
 	}
 }
 
