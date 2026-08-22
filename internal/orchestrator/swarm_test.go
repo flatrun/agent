@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"net/netip"
 	"testing"
 
 	"github.com/containerd/errdefs"
@@ -49,11 +50,15 @@ func (f *fakeSwarmClient) TaskList(_ context.Context, _ client.TaskListOptions) 
 }
 
 func TestSwarmProviderCreatesReplicatedService(t *testing.T) {
-	client := &fakeSwarmClient{tasks: []swarm.Task{{ID: "task-1", NodeID: "node-1", DesiredState: swarm.TaskStateRunning, Status: swarm.TaskStatus{State: swarm.TaskStateRunning}}}}
+	client := &fakeSwarmClient{tasks: []swarm.Task{{
+		ID: "task-1", NodeID: "node-1", DesiredState: swarm.TaskStateRunning,
+		Status:              swarm.TaskStatus{State: swarm.TaskStateRunning},
+		NetworksAttachments: []swarm.NetworkAttachment{{Addresses: []netip.Prefix{netip.MustParsePrefix("10.0.0.12/24")}}},
+	}}}
 	provider := NewSwarmProvider(client)
 
 	status, err := provider.Apply(context.Background(), Workload{
-		ID: "shop", Image: "example/shop:1", Replicas: 1,
+		ID: "shop", Image: "example/shop:1", Port: 8080, Replicas: 1,
 		Resources: Resources{CPURequest: 0.5, CPULimit: 1, MemoryRequest: 256 << 20, MemoryLimit: 512 << 20},
 	})
 	if err != nil {
@@ -67,6 +72,9 @@ func TestSwarmProviderCreatesReplicatedService(t *testing.T) {
 	}
 	if status.Desired != 1 || status.Available != 1 || len(status.Instances) != 1 {
 		t.Fatalf("status = %#v", status)
+	}
+	if status.Instances[0].Address != "10.0.0.12:8080" {
+		t.Fatalf("instance address = %q", status.Instances[0].Address)
 	}
 }
 

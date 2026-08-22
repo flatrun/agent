@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/containerd/errdefs"
@@ -58,6 +60,9 @@ func (p *SwarmProvider) Validate(_ context.Context, workload Workload) error {
 	}
 	if workload.Stateful && workload.Replicas > 1 {
 		return fmt.Errorf("Stateful workloads cannot use multiple replicas without a storage policy")
+	}
+	if workload.Port < 0 || workload.Port > 65535 {
+		return fmt.Errorf("Workload port is invalid")
 	}
 	return nil
 }
@@ -129,6 +134,7 @@ func (p *SwarmProvider) Status(ctx context.Context, id string) (Status, error) {
 		return Status{}, fmt.Errorf("list Swarm tasks: %w", err)
 	}
 	status := Status{Workload: id}
+	port := servicePort(service.Service.Spec)
 	if service.Service.Spec.Mode.Replicated != nil && service.Service.Spec.Mode.Replicated.Replicas != nil {
 		status.Desired = int(*service.Service.Spec.Mode.Replicated.Replicas)
 	}
@@ -141,7 +147,7 @@ func (p *SwarmProvider) Status(ctx context.Context, id string) (Status, error) {
 			status.Available++
 		}
 		status.Instances = append(status.Instances, Instance{
-			ID: task.ID, Node: task.NodeID, Healthy: running, Ready: running,
+			ID: task.ID, Node: task.NodeID, Address: taskAddress(task, port), Healthy: running, Ready: running,
 		})
 	}
 	return status, nil
@@ -161,6 +167,9 @@ func swarmSpec(workload Workload) swarm.ServiceSpec {
 		labels[key] = value
 	}
 	labels["flatrun.workload"] = workload.ID
+	if workload.Port > 0 {
+		labels["flatrun.port"] = strconv.Itoa(workload.Port)
+	}
 	return swarm.ServiceSpec{
 		Annotations: swarm.Annotations{Name: workload.ID, Labels: labels},
 		TaskTemplate: swarm.TaskSpec{
@@ -169,6 +178,24 @@ func swarmSpec(workload Workload) swarm.ServiceSpec {
 		},
 		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
 	}
+}
+
+func servicePort(spec swarm.ServiceSpec) int {
+	value := spec.Annotations.Labels["flatrun.port"]
+	port, _ := strconv.Atoi(value)
+	return port
+}
+
+func taskAddress(task swarm.Task, port int) string {
+	if port == 0 {
+		return ""
+	}
+	for _, attachment := range task.NetworksAttachments {
+		for _, address := range attachment.Addresses {
+			return net.JoinHostPort(address.Addr().String(), strconv.Itoa(port))
+		}
+	}
+	return ""
 }
 
 func swarmResources(resources Resources) *swarm.ResourceRequirements {

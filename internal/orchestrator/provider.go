@@ -27,6 +27,7 @@ type Health struct {
 type Workload struct {
 	ID        string            `json:"id"`
 	Image     string            `json:"image"`
+	Port      int               `json:"port,omitempty"`
 	Replicas  int               `json:"replicas"`
 	Resources Resources         `json:"resources"`
 	Health    Health            `json:"health"`
