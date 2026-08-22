@@ -35,6 +35,7 @@ type clusterProviderOption struct {
 type clusterProvidersResponse struct {
 	Orchestrators []clusterProviderOption `json:"orchestrators"`
 	Routing       []clusterProviderOption `json:"routing"`
+	K3s           config.K3sConfig        `json:"k3s"`
 }
 
 func (s *Server) clusterProviders(c *gin.Context) {
@@ -57,6 +58,7 @@ func (s *Server) clusterProviders(c *gin.Context) {
 			s.routingOption(c, routing.ProviderNginx, routingID),
 			s.routingOption(c, routing.ProviderTraefik, routingID),
 		},
+		K3s: s.config.Cluster.K3s,
 	})
 }
 
@@ -120,8 +122,9 @@ func (s *Server) checkRouting(ctx context.Context, id routing.ProviderID) error 
 }
 
 type updateClusterProvidersRequest struct {
-	Orchestrator string `json:"orchestrator" binding:"required"`
-	Routing      string `json:"routing" binding:"required"`
+	Orchestrator string           `json:"orchestrator" binding:"required"`
+	Routing      string           `json:"routing" binding:"required"`
+	K3s          config.K3sConfig `json:"k3s"`
 }
 
 func (s *Server) updateClusterProviders(c *gin.Context) {
@@ -132,8 +135,14 @@ func (s *Server) updateClusterProviders(c *gin.Context) {
 	}
 	orchestratorID := orchestrator.ProviderID(strings.TrimSpace(req.Orchestrator))
 	routingID := routing.ProviderID(strings.TrimSpace(req.Routing))
-	if err := s.checkOrchestrator(c, orchestratorID); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+	var orchestratorErr error
+	if orchestratorID == orchestrator.ProviderK3s && s.probeOrchestrator == nil {
+		orchestratorErr = orchestrator.NewK3sProvider(req.K3s.Kubeconfig, req.K3s.Namespace).Ready(c)
+	} else {
+		orchestratorErr = s.checkOrchestrator(c, orchestratorID)
+	}
+	if orchestratorErr != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": orchestratorErr.Error()})
 		return
 	}
 	if err := s.checkRouting(c, routingID); err != nil {
@@ -144,6 +153,7 @@ func (s *Server) updateClusterProviders(c *gin.Context) {
 	previous := s.config.Cluster
 	s.config.Cluster.Orchestrator = string(orchestratorID)
 	s.config.Cluster.Routing = string(routingID)
+	s.config.Cluster.K3s = req.K3s
 	if s.configPath != "" {
 		if err := config.Save(s.config, s.configPath); err != nil {
 			s.config.Cluster = previous
@@ -154,6 +164,7 @@ func (s *Server) updateClusterProviders(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"orchestrator": s.config.Cluster.Orchestrator,
 		"routing":      s.config.Cluster.Routing,
+		"k3s":          s.config.Cluster.K3s,
 	})
 }
 
