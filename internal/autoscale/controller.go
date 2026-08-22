@@ -67,7 +67,7 @@ func DefaultPolicy() Policy {
 }
 
 func Reconcile(policy Policy, state State, input Input) (State, Decision) {
-	if err := validatePolicy(policy); err != nil {
+	if err := ValidatePolicy(policy); err != nil {
 		return state, Decision{Action: ActionNotify, Reason: err.Error()}
 	}
 	if !policy.Enabled {
@@ -117,7 +117,7 @@ func Reconcile(policy Policy, state State, input Input) (State, Decision) {
 	return state, Decision{Action: ActionNone, Reason: "No scaling threshold has been sustained"}
 }
 
-func validatePolicy(policy Policy) error {
+func ValidatePolicy(policy Policy) error {
 	if policy.MinReplicas < 1 || policy.MaxReplicas < policy.MinReplicas {
 		return fmt.Errorf("Replica limits are invalid")
 	}

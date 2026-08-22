@@ -3835,6 +3835,76 @@
         "x-permission": "deployments:read"
       }
     },
+    "/api/deployments/{name}/autoscale": {
+      "get": {
+        "operationId": "get-deployments-by-name-autoscale",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.autoscalePolicyResponse"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-deployments-by-name-autoscale",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.autoscalePolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.autoscalePolicyResponse"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/backup-config": {
       "get": {
         "operationId": "get-deployments-by-name-backup-config",
@@ -11260,6 +11330,118 @@
           "tail"
         ]
       },
+      "api.autoscalePolicyRequest": {
+        "type": "object",
+        "properties": {
+          "allow_fleet_capacity": {
+            "type": "boolean"
+          },
+          "cooldown_seconds": {
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_replicas": {
+            "type": "integer"
+          },
+          "min_replicas": {
+            "type": "integer"
+          },
+          "scale_down_percent": {
+            "type": "number"
+          },
+          "scale_down_windows": {
+            "type": "integer"
+          },
+          "scale_up_percent": {
+            "type": "number"
+          },
+          "scale_up_windows": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "enabled",
+          "min_replicas",
+          "max_replicas",
+          "scale_up_percent",
+          "scale_down_percent",
+          "scale_up_windows",
+          "scale_down_windows",
+          "cooldown_seconds",
+          "allow_fleet_capacity"
+        ],
+        "x-columns": [
+          "enabled",
+          "min_replicas",
+          "max_replicas",
+          "scale_up_percent",
+          "scale_down_percent",
+          "scale_up_windows",
+          "scale_down_windows",
+          "cooldown_seconds",
+          "allow_fleet_capacity"
+        ]
+      },
+      "api.autoscalePolicyResponse": {
+        "type": "object",
+        "properties": {
+          "allow_fleet_capacity": {
+            "type": "boolean"
+          },
+          "cooldown_seconds": {
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_replicas": {
+            "type": "integer"
+          },
+          "min_replicas": {
+            "type": "integer"
+          },
+          "scale_down_percent": {
+            "type": "number"
+          },
+          "scale_down_windows": {
+            "type": "integer"
+          },
+          "scale_up_percent": {
+            "type": "number"
+          },
+          "scale_up_windows": {
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/autoscale.State"
+          }
+        },
+        "x-property-order": [
+          "enabled",
+          "min_replicas",
+          "max_replicas",
+          "scale_up_percent",
+          "scale_down_percent",
+          "scale_up_windows",
+          "scale_down_windows",
+          "cooldown_seconds",
+          "allow_fleet_capacity",
+          "state"
+        ],
+        "x-columns": [
+          "enabled",
+          "min_replicas",
+          "max_replicas",
+          "scale_up_percent",
+          "scale_down_percent",
+          "scale_up_windows",
+          "scale_down_windows",
+          "cooldown_seconds",
+          "allow_fleet_capacity"
+        ]
+      },
       "api.clusterProviderOption": {
         "type": "object",
         "properties": {
@@ -11816,6 +11998,31 @@
         "x-columns": [
           "date",
           "count"
+        ]
+      },
+      "autoscale.State": {
+        "type": "object",
+        "properties": {
+          "high_windows": {
+            "type": "integer"
+          },
+          "last_action": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "low_windows": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "high_windows",
+          "low_windows",
+          "last_action"
+        ],
+        "x-columns": [
+          "high_windows",
+          "low_windows",
+          "last_action"
         ]
       },
       "backup.Backup": {

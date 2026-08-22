@@ -28,6 +28,7 @@ import (
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/autoscale"
 	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/cluster"
@@ -99,6 +100,7 @@ type Server struct {
 	schedulerManager   *scheduler.Manager
 	auditManager       *audit.Manager
 	auditMiddleware    *audit.Middleware
+	autoscaleStore     *autoscale.Store
 	powerDNSManager    *dns.PowerDNSManager
 	clusterMu          sync.RWMutex
 	clusterManager     *cluster.Manager
@@ -182,6 +184,10 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	manager := docker.NewManager(cfg.DeploymentsPath)
 	manager.SetCleanupTimeout(cfg.Cleanup.Timeout)
+	autoscaleStore, err := autoscale.NewStore(cfg.DeploymentsPath)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize autoscaling store: %v", err)
+	}
 
 	// Deploys read template copies from disk. Seed the embedded infra and
 	// welcome content, then pull the app catalog from its external source into
@@ -283,7 +289,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	}
 
 	var trafficManager *traffic.Manager
-	trafficManager, err := traffic.NewManager(cfg.DeploymentsPath, 7)
+	trafficManager, err = traffic.NewManager(cfg.DeploymentsPath, 7)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize traffic manager: %v", err)
 	}
@@ -367,6 +373,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		backupManager:      backupManager,
 		auditManager:       auditManager,
 		auditMiddleware:    auditMiddleware,
+		autoscaleStore:     autoscaleStore,
 		powerDNSManager:    powerDNSManager,
 		clusterManager:     clusterManager,
 		setupManager:       setupManager,
@@ -618,6 +625,8 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/containers/:id/resources", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.updateContainerResources)
 			protected.GET("/deployments/:name/stats", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentContainerStats)
 			protected.GET("/deployments/:name/resources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentResources)
+			protected.GET("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentAutoscalePolicy)
+			protected.PUT("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentAutoscalePolicy)
 
 			// Image endpoints
 			protected.GET("/images", s.authMiddleware.RequirePermission(auth.PermImagesRead), s.listImages)
@@ -969,6 +978,9 @@ func (s *Server) Stop() error {
 	}
 	if s.clusterManager != nil {
 		s.clusterManager.Stop()
+	}
+	if s.autoscaleStore != nil {
+		_ = s.autoscaleStore.Close()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
