@@ -39,6 +39,10 @@ func (p *routeProvider) ID() ProviderID {
 }
 
 func (p *routeProvider) Validate(_ context.Context, route Route) error {
+	return validateRoute(route)
+}
+
+func validateRoute(route Route) error {
 	if !safeRouteID.MatchString(route.ID) {
 		return fmt.Errorf("Route ID is invalid")
 	}

@@ -18,6 +18,7 @@ type Backend struct {
 
 type Route struct {
 	ID       string    `json:"id"`
+	Service  string    `json:"service,omitempty"`
 	Domain   string    `json:"domain"`
 	Path     string    `json:"path,omitempty"`
 	Protocol string    `json:"protocol"`

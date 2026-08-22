@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -219,6 +221,61 @@ func (m *Manager) RenderVirtualHost(deployment *models.Deployment) (string, erro
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.generateMultiDomainConfig(deployment)
+}
+
+type UpstreamBackend struct {
+	Address string
+	Healthy bool
+	Weight  int
+}
+
+func (m *Manager) RenderVirtualHostWithBackends(deployment *models.Deployment, backends map[string][]UpstreamBackend) (string, error) {
+	if deployment.Metadata == nil {
+		return "", fmt.Errorf("deployment has no metadata")
+	}
+	if len(deployment.Metadata.GetDomains()) == 0 {
+		return "", nil
+	}
+	if err := validateUpstreamBackends(backends); err != nil {
+		return "", err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.renderMultiDomainConfigWithBackends(deployment, m.keepaliveSupported(), backends)
+}
+
+func validateUpstreamBackends(backends map[string][]UpstreamBackend) error {
+	for service, entries := range backends {
+		if strings.TrimSpace(service) == "" || len(entries) == 0 {
+			return fmt.Errorf("backend service and targets are required")
+		}
+		for _, backend := range entries {
+			host, rawPort, err := net.SplitHostPort(backend.Address)
+			if err != nil || !safeBackendHost(host) {
+				return fmt.Errorf("backend address %q is invalid", backend.Address)
+			}
+			port, portErr := strconv.Atoi(rawPort)
+			if portErr != nil || port < 1 || port > 65535 || backend.Weight < 0 {
+				return fmt.Errorf("backend address %q is invalid", backend.Address)
+			}
+		}
+	}
+	return nil
+}
+
+func safeBackendHost(host string) bool {
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	if host == "" {
+		return false
+	}
+	for _, value := range host {
+		if (value < 'a' || value > 'z') && (value < 'A' || value > 'Z') && (value < '0' || value > '9') && value != '.' && value != '-' && value != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) VirtualHostExists(deploymentName string) bool {
@@ -589,6 +646,10 @@ func (m *Manager) generateMultiDomainConfig(deployment *models.Deployment) (stri
 }
 
 func (m *Manager) renderMultiDomainConfig(deployment *models.Deployment, keepalive bool) (string, error) {
+	return m.renderMultiDomainConfigWithBackends(deployment, keepalive, nil)
+}
+
+func (m *Manager) renderMultiDomainConfigWithBackends(deployment *models.Deployment, keepalive bool, backendOverrides map[string][]UpstreamBackend) (string, error) {
 	domains := deployment.Metadata.GetDomains()
 	if len(domains) == 0 {
 		return "", fmt.Errorf("no domains configured")
@@ -624,7 +685,7 @@ func (m *Manager) renderMultiDomainConfig(deployment *models.Deployment, keepali
 
 	servers := m.groupDomainsByHost(domains, deployment.Name, m.deploymentComposeContent(deployment))
 
-	upstreams := assignUpstreams(servers, keepalive)
+	upstreams := assignUpstreams(servers, keepalive, backendOverrides)
 
 	data := multiRouteTemplateData{
 		DeploymentName:       deployment.Name,
@@ -673,8 +734,8 @@ func (m *Manager) renderMultiDomainConfig(deployment *models.Deployment, keepali
 // service:port target and returns no blocks, so the generated config is
 // unchanged. With keepalive on it points each location at a shared, deduplicated
 // upstream block so requests to the same service:port reuse one connection pool.
-func assignUpstreams(servers []serverData, keepalive bool) []upstreamData {
-	if !keepalive {
+func assignUpstreams(servers []serverData, keepalive bool, backendOverrides map[string][]UpstreamBackend) []upstreamData {
+	if !keepalive && len(backendOverrides) == 0 {
 		for si := range servers {
 			for li := range servers[si].Locations {
 				loc := &servers[si].Locations[li]
@@ -691,11 +752,22 @@ func assignUpstreams(servers []serverData, keepalive bool) []upstreamData {
 		for li := range servers[si].Locations {
 			loc := &servers[si].Locations[li]
 			target := fmt.Sprintf("%s:%d", loc.Service, loc.ContainerPort)
+			overrides := backendOverrides[loc.RouteService]
+			if len(overrides) == 0 {
+				overrides = backendOverrides[loc.Service]
+			}
+			if len(overrides) > 0 {
+				target = "override:" + loc.Service
+			}
 			name, ok := byTarget[target]
 			if !ok {
 				name = upstreamNameFor(loc.Service, loc.ContainerPort, used)
 				byTarget[target] = name
-				upstreams = append(upstreams, upstreamData{Name: name, Target: target})
+				targets := []UpstreamBackend{{Address: target, Healthy: true}}
+				if len(overrides) > 0 {
+					targets = append([]UpstreamBackend(nil), overrides...)
+				}
+				upstreams = append(upstreams, upstreamData{Name: name, Targets: targets})
 			}
 			loc.Upstream = name
 		}
@@ -755,10 +827,12 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			// Route to the service's unique container name, not the bare Compose service
 			// name (which is not unique across deployments sharing the proxy network and
 			// resolves via embedded DNS to an arbitrary deployment's container).
-			service := d.Service
+			routeService := d.Service
+			service := routeService
 			if service == "" {
 				log.Printf("[proxy] warning: domain %q has no service set for deployment %q, falling back to deployment name", d.Domain, deploymentName)
 				service = deploymentName
+				routeService = deploymentName
 			} else {
 				service = docker.ContainerNameForService(composeContent, deploymentName, service)
 			}
@@ -776,6 +850,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			locations = append(locations, locationData{
 				Path:          path,
 				Service:       service,
+				RouteService:  routeService,
 				ContainerPort: port,
 				Protocol:      "http",
 				StripPrefix:   d.StripPrefix,
@@ -897,8 +972,8 @@ type multiRouteTemplateData struct {
 }
 
 type upstreamData struct {
-	Name   string
-	Target string
+	Name    string
+	Targets []UpstreamBackend
 }
 
 type serverData struct {
@@ -914,6 +989,7 @@ type serverData struct {
 type locationData struct {
 	Path          string
 	Service       string
+	RouteService  string
 	ContainerPort int
 	Protocol      string
 	StripPrefix   bool
@@ -1085,7 +1161,9 @@ const upstreamBlocks = `{{- range .Upstreams}}
 upstream {{.Name}} {
     zone {{.Name}} 64k;
     resolver 127.0.0.11 valid=30s ipv6=off;
-    server {{.Target}} resolve;
+{{- range .Targets}}
+    server {{.Address}}{{if .Weight}} weight={{.Weight}}{{end}}{{if not .Healthy}} down{{end}} resolve;
+{{- end}}
     keepalive 16;
     keepalive_timeout 60s;
     keepalive_requests 1000;

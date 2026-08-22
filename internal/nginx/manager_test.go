@@ -2398,7 +2398,7 @@ func TestAssignUpstreams(t *testing.T) {
 			{Service: "app", ContainerPort: 80},
 		}},
 	}
-	ups := assignUpstreams(servers, true)
+	ups := assignUpstreams(servers, true, nil)
 	if len(ups) != 2 {
 		t.Fatalf("expected 2 deduped upstreams, got %d: %+v", len(ups), ups)
 	}
@@ -2411,11 +2411,53 @@ func TestAssignUpstreams(t *testing.T) {
 	}
 
 	off := []serverData{{Locations: []locationData{{Service: "app", ContainerPort: 80}}}}
-	if ups := assignUpstreams(off, false); ups != nil {
+	if ups := assignUpstreams(off, false, nil); ups != nil {
 		t.Errorf("expected no upstream blocks when keepalive is off, got %+v", ups)
 	}
 	if off[0].Locations[0].Upstream != "app:80" {
 		t.Errorf("keepalive-off target must be literal service:port, got %q", off[0].Locations[0].Upstream)
+	}
+}
+
+func TestRenderMultiDomain_BackendOverridesPreserveDeploymentConfig(t *testing.T) {
+	compose := "name: tenant-a\nservices:\n  web:\n    container_name: tenant-a-web\n"
+	m, deployment := newManagerWithDeployment(t, []models.DomainConfig{
+		{ID: "d1", Service: "web", ContainerPort: 8080, Domain: "app.example.com", SSL: models.SSLConfig{Enabled: true}},
+	}, compose)
+	deployment.Metadata.Security = &models.DeploymentSecurityConfig{Enabled: true, BlockedIPs: []string{"192.0.2.10"}}
+
+	config, err := m.renderMultiDomainConfigWithBackends(deployment, false, map[string][]UpstreamBackend{
+		"web": {
+			{Address: "10.42.0.8:8080", Healthy: true, Weight: 2},
+			{Address: "10.42.1.9:8080", Healthy: false, Weight: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"listen 443 ssl", "deny 192.0.2.10", "server 10.42.0.8:8080 weight=2 resolve;",
+		"server 10.42.1.9:8080 weight=1 down resolve;", "set $upstream flatrun_tenant-a-web_8080;",
+	} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("missing %q in:\n%s", expected, config)
+		}
+	}
+	if strings.Contains(config, "server tenant-a-web:8080 resolve;") {
+		t.Fatalf("Compose backend remains in overridden route:\n%s", config)
+	}
+}
+
+func TestRenderVirtualHostWithBackendsRejectsDirectiveInjection(t *testing.T) {
+	m, deployment := newManagerWithDeployment(t, []models.DomainConfig{
+		{ID: "d1", Service: "web", ContainerPort: 8080, Domain: "app.example.com"},
+	}, "services:\n  web:\n    image: app\n")
+
+	_, err := m.RenderVirtualHostWithBackends(deployment, map[string][]UpstreamBackend{
+		"web": {{Address: "10.42.0.8:8080; include /etc/nginx/nginx.conf", Healthy: true}},
+	})
+	if err == nil {
+		t.Fatal("unsafe backend address was accepted")
 	}
 }
 
