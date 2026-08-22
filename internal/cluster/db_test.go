@@ -40,6 +40,19 @@ func TestNewDB(t *testing.T) {
 	}
 }
 
+func TestNewDBRecordsSchemaVersion(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	var version int64
+	if err := db.conn.QueryRow(`SELECT MAX(version_id) FROM cluster_schema_version WHERE is_applied = 1`).Scan(&version); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if version != 2 {
+		t.Fatalf("schema version = %d, want 2", version)
+	}
+}
+
 func TestDBPath(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cluster_test")
 	if err != nil {
@@ -185,6 +198,55 @@ func TestDeletePeer(t *testing.T) {
 	_, err = db.GetPeer("to-delete")
 	if err == nil {
 		t.Error("GetPeer should fail after deletion")
+	}
+}
+
+func TestPeerPolicyDefaultsAndUpdates(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, err := db.CreatePeer(&Peer{
+		Name: "policy-peer", URL: "https://peer.example.com",
+		APIKeyHash: "h", APIKeyEncrypted: "e", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("CreatePeer failed: %v", err)
+	}
+
+	policy, err := db.GetPeerPolicy("policy-peer")
+	if err != nil {
+		t.Fatalf("GetPeerPolicy failed: %v", err)
+	}
+	if len(policy.Grants) != len(DefaultPeerGrants()) {
+		t.Fatalf("default grants = %#v", policy.Grants)
+	}
+
+	policy.Grants = []Grant{{Capability: CapabilityCapacityOffer, MaxCPU: 2, MaxMemory: 2 << 30, MaxReplicas: 3}}
+	if err := db.SetPeerPolicy(*policy); err != nil {
+		t.Fatalf("SetPeerPolicy failed: %v", err)
+	}
+	updated, err := db.GetPeerPolicy("policy-peer")
+	if err != nil {
+		t.Fatalf("GetPeerPolicy after update failed: %v", err)
+	}
+	if len(updated.Grants) != 1 || updated.Grants[0].MaxReplicas != 3 {
+		t.Fatalf("updated policy = %#v", updated)
+	}
+}
+
+func TestDeletePeerDeletesPolicy(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	_, _ = db.CreatePeer(&Peer{
+		Name: "policy-delete", URL: "https://peer.example.com",
+		APIKeyHash: "h", APIKeyEncrypted: "e", Status: "active",
+	})
+	if err := db.DeletePeer("policy-delete"); err != nil {
+		t.Fatalf("DeletePeer failed: %v", err)
+	}
+	if _, err := db.GetPeerPolicy("policy-delete"); err == nil {
+		t.Fatal("policy should be deleted with its peer")
 	}
 }
 

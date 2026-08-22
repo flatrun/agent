@@ -141,6 +141,63 @@ func (s *Server) clusterListPeers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"peers": peers})
 }
 
+func (s *Server) clusterPeerPolicy(c *gin.Context) {
+	mgr := s.getClusterManager()
+	if mgr == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
+		return
+	}
+	policy, err := mgr.DB().GetPeerPolicy(c.Param("name"))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Peer not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, policy)
+}
+
+func (s *Server) updateClusterPeerPolicy(c *gin.Context) {
+	mgr := s.getClusterManager()
+	if mgr == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
+		return
+	}
+	policy := cluster.PeerPolicy{Peer: c.Param("name")}
+	if err := c.ShouldBindJSON(&policy); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	policy.Peer = c.Param("name")
+	seen := make(map[cluster.Capability]bool, len(policy.Grants))
+	for _, grant := range policy.Grants {
+		if !cluster.ValidCapability(grant.Capability) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Unknown capability %q", grant.Capability)})
+			return
+		}
+		if seen[grant.Capability] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Duplicate capability %q", grant.Capability)})
+			return
+		}
+		if grant.MaxCPU < 0 || grant.MaxReplicas < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Resource limits cannot be negative"})
+			return
+		}
+		seen[grant.Capability] = true
+	}
+	if err := mgr.DB().SetPeerPolicy(policy); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Peer not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, policy)
+}
+
 func (s *Server) clusterInvite(c *gin.Context) {
 	mgr := s.getClusterManager()
 	if mgr == nil {

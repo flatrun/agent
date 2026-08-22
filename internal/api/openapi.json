@@ -1646,6 +1646,75 @@
         "x-permission": "cluster:write"
       }
     },
+    "/api/cluster/peers/{name}/policy": {
+      "get": {
+        "operationId": "get-cluster-peers-by-name-policy",
+        "tags": [
+          "cluster"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/cluster.PeerPolicy"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-cluster-peers-by-name-policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/cluster.PeerPolicy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/cluster.PeerPolicy"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      }
+    },
     "/api/cluster/setup": {
       "post": {
         "operationId": "post-cluster-setup",
@@ -11775,6 +11844,63 @@
         },
         "x-property-order": [
           "servers"
+        ]
+      },
+      "cluster.Grant": {
+        "type": "object",
+        "properties": {
+          "capability": {
+            "type": "string"
+          },
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_cpu": {
+            "type": "number"
+          },
+          "max_memory": {
+            "type": "integer"
+          },
+          "max_replicas": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "capability",
+          "deployments",
+          "max_cpu",
+          "max_memory",
+          "max_replicas"
+        ],
+        "x-columns": [
+          "capability",
+          "max_cpu",
+          "max_memory",
+          "max_replicas"
+        ]
+      },
+      "cluster.PeerPolicy": {
+        "type": "object",
+        "properties": {
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/cluster.Grant"
+            }
+          },
+          "peer": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "peer",
+          "grants"
+        ],
+        "x-columns": [
+          "peer"
         ]
       },
       "cluster.ServerResult": {

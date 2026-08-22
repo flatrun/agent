@@ -880,6 +880,8 @@ func (s *Server) setupRoutes() {
 				clusterGroup.GET("/status", s.clusterStatus)
 				clusterGroup.POST("/setup", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterSetup)
 				clusterGroup.GET("/peers", s.clusterListPeers)
+				clusterGroup.GET("/peers/:name/policy", s.clusterPeerPolicy)
+				clusterGroup.PUT("/peers/:name/policy", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.updateClusterPeerPolicy)
 				clusterGroup.POST("/invite", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterInvite)
 				clusterGroup.POST("/accept", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterAccept)
 				clusterGroup.DELETE("/peers/:name", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterRemovePeer)

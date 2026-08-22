@@ -101,6 +101,8 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 			clusterGroup.GET("/status", server.clusterStatus)
 			clusterGroup.POST("/setup", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterSetup)
 			clusterGroup.GET("/peers", server.clusterListPeers)
+			clusterGroup.GET("/peers/:name/policy", server.clusterPeerPolicy)
+			clusterGroup.PUT("/peers/:name/policy", authMiddleware.RequirePermission(auth.PermClusterWrite), server.updateClusterPeerPolicy)
 			clusterGroup.POST("/invite", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterInvite)
 			clusterGroup.POST("/accept", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterAccept)
 			clusterGroup.DELETE("/peers/:name", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterRemovePeer)
@@ -157,6 +159,41 @@ func TestClusterCapacityIncludesLocalOfferPolicy(t *testing.T) {
 	}
 	if local.Data.Offer.Enabled {
 		t.Fatal("fleet capacity should require explicit permission")
+	}
+}
+
+func TestUpdateClusterPeerPolicyThroughHTTP(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	if err := env.server.clusterManager.AddPeer("server-b", "https://server-b.example.com", "peer-key"); err != nil {
+		t.Fatalf("AddPeer failed: %v", err)
+	}
+
+	token := clusterLogin(t, env.router)
+	body := []byte(`{"grants":[{"capability":"capacity.offer","max_cpu":2,"max_memory":2147483648,"max_replicas":2}]}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/cluster/peers/server-b/policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/cluster/peers/server-b/policy", nil)
+	getReq.Header.Set("Authorization", "Bearer "+token)
+	getWriter := httptest.NewRecorder()
+	env.router.ServeHTTP(getWriter, getReq)
+	if getWriter.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getWriter.Code, getWriter.Body.String())
+	}
+	var policy cluster.PeerPolicy
+	if err := json.Unmarshal(getWriter.Body.Bytes(), &policy); err != nil {
+		t.Fatalf("decode policy: %v", err)
+	}
+	if len(policy.Grants) != 1 || policy.Grants[0].MaxCPU != 2 || policy.Grants[0].MaxReplicas != 2 {
+		t.Fatalf("policy = %#v", policy)
 	}
 }
 
