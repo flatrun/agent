@@ -1,16 +1,24 @@
 package cluster
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
+	"embed"
 	"encoding/hex"
+	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
+
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
 
 type Peer struct {
 	ID              int64     `json:"id"`
@@ -60,6 +68,10 @@ func NewDB(deploymentsPath string) (*DB, error) {
 		conn.Close()
 		return nil, err
 	}
+	if err := db.repair(); err != nil {
+		conn.Close()
+		return nil, err
+	}
 
 	return db, nil
 }
@@ -71,35 +83,31 @@ func (db *DB) Close() error {
 }
 
 func (db *DB) migrate() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS peers (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT UNIQUE NOT NULL,
-		url TEXT NOT NULL,
-		api_key_hash TEXT NOT NULL,
-		api_key_encrypted TEXT NOT NULL,
-		status TEXT NOT NULL DEFAULT 'active',
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		last_seen_at DATETIME
-	);
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		return err
+	}
+	provider, err := goose.NewProvider(
+		goose.DialectSQLite3,
+		db.conn,
+		migrations,
+		goose.WithTableName("cluster_schema_version"),
+	)
+	if err != nil {
+		return err
+	}
+	_, err = provider.Up(context.Background())
+	return err
+}
 
-	CREATE TABLE IF NOT EXISTS invites (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		token_hash TEXT UNIQUE NOT NULL,
-		status TEXT NOT NULL DEFAULT 'pending',
-		created_by INTEGER NOT NULL,
-		accepted_peer TEXT,
-		expires_at DATETIME NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_peers_name ON peers(name);
-	CREATE INDEX IF NOT EXISTS idx_peers_status ON peers(status);
-	CREATE INDEX IF NOT EXISTS idx_invites_token_hash ON invites(token_hash);
-	CREATE INDEX IF NOT EXISTS idx_invites_status ON invites(status);
-	`
-
-	_, err := db.conn.Exec(schema)
+func (db *DB) repair() error {
+	grants, err := json.Marshal(DefaultPeerGrants())
+	if err != nil {
+		return err
+	}
+	_, err = db.conn.Exec(`
+		INSERT OR IGNORE INTO peer_policies (peer_name, grants_json)
+		SELECT name, ? FROM peers`, grants)
 	return err
 }
 
@@ -120,7 +128,18 @@ func (db *DB) CreatePeer(peer *Peer) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	grants, err := json.Marshal(DefaultPeerGrants())
+	if err != nil {
+		return 0, err
+	}
+	if _, err := db.conn.Exec(`INSERT OR IGNORE INTO peer_policies (peer_name, grants_json) VALUES (?, ?)`, peer.Name, grants); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (db *DB) GetPeer(name string) (*Peer, error) {
@@ -180,8 +199,48 @@ func (db *DB) DeletePeer(name string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
+	if _, err := db.conn.Exec(`DELETE FROM peer_policies WHERE peer_name = ?`, name); err != nil {
+		return err
+	}
 	_, err := db.conn.Exec(`DELETE FROM peers WHERE name = ?`, name)
 	return err
+}
+
+func (db *DB) GetPeerPolicy(name string) (*PeerPolicy, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var raw string
+	if err := db.conn.QueryRow(`SELECT grants_json FROM peer_policies WHERE peer_name = ?`, name).Scan(&raw); err != nil {
+		return nil, err
+	}
+	var grants []Grant
+	if err := json.Unmarshal([]byte(raw), &grants); err != nil {
+		return nil, err
+	}
+	return &PeerPolicy{Peer: name, Grants: grants}, nil
+}
+
+func (db *DB) SetPeerPolicy(policy PeerPolicy) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	grants, err := json.Marshal(policy.Grants)
+	if err != nil {
+		return err
+	}
+	result, err := db.conn.Exec(`UPDATE peer_policies SET grants_json = ?, updated_at = ? WHERE peer_name = ?`, grants, time.Now(), policy.Peer)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (db *DB) UpdateLastSeen(name string) error {

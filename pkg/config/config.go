@@ -14,11 +14,33 @@ import (
 )
 
 type ClusterConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	ServerName     string `yaml:"server_name"`
-	AdvertiseURL   string `yaml:"advertise_url"`
-	HealthInterval string `yaml:"health_interval"`
-	RequestTimeout string `yaml:"request_timeout"`
+	Enabled        bool      `yaml:"enabled"`
+	ServerName     string    `yaml:"server_name"`
+	AdvertiseURL   string    `yaml:"advertise_url"`
+	HealthInterval string    `yaml:"health_interval"`
+	RequestTimeout string    `yaml:"request_timeout"`
+	Orchestrator   string    `yaml:"orchestrator" json:"orchestrator"`
+	Routing        string    `yaml:"routing" json:"routing"`
+	K3s            K3sConfig `yaml:"k3s" json:"k3s"`
+}
+
+type K3sConfig struct {
+	Kubeconfig string `yaml:"kubeconfig" json:"kubeconfig"`
+	Namespace  string `yaml:"namespace" json:"namespace"`
+}
+
+type CapacityConfig struct {
+	AllocationThresholdPercent float64 `yaml:"allocation_threshold_percent" json:"allocation_threshold_percent"`
+	HostThresholdPercent       float64 `yaml:"host_threshold_percent" json:"host_threshold_percent"`
+	HostMemoryReserve          uint64  `yaml:"host_memory_reserve" json:"host_memory_reserve"`
+	HostCPUReserve             float64 `yaml:"host_cpu_reserve" json:"host_cpu_reserve"`
+	MemoryStepPercent          float64 `yaml:"memory_step_percent" json:"memory_step_percent"`
+	CPUStepPercent             float64 `yaml:"cpu_step_percent" json:"cpu_step_percent"`
+	MaxMemory                  uint64  `yaml:"max_memory" json:"max_memory"`
+	MaxCPU                     float64 `yaml:"max_cpu" json:"max_cpu"`
+	AllowVertical              *bool   `yaml:"allow_vertical" json:"allow_vertical"`
+	AllowHorizontal            *bool   `yaml:"allow_horizontal" json:"allow_horizontal"`
+	OfferToFleet               bool    `yaml:"offer_to_fleet" json:"offer_to_fleet"`
 }
 
 type Config struct {
@@ -37,6 +59,7 @@ type Config struct {
 	Security        SecurityConfig       `yaml:"security"`
 	Audit           AuditConfig          `yaml:"audit"`
 	Cluster         ClusterConfig        `yaml:"cluster"`
+	Capacity        CapacityConfig       `yaml:"capacity"`
 	SystemTerminal  SystemTerminalConfig `yaml:"system_terminal"`
 	Cleanup         CleanupConfig        `yaml:"cleanup"`
 	Plans           PlansConfig          `yaml:"plans"`
@@ -385,6 +408,38 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.DefaultTimeout == 0 {
 		cfg.DefaultTimeout = 2 * time.Minute
+	}
+	if cfg.Cluster.Orchestrator == "" {
+		cfg.Cluster.Orchestrator = "standalone"
+	}
+	if cfg.Cluster.Routing == "" {
+		cfg.Cluster.Routing = "nginx"
+	}
+	if cfg.Capacity.AllocationThresholdPercent == 0 {
+		cfg.Capacity.AllocationThresholdPercent = 90
+	}
+	if cfg.Capacity.HostThresholdPercent == 0 {
+		cfg.Capacity.HostThresholdPercent = 85
+	}
+	if cfg.Capacity.HostMemoryReserve == 0 {
+		cfg.Capacity.HostMemoryReserve = 512 * 1024 * 1024
+	}
+	if cfg.Capacity.HostCPUReserve == 0 {
+		cfg.Capacity.HostCPUReserve = 0.25
+	}
+	if cfg.Capacity.MemoryStepPercent == 0 {
+		cfg.Capacity.MemoryStepPercent = 50
+	}
+	if cfg.Capacity.CPUStepPercent == 0 {
+		cfg.Capacity.CPUStepPercent = 50
+	}
+	if cfg.Capacity.AllowVertical == nil {
+		enabled := true
+		cfg.Capacity.AllowVertical = &enabled
+	}
+	if cfg.Capacity.AllowHorizontal == nil {
+		enabled := true
+		cfg.Capacity.AllowHorizontal = &enabled
 	}
 	if cfg.Cleanup.Timeout == 0 {
 		cfg.Cleanup.Timeout = cfg.DefaultTimeout

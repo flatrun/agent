@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0-beta.5] - 2026-08-22
+
+Fifth beta of the Albacore release, making connected servers manageable as one Fleet.
+
+### Added
+- Guided Fleet setup, peer access policies, remote deployment inventories, and runtime provider selection
+- Host and deployment capacity decisions with managed horizontal and vertical scaling
+- Docker Swarm and k3s orchestration adapters with nginx and Traefik routing adapters
+- Grouped incidents and configurable notification targets and delivery rules
+
+### Fixed
+- Existing Fleet peers gain default access policies during startup repair without reconnecting
+- Existing peer credentials are restricted to their configured Fleet policy during startup
+
 ## [0.4.0-beta.4] - 2026-08-21
 
 Fourth beta of the Albacore release, expanding operations, API discovery, and operator notifications.

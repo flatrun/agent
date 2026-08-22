@@ -13,6 +13,7 @@ const (
 	RoleAdmin    Role = "admin"
 	RoleOperator Role = "operator"
 	RoleViewer   Role = "viewer"
+	RoleService  Role = "service"
 )
 
 const (
@@ -27,7 +28,7 @@ func ValidAccessLevel(level string) bool {
 
 func (r Role) IsValid() bool {
 	switch r {
-	case RoleAdmin, RoleOperator, RoleViewer:
+	case RoleAdmin, RoleOperator, RoleViewer, RoleService:
 		return true
 	}
 	return false

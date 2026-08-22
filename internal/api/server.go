@@ -28,6 +28,7 @@ import (
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/autoscale"
 	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/cluster"
@@ -40,9 +41,11 @@ import (
 	"github.com/flatrun/agent/internal/infra"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/notify"
+	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/internal/plan"
 	"github.com/flatrun/agent/internal/pluginhost"
 	"github.com/flatrun/agent/internal/proxy"
+	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/setup"
@@ -97,8 +100,12 @@ type Server struct {
 	schedulerManager   *scheduler.Manager
 	auditManager       *audit.Manager
 	auditMiddleware    *audit.Middleware
+	autoscaleStore     *autoscale.Store
 	powerDNSManager    *dns.PowerDNSManager
+	clusterMu          sync.RWMutex
 	clusterManager     *cluster.Manager
+	probeOrchestrator  func(context.Context, orchestrator.ProviderID) error
+	probeRouting       func(context.Context, routing.ProviderID) error
 	setupManager       *setup.Manager
 	setupHandlers      *setup.Handlers
 	certRenewer        *ssl.Renewer
@@ -108,6 +115,9 @@ type Server struct {
 	aiSessions         *ai.SessionStore
 	aiAgents           *ai.AgentStore
 	mcpHandler         http.Handler
+
+	runAutoscaleActivation func(context.Context, string) (autoscale.Activation, error)
+	autoscaleCancel        context.CancelFunc
 
 	jobs *jobRegistry
 	// runDeploymentAction runs a deployment action and streams each output
@@ -177,6 +187,10 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	manager := docker.NewManager(cfg.DeploymentsPath)
 	manager.SetCleanupTimeout(cfg.Cleanup.Timeout)
+	autoscaleStore, err := autoscale.NewStore(cfg.DeploymentsPath)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize autoscaling store: %v", err)
+	}
 
 	// Deploys read template copies from disk. Seed the embedded infra and
 	// welcome content, then pull the app catalog from its external source into
@@ -278,7 +292,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	}
 
 	var trafficManager *traffic.Manager
-	trafficManager, err := traffic.NewManager(cfg.DeploymentsPath, 7)
+	trafficManager, err = traffic.NewManager(cfg.DeploymentsPath, 7)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize traffic manager: %v", err)
 	}
@@ -325,13 +339,13 @@ func New(cfg *config.Config, configPath string) *Server {
 				requestTimeout = 10 * time.Second
 			}
 			clusterManager = cluster.NewManager(clusterDB, cfg.Cluster.ServerName, healthInterval, requestTimeout, cfg.Auth.JWTSecret)
+			clusterManager.SetEventPublisher(notifyService)
 			if startErr := clusterManager.Start(context.Background()); startErr != nil {
 				log.Printf("Warning: Failed to start cluster manager: %v", startErr)
 				clusterManager = nil
 			}
 		}
 	}
-
 	s := &Server{
 		config:             cfg,
 		configPath:         configPath,
@@ -362,6 +376,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		backupManager:      backupManager,
 		auditManager:       auditManager,
 		auditMiddleware:    auditMiddleware,
+		autoscaleStore:     autoscaleStore,
 		powerDNSManager:    powerDNSManager,
 		clusterManager:     clusterManager,
 		setupManager:       setupManager,
@@ -373,6 +388,20 @@ func New(cfg *config.Config, configPath string) *Server {
 	}
 	s.runDeploymentAction = s.defaultRunDeploymentAction
 	s.runServiceAction = s.defaultRunServiceAction
+	s.runAutoscaleActivation = s.defaultRunAutoscaleActivation
+	if err := s.reconcileClusterPeerPolicies(); err != nil {
+		log.Printf("Warning: Failed to reconcile Fleet peer access: %v", err)
+	}
+	if s.autoscaleStore != nil {
+		autoscaleContext, cancelAutoscale := context.WithCancel(context.Background())
+		s.autoscaleCancel = cancelAutoscale
+		node := cfg.Cluster.ServerName
+		if node == "" {
+			node, _ = os.Hostname()
+		}
+		supervisor := autoscale.NewSupervisor(s.autoscaleStore, autoscaleRuntimeFactory{server: s}, s.notify, node, 30*time.Second)
+		go supervisor.Run(autoscaleContext)
+	}
 
 	// Built unconditionally: it is stateless and starts nothing, so requests are
 	// gated on the live config flag instead, letting mcp.enabled toggle at runtime.
@@ -523,6 +552,9 @@ func (s *Server) setupRoutes() {
 			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getAgentUpdate)
 			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.triggerAgentUpdate)
 			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getNotificationTargets)
+			protected.GET("/notifications/incidents", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.listNotificationIncidents)
+			protected.GET("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.listNotificationRules)
+			protected.PUT("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationRules)
 			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationTargets)
 			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.testNotification)
 			protected.GET("/config", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listConfig)
@@ -605,9 +637,16 @@ func (s *Server) setupRoutes() {
 			protected.GET("/containers/stats", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getAllContainerStats)
 			protected.POST("/containers/:id/exec", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.containerExecHTTP)
 			protected.GET("/containers/:id/resources", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.getContainerResources)
+			protected.GET("/containers/:id/capacity", s.authMiddleware.RequirePermission(auth.PermContainersRead), s.diagnoseContainerCapacity)
+			protected.GET("/capacity", s.authMiddleware.RequirePermission(auth.PermSystemRead), s.getCapacityStatus)
 			protected.PUT("/containers/:id/resources", s.authMiddleware.RequirePermission(auth.PermContainersWrite), s.updateContainerResources)
 			protected.GET("/deployments/:name/stats", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentContainerStats)
 			protected.GET("/deployments/:name/resources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentResources)
+			protected.GET("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentAutoscalePolicy)
+			protected.GET("/deployments/:name/autoscale/compatibility", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentAutoscaleCompatibility)
+			protected.PUT("/deployments/:name/autoscale/workload", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentAutoscaleWorkload)
+			protected.PUT("/deployments/:name/autoscale", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentAutoscalePolicy)
+			protected.POST("/deployments/:name/autoscale/activate", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.activateDeploymentAutoscale)
 
 			// Image endpoints
 			protected.GET("/images", s.authMiddleware.RequirePermission(auth.PermImagesRead), s.listImages)
@@ -868,17 +907,24 @@ func (s *Server) setupRoutes() {
 			_ = s.firewall.RegisterRoutes(protected)
 
 			// Cluster endpoints
+			protected.POST("/cluster/capacity/claim", s.authMiddleware.RequirePermission(auth.PermClusterCapacityClaim), s.clusterCapacityClaim)
 			clusterGroup := protected.Group("/cluster")
 			clusterGroup.Use(s.authMiddleware.RequirePermission(auth.PermClusterRead))
 			{
 				clusterGroup.GET("/status", s.clusterStatus)
+				clusterGroup.POST("/setup", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterSetup)
 				clusterGroup.GET("/peers", s.clusterListPeers)
+				clusterGroup.GET("/peers/:name/policy", s.clusterPeerPolicy)
+				clusterGroup.PUT("/peers/:name/policy", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.updateClusterPeerPolicy)
 				clusterGroup.POST("/invite", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterInvite)
 				clusterGroup.POST("/accept", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterAccept)
 				clusterGroup.DELETE("/peers/:name", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterRemovePeer)
 				clusterGroup.Any("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
 				clusterGroup.GET("/deployments", s.clusterAggregateDeployments)
 				clusterGroup.GET("/stats", s.clusterAggregateStats)
+				clusterGroup.GET("/capacity", s.clusterAggregateCapacity)
+				clusterGroup.GET("/providers", s.clusterProviders)
+				clusterGroup.PUT("/providers", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.updateClusterProviders)
 			}
 		}
 
@@ -887,6 +933,7 @@ func (s *Server) setupRoutes() {
 
 		// Plugin-emitted notifications (authenticated by the per-run plugin token).
 		api.POST("/internal/notify/emit", s.emitNotification)
+		api.POST("/internal/events", s.emitEvent)
 		// Log lines and triage for built-in apps, on the same plugin token. Both keep one
 		// implementation in the agent rather than a second one inside every app.
 		api.GET("/internal/logs/stream", s.streamInternalLogs)
@@ -944,6 +991,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	if s.autoscaleCancel != nil {
+		s.autoscaleCancel()
+	}
 	if s.pluginHost != nil {
 		s.pluginHost.Stop()
 	}
@@ -952,6 +1002,9 @@ func (s *Server) Stop() error {
 	}
 	if s.clusterManager != nil {
 		s.clusterManager.Stop()
+	}
+	if s.autoscaleStore != nil {
+		_ = s.autoscaleStore.Close()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1994,6 +2047,9 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	}
 	if _, ok := sentFields["backup"]; ok {
 		merged.Backup = incoming.Backup
+	}
+	if _, ok := sentFields["scaling"]; ok {
+		merged.Scaling = incoming.Scaling
 	}
 	if _, ok := sentFields["protected_mode"]; ok {
 		merged.ProtectedMode = incoming.ProtectedMode
@@ -3410,13 +3466,20 @@ func (s *Server) updateNotificationTargets(c *gin.Context) {
 
 func (s *Server) testNotification(c *gin.Context) {
 	var req struct {
-		URL string `json:"url"`
+		URL      string `json:"url"`
+		TargetID string `json:"target_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	if err := s.notify.Test(req.URL); err != nil {
+	var err error
+	if req.TargetID != "" {
+		err = s.notify.TestTarget(req.TargetID)
+	} else {
+		err = s.notify.Test(req.URL)
+	}
+	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "delivery failed: " + err.Error()})
 		return
 	}

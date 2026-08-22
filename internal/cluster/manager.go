@@ -12,7 +12,13 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/flatrun/agent/internal/events"
 )
+
+type EventPublisher interface {
+	Publish(events.Event) (events.IngestResult, error)
+}
 
 type PeerStatus struct {
 	Name     string    `json:"name"`
@@ -20,6 +26,7 @@ type PeerStatus struct {
 	Online   bool      `json:"online"`
 	LastSeen time.Time `json:"last_seen"`
 	Error    string    `json:"error,omitempty"`
+	Probed   bool      `json:"-"`
 }
 
 type Result struct {
@@ -36,6 +43,7 @@ type Manager struct {
 	healthInterval time.Duration
 	requestTimeout time.Duration
 	encryptionKey  []byte
+	publisher      EventPublisher
 	cancel         context.CancelFunc
 }
 
@@ -50,6 +58,12 @@ func NewManager(db *DB, serverName string, healthInterval, requestTimeout time.D
 		requestTimeout: requestTimeout,
 		encryptionKey:  key[:],
 	}
+}
+
+func (m *Manager) SetEventPublisher(publisher EventPublisher) {
+	m.mu.Lock()
+	m.publisher = publisher
+	m.mu.Unlock()
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -128,7 +142,11 @@ func (m *Manager) checkAllPeers(ctx context.Context) {
 
 		m.mu.Lock()
 		st, exists := m.status[p.name]
+		wasOnline := exists && st.Online
+		wasKnown := exists && st.Probed
+		publisher := m.publisher
 		if exists {
+			st.Probed = true
 			if err != nil {
 				st.Online = false
 				st.Error = err.Error()
@@ -140,11 +158,42 @@ func (m *Manager) checkAllPeers(ctx context.Context) {
 			}
 		}
 		m.mu.Unlock()
+
+		event := fleetHealthEvent(p.name, wasKnown, wasOnline, err)
+		if publisher == nil || event == nil {
+			continue
+		}
+		if _, publishErr := publisher.Publish(*event); publishErr != nil {
+			log.Printf("Warning: Failed to publish Fleet health event for %s: %v", p.name, publishErr)
+		}
 	}
 
 	for _, name := range seenNames {
 		_ = m.db.UpdateLastSeen(name)
 	}
+}
+
+func fleetHealthEvent(name string, wasKnown, wasOnline bool, healthErr error) *events.Event {
+	isOnline := healthErr == nil
+	if (!wasKnown && isOnline) || (wasKnown && wasOnline == isOnline) {
+		return nil
+	}
+	event := &events.Event{
+		Source: "fleet", Scope: events.Scope{Node: name}, CorrelationKey: "node:" + name, OccurredAt: time.Now(),
+	}
+	if healthErr != nil {
+		event.Type = "node.unavailable"
+		event.Severity = events.SeverityCritical
+		event.Title = name + " is unavailable"
+		event.Message = "The Fleet node stopped responding. Related deployment failures will be grouped into this incident."
+		return event
+	}
+	event.Type = "node.recovered"
+	event.Severity = events.SeverityInfo
+	event.Title = name + " recovered"
+	event.Message = "The Fleet node is responding again."
+	event.Resolved = true
+	return event
 }
 
 func (m *Manager) GetPeer(name string) (*Client, error) {

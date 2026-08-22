@@ -39,12 +39,24 @@ type ServiceMetadata struct {
 	QuickActions       []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
 	Security           *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
 	Backup             *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
+	Scaling            *ScalingConfig            `yaml:"scaling,omitempty" json:"scaling,omitempty"`
 	ProtectedMode      *ProtectedModeConfig      `yaml:"protected_mode,omitempty" json:"protected_mode,omitempty"`
 	RequirePlan        bool                      `yaml:"require_plan,omitempty" json:"require_plan,omitempty"`
 	CredentialID       string                    `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
 	ServiceCredentials map[string]string         `yaml:"service_credentials,omitempty" json:"service_credentials,omitempty"`
 	Domains            []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
 	Databases          []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
+}
+
+type ScalingConfig struct {
+	Service   string               `yaml:"service" json:"service"`
+	Stateless bool                 `yaml:"stateless" json:"stateless"`
+	Storage   ScalingStorageConfig `yaml:"storage,omitempty" json:"storage,omitempty"`
+}
+
+type ScalingStorageConfig struct {
+	Mode  string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Class string `yaml:"class,omitempty" json:"class,omitempty"`
 }
 
 type DomainConfig struct {

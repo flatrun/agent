@@ -4,17 +4,39 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/cluster"
+	"github.com/flatrun/agent/internal/orchestrator"
+	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
+
+func TestCapacityClaimUsesPeerSpecificGrant(t *testing.T) {
+	peer, err := clusterPeerFromActor(&auth.ActorContext{APIKey: &auth.APIKey{Name: "cluster-peer-prod1"}})
+	if err != nil || peer != "prod1" {
+		t.Fatalf("peer = %q, error = %v", peer, err)
+	}
+	grant, ok := capacityOfferGrant(cluster.PeerPolicy{Grants: []cluster.Grant{
+		{Capability: cluster.CapabilityCapacityRead},
+		{Capability: cluster.CapabilityCapacityOffer, MaxCPU: 2, MaxMemory: 4 << 30, MaxReplicas: 3},
+	}})
+	if !ok || grant.MaxReplicas != 3 || grant.MaxCPU != 2 {
+		t.Fatalf("grant = %#v, found = %v", grant, ok)
+	}
+	if capacityNodeLabel("prod1") == capacityNodeLabel("prod2") {
+		t.Fatal("peer labels must be isolated")
+	}
+}
 
 type testClusterEnv struct {
 	server  *Server
@@ -77,6 +99,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 
 	server := &Server{
 		config:         cfg,
+		configPath:     tmpDir + "/config.yml",
 		authManager:    authManager,
 		clusterManager: clusterManager,
 	}
@@ -92,23 +115,37 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 	protected := api.Group("")
 	protected.Use(authMiddleware.RequireAuth())
 	{
+		protected.GET("/capacity", authMiddleware.RequirePermission(auth.PermSystemRead), server.getCapacityStatus)
+		protected.GET("/test/deployments", authMiddleware.RequirePermission(auth.PermDeploymentsRead), func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
+		protected.GET("/test/users", authMiddleware.RequirePermission(auth.PermUsersWrite), func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
+		protected.POST("/cluster/capacity/claim", authMiddleware.RequirePermission(auth.PermClusterCapacityClaim), server.clusterCapacityClaim)
 		clusterGroup := protected.Group("/cluster")
 		clusterGroup.Use(authMiddleware.RequirePermission(auth.PermClusterRead))
 		{
 			clusterGroup.GET("/status", server.clusterStatus)
+			clusterGroup.GET("/providers", server.clusterProviders)
+			clusterGroup.PUT("/providers", authMiddleware.RequirePermission(auth.PermClusterWrite), server.updateClusterProviders)
+			clusterGroup.POST("/setup", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterSetup)
 			clusterGroup.GET("/peers", server.clusterListPeers)
+			clusterGroup.GET("/peers/:name/policy", server.clusterPeerPolicy)
+			clusterGroup.PUT("/peers/:name/policy", authMiddleware.RequirePermission(auth.PermClusterWrite), server.updateClusterPeerPolicy)
 			clusterGroup.POST("/invite", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterInvite)
 			clusterGroup.POST("/accept", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterAccept)
 			clusterGroup.DELETE("/peers/:name", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterRemovePeer)
 			clusterGroup.Any("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
 			clusterGroup.GET("/deployments", server.clusterAggregateDeployments)
 			clusterGroup.GET("/stats", server.clusterAggregateStats)
+			clusterGroup.GET("/capacity", server.clusterAggregateCapacity)
 		}
 	}
 
 	cleanup := func() {
-		if clusterManager != nil {
-			clusterManager.Stop()
+		if manager := server.getClusterManager(); manager != nil {
+			manager.Stop()
 		}
 		authManager.Close()
 		os.RemoveAll(tmpDir)
@@ -119,6 +156,316 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		router:  router,
 		tmpDir:  tmpDir,
 		cleanup: cleanup,
+	}
+}
+
+func TestClusterCapacityIncludesLocalOfferPolicy(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+
+	token := clusterLogin(t, env.router)
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/capacity", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Servers map[string]struct {
+			Online bool `json:"online"`
+			Data   struct {
+				Offer capacity.Offer `json:"offer"`
+			} `json:"data"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	local, ok := response.Servers["server-a"]
+	if !ok || !local.Online {
+		t.Fatalf("local server = %#v", local)
+	}
+	if local.Data.Offer.Enabled {
+		t.Fatal("fleet capacity should require explicit permission")
+	}
+}
+
+func TestUpdateClusterPeerPolicyThroughHTTP(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	if err := env.server.clusterManager.AddPeer("server-b", "https://server-b.example.com", "peer-key"); err != nil {
+		t.Fatalf("AddPeer failed: %v", err)
+	}
+	if err := env.server.createClusterAPIKey("server-b-inbound-key", "server-b"); err != nil {
+		t.Fatalf("createClusterAPIKey failed: %v", err)
+	}
+
+	token := clusterLogin(t, env.router)
+	body := []byte(`{"grants":[{"capability":"capacity.offer","max_cpu":2,"max_memory":2147483648,"max_replicas":2}]}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/cluster/peers/server-b/policy", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/cluster/peers/server-b/policy", nil)
+	getReq.Header.Set("Authorization", "Bearer "+token)
+	getWriter := httptest.NewRecorder()
+	env.router.ServeHTTP(getWriter, getReq)
+	if getWriter.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getWriter.Code, getWriter.Body.String())
+	}
+	var policy cluster.PeerPolicy
+	if err := json.Unmarshal(getWriter.Body.Bytes(), &policy); err != nil {
+		t.Fatalf("decode policy: %v", err)
+	}
+	if len(policy.Grants) != 1 || policy.Grants[0].MaxCPU != 2 || policy.Grants[0].MaxReplicas != 2 {
+		t.Fatalf("policy = %#v", policy)
+	}
+	keys, err := env.server.authManager.GetAllAPIKeys()
+	if err != nil {
+		t.Fatalf("list API keys: %v", err)
+	}
+	for _, key := range keys {
+		if key.Name == "cluster-peer-server-b" && !slices.Equal(key.Permissions, []string{auth.PermClusterCapacityClaim.String()}) {
+			t.Fatalf("capacity offer permissions = %#v", key.Permissions)
+		}
+	}
+	claimReq := httptest.NewRequest(http.MethodPost, "/api/cluster/capacity/claim", nil)
+	claimReq.Header.Set("Authorization", "Bearer server-b-inbound-key")
+	claimWriter := httptest.NewRecorder()
+	env.router.ServeHTTP(claimWriter, claimReq)
+	if claimWriter.Code == http.StatusForbidden || claimWriter.Code == http.StatusUnauthorized {
+		t.Fatalf("capacity offer credential was rejected by middleware: %d: %s", claimWriter.Code, claimWriter.Body.String())
+	}
+}
+
+func TestReconcileClusterPeerPoliciesScopesExistingCredentials(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	if err := env.server.clusterManager.AddPeer("server-b", "https://server-b.example.com", "peer-key"); err != nil {
+		t.Fatalf("AddPeer failed: %v", err)
+	}
+	user, err := env.server.authManager.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("get admin: %v", err)
+	}
+	_, err = env.server.authManager.CreateAPIKeyFromRaw(
+		"existing-peer-key",
+		user.ID,
+		"cluster-peer-server-b",
+		"Existing Fleet peer",
+		auth.RoleAdmin,
+		nil,
+		nil,
+		time.Time{},
+	)
+	if err != nil {
+		t.Fatalf("create existing peer credential: %v", err)
+	}
+
+	if err := env.server.reconcileClusterPeerPolicies(); err != nil {
+		t.Fatalf("reconcile peer policies: %v", err)
+	}
+	keys, err := env.server.authManager.GetAllAPIKeys()
+	if err != nil {
+		t.Fatalf("list API keys: %v", err)
+	}
+	for _, key := range keys {
+		if key.Name != "cluster-peer-server-b" {
+			continue
+		}
+		if key.Role != "" {
+			t.Fatalf("peer role = %q", key.Role)
+		}
+		permissions, _ := clusterPolicyAccess(cluster.PeerPolicy{Grants: cluster.DefaultPeerGrants()})
+		if !slices.Equal(key.Permissions, permissions) {
+			t.Fatalf("peer permissions = %#v, want %#v", key.Permissions, permissions)
+		}
+		return
+	}
+	t.Fatal("existing peer credential not found")
+}
+
+func TestClusterPolicyAccessScopesDeployments(t *testing.T) {
+	permissions, deployments := clusterPolicyAccess(cluster.PeerPolicy{Grants: []cluster.Grant{
+		{Capability: cluster.CapabilityDeploymentsRead, Deployments: []string{"public-site", "docs"}},
+		{Capability: cluster.CapabilityDeploymentsRun, Deployments: []string{"public-site"}},
+		{Capability: cluster.CapabilityCapacityRead},
+	}})
+
+	if deployments["public-site"] != auth.AccessLevelWrite || deployments["docs"] != auth.AccessLevelRead {
+		t.Fatalf("deployment access = %#v", deployments)
+	}
+	wanted := map[string]bool{
+		auth.PermDeploymentsRead.String():  true,
+		auth.PermDeploymentsWrite.String(): true,
+		auth.PermContainersRead.String():   true,
+		auth.PermContainersWrite.String():  true,
+		auth.PermSystemRead.String():       true,
+	}
+	for _, permission := range permissions {
+		delete(wanted, permission)
+	}
+	if len(wanted) != 0 {
+		t.Fatalf("missing permissions = %#v", wanted)
+	}
+}
+
+func TestClusterSetupEnablesClusterWithoutRestart(t *testing.T) {
+	env := setupClusterTestServer(t, "", false)
+	defer env.cleanup()
+
+	token := clusterLogin(t, env.router)
+	body, _ := json.Marshal(map[string]string{
+		"server_name":   "server-a",
+		"advertise_url": "https://server-a.example.com/",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/cluster/setup", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/cluster/status", nil)
+	statusReq.Header.Set("Authorization", "Bearer "+token)
+	statusWriter := httptest.NewRecorder()
+	env.router.ServeHTTP(statusWriter, statusReq)
+	if statusWriter.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", statusWriter.Code, statusWriter.Body.String())
+	}
+
+	var status map[string]interface{}
+	if err := json.Unmarshal(statusWriter.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["enabled"] != true || status["server_name"] != "server-a" {
+		t.Fatalf("Unexpected status: %s", statusWriter.Body.String())
+	}
+	if env.server.config.Cluster.AdvertiseURL != "https://server-a.example.com" {
+		t.Fatalf("AdvertiseURL = %q", env.server.config.Cluster.AdvertiseURL)
+	}
+}
+
+func TestClusterSetupRejectsInvalidAdvertiseURL(t *testing.T) {
+	env := setupClusterTestServer(t, "", false)
+	defer env.cleanup()
+
+	token := clusterLogin(t, env.router)
+	body, _ := json.Marshal(map[string]string{"server_name": "server-a", "advertise_url": "server-a"})
+	req := httptest.NewRequest(http.MethodPost, "/api/cluster/setup", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if env.server.getClusterManager() != nil {
+		t.Fatal("Cluster manager started after invalid setup")
+	}
+}
+
+func TestClusterAPIKeyUsesExplicitPermissions(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+
+	if err := env.server.createClusterAPIKey("peer-key-for-test", "server-b"); err != nil {
+		t.Fatalf("createClusterAPIKey failed: %v", err)
+	}
+	keys, err := env.server.authManager.GetAllAPIKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var peerKey *auth.APIKey
+	for i := range keys {
+		if keys[i].Name == "cluster-peer-server-b" {
+			peerKey = &keys[i]
+			break
+		}
+	}
+	if peerKey == nil {
+		t.Fatal("Cluster API key was not created")
+	}
+	if peerKey.Role == auth.RoleAdmin {
+		t.Fatal("Cluster API key has administrator role")
+	}
+	owner, err := env.server.authManager.GetUser(peerKey.UserID)
+	if err != nil {
+		t.Fatalf("get key owner: %v", err)
+	}
+	if owner.Role != auth.RoleService {
+		t.Fatalf("key owner role = %q", owner.Role)
+	}
+	actor, err := env.server.authManager.BuildActorContext(owner, peerKey)
+	if err != nil {
+		t.Fatalf("build actor: %v", err)
+	}
+	if actor.HasPermission(auth.PermUsersWrite) || !actor.HasPermission(auth.PermDeploymentsWrite) {
+		t.Fatalf("effective actor = %#v", actor)
+	}
+	permissions := make(map[string]bool, len(peerKey.Permissions))
+	for _, permission := range peerKey.Permissions {
+		permissions[permission] = true
+	}
+	if !permissions[auth.PermDeploymentsRead.String()] || !permissions[auth.PermDeploymentsWrite.String()] {
+		t.Fatalf("permissions = %#v", peerKey.Permissions)
+	}
+	if permissions[auth.PermUsersWrite.String()] || permissions[auth.PermConfigWrite.String()] {
+		t.Fatalf("permissions include administrative access: %#v", peerKey.Permissions)
+	}
+}
+
+func TestClusterAPIKeyEnforcesPermissionsThroughHTTP(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	const rawKey = "peer-http-key-for-test"
+	if err := env.server.createClusterAPIKey(rawKey, "server-b"); err != nil {
+		t.Fatalf("createClusterAPIKey failed: %v", err)
+	}
+
+	request := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+rawKey)
+		w := httptest.NewRecorder()
+		env.router.ServeHTTP(w, req)
+		return w.Code
+	}
+	if status := request("/api/test/deployments"); status != http.StatusNoContent {
+		t.Fatalf("deployment read status = %d", status)
+	}
+	if status := request("/api/test/users"); status != http.StatusForbidden {
+		t.Fatalf("user write status = %d", status)
+	}
+}
+
+func TestCapacityClaimRejectsUnpermittedPeerThroughHTTP(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	const rawKey = "peer-capacity-key-for-test"
+	if err := env.server.getClusterManager().AddPeer("server-b", "http://server-b.invalid", "remote-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.createClusterAPIKey(rawKey, "server-b"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/cluster/capacity/claim", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -496,6 +843,119 @@ func TestClusterUnauthorizedAccess(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Expected 401, got %d", w.Code)
+	}
+}
+
+func TestClusterProvidersReportActiveAndAvailableAdapters(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	env.server.probeOrchestrator = func(_ context.Context, id orchestrator.ProviderID) error {
+		if id == orchestrator.ProviderK3s {
+			return fmt.Errorf("k3s adapter is not configured")
+		}
+		return nil
+	}
+	env.server.probeRouting = func(_ context.Context, id routing.ProviderID) error {
+		if id == routing.ProviderTraefik {
+			return fmt.Errorf("Traefik adapter is not configured")
+		}
+		return nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/providers", nil)
+	req.Header.Set("Authorization", "Bearer "+clusterLogin(t, env.router))
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response clusterProvidersResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Orchestrators[0].Active || !response.Orchestrators[0].Available {
+		t.Fatalf("unexpected standalone provider: %+v", response.Orchestrators[0])
+	}
+	if response.Orchestrators[2].Available || response.Orchestrators[2].Reason == "" {
+		t.Fatalf("unexpected k3s provider: %+v", response.Orchestrators[2])
+	}
+	if !response.Routing[0].Active || !response.Routing[0].Available {
+		t.Fatalf("unexpected Nginx provider: %+v", response.Routing[0])
+	}
+}
+
+func TestUpdateClusterProvidersPersistsAvailableSelection(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	env.server.probeOrchestrator = func(_ context.Context, _ orchestrator.ProviderID) error { return nil }
+	env.server.probeRouting = func(_ context.Context, _ routing.ProviderID) error { return nil }
+
+	body := bytes.NewBufferString(`{"orchestrator":"swarm","routing":"nginx"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/cluster/providers", body)
+	req.Header.Set("Authorization", "Bearer "+clusterLogin(t, env.router))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	saved, err := config.Load(env.server.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Cluster.Orchestrator != "swarm" || saved.Cluster.Routing != "nginx" {
+		t.Fatalf("unexpected saved providers: %+v", saved.Cluster)
+	}
+}
+
+func TestUpdateClusterProvidersPersistsK3sConnection(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	env.server.probeOrchestrator = func(_ context.Context, _ orchestrator.ProviderID) error { return nil }
+	env.server.probeRouting = func(_ context.Context, _ routing.ProviderID) error { return nil }
+
+	body := bytes.NewBufferString(`{"orchestrator":"k3s","routing":"traefik","k3s":{"kubeconfig":"/etc/rancher/k3s/k3s.yaml","namespace":"flatrun"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/cluster/providers", body)
+	req.Header.Set("Authorization", "Bearer "+clusterLogin(t, env.router))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	saved, err := config.Load(env.server.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Cluster.Routing != "traefik" || saved.Cluster.K3s.Kubeconfig != "/etc/rancher/k3s/k3s.yaml" || saved.Cluster.K3s.Namespace != "flatrun" {
+		t.Fatalf("unexpected K3s connection: %+v", saved.Cluster.K3s)
+	}
+}
+
+func TestUpdateClusterProvidersRejectsUnavailableSelection(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+	env.server.probeOrchestrator = func(_ context.Context, id orchestrator.ProviderID) error {
+		if id == orchestrator.ProviderK3s {
+			return fmt.Errorf("k3s adapter is not configured")
+		}
+		return nil
+	}
+	env.server.probeRouting = func(_ context.Context, _ routing.ProviderID) error { return nil }
+
+	body := bytes.NewBufferString(`{"orchestrator":"k3s","routing":"nginx"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/cluster/providers", body)
+	req.Header.Set("Authorization", "Bearer "+clusterLogin(t, env.router))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+	if env.server.config.Cluster.Orchestrator != "" {
+		t.Fatalf("unexpected orchestrator change: %q", env.server.config.Cluster.Orchestrator)
 	}
 }
 

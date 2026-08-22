@@ -101,6 +101,32 @@ func TestGetServerInfo(t *testing.T) {
 	if _, ok := serverMap["interfaces"]; !ok {
 		t.Error("server should have interfaces")
 	}
+	if got := serverMap["agent_url"]; got != "http://example.com" {
+		t.Errorf("agent_url = %q, want %q", got, "http://example.com")
+	}
+}
+
+func TestGetServerInfoIgnoresUntrustedForwardedAgentURL(t *testing.T) {
+	router, token, cleanup := setupServerInfoTestServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/server/info", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "agent.example.com")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var resp struct {
+		Server system.ServerInfo `json:"server"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	if resp.Server.AgentURL != "http://example.com" {
+		t.Errorf("agent_url = %q, want %q", resp.Server.AgentURL, "http://example.com")
+	}
 }
 
 func TestGetServerInfoRequiresAuth(t *testing.T) {

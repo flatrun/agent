@@ -81,24 +81,69 @@ func GetAllContainerStats() ([]ContainerStats, error) {
 
 func listContainerDeploymentLabels() map[string]string {
 	labels := make(map[string]string)
-	cmd := exec.Command("docker", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Label \"com.docker.compose.project\"}}")
+	cmd := exec.Command("docker", "ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Label \"com.docker.compose.project\"}}|{{.Label \"flatrun.deployment\"}}")
 	output, err := cmd.Output()
 	if err != nil {
 		log.Printf("warning: failed to list container deployment labels: %v", err)
 		return labels
 	}
+	return parseContainerDeploymentLabels(string(output))
+}
+
+func parseContainerDeploymentLabels(output string) map[string]string {
+	labels := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) != 4 {
+			continue
+		}
+		deployment := parts[3]
+		if deployment == "" {
+			deployment = parts[2]
+		}
+		if deployment != "" {
+			labels[parts[0]] = deployment
+			labels[parts[1]] = deployment
+		}
+	}
+	return labels
+}
+
+func GetManagedDeploymentStats(deployment string) ([]ContainerStats, error) {
+	if strings.TrimSpace(deployment) == "" {
+		return []ContainerStats{}, nil
+	}
+	ps := exec.Command("docker", "ps", "-q", "--filter", "label=flatrun.deployment="+deployment)
+	containerIDs, err := ps.Output()
+	if err != nil {
+		return nil, err
+	}
+	ids := strings.Fields(string(containerIDs))
+	if len(ids) == 0 {
+		return []ContainerStats{}, nil
+	}
+	args := append([]string{"stats", "--no-stream", "--format", "{{json .}}"}, ids...)
+	output, err := exec.Command("docker", args...).Output()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ContainerStats, 0, len(ids))
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 3)
-		if len(parts) != 3 || parts[2] == "" {
+		var raw dockerStatsJSON
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			continue
 		}
-		labels[parts[0]] = parts[2]
-		labels[parts[1]] = parts[2]
+		stat := parseStats(&raw)
+		stat.DeploymentName = deployment
+		result = append(result, *stat)
 	}
-	return labels
+	return result, nil
 }
 
 func GetDeploymentStats(projectName string) ([]ContainerStats, error) {

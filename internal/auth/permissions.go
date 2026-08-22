@@ -78,8 +78,9 @@ const (
 	PermTrafficRead  Permission = "traffic:read"
 	PermTrafficWrite Permission = "traffic:write"
 
-	PermClusterRead  Permission = "cluster:read"
-	PermClusterWrite Permission = "cluster:write"
+	PermClusterRead          Permission = "cluster:read"
+	PermClusterWrite         Permission = "cluster:write"
+	PermClusterCapacityClaim Permission = "cluster:capacity:claim"
 )
 
 var adminPermissions = []Permission{
@@ -104,7 +105,7 @@ var adminPermissions = []Permission{
 	PermRegistriesRead, PermRegistriesWrite, PermRegistriesDelete,
 	PermTemplatesRead, PermTemplatesWrite,
 	PermTrafficRead, PermTrafficWrite,
-	PermClusterRead, PermClusterWrite,
+	PermClusterRead, PermClusterWrite, PermClusterCapacityClaim,
 }
 
 var operatorPermissions = []Permission{
