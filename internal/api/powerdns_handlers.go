@@ -16,7 +16,7 @@ func NewPowerDNSHandlers(manager *dns.PowerDNSManager) *PowerDNSHandlers {
 }
 
 func (h *PowerDNSHandlers) RegisterRoutes(rg *gin.RouterGroup) {
-	pdns := rg.Group("/dns/powerdns")
+	pdns := rg.Group("/powerdns")
 	{
 		pdns.GET("/status", h.GetStatus)
 		pdns.POST("/enable", h.EnableService)

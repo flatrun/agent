@@ -21,6 +21,12 @@ const (
 	PermBackupsRead   Permission = "backups:read"
 	PermBackupsWrite  Permission = "backups:write"
 	PermBackupsDelete Permission = "backups:delete"
+	PermStorageRead   Permission = "storage:read"
+	PermStorageWrite  Permission = "storage:write"
+	PermStorageDelete Permission = "storage:delete"
+
+	PermNotificationsRead  Permission = "notifications:read"
+	PermNotificationsWrite Permission = "notifications:write"
 
 	PermUsersRead   Permission = "users:read"
 	PermUsersWrite  Permission = "users:write"
@@ -89,6 +95,8 @@ var adminPermissions = []Permission{
 	PermNetworksRead, PermNetworksWrite, PermNetworksDelete,
 	PermSecurityRead, PermSecurityWrite,
 	PermBackupsRead, PermBackupsWrite, PermBackupsDelete,
+	PermStorageRead, PermStorageWrite, PermStorageDelete,
+	PermNotificationsRead, PermNotificationsWrite,
 	PermUsersRead, PermUsersWrite, PermUsersDelete,
 	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
 	PermSettingsRead, PermSettingsWrite,
@@ -114,6 +122,8 @@ var operatorPermissions = []Permission{
 	PermNetworksRead,
 	PermSecurityRead,
 	PermBackupsRead, PermBackupsWrite,
+	PermStorageRead, PermStorageWrite,
+	PermNotificationsRead,
 	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
 	PermSettingsRead,
 	PermContainersRead, PermContainersWrite,
@@ -135,6 +145,8 @@ var viewerPermissions = []Permission{
 	PermNetworksRead,
 	PermSecurityRead,
 	PermBackupsRead,
+	PermStorageRead,
+	PermNotificationsRead,
 	PermAPIKeysRead,
 	PermSettingsRead,
 	PermContainersRead,

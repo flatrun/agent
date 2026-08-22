@@ -86,6 +86,9 @@ func TestViewerCannotWrite(t *testing.T) {
 		PermRegistriesDelete,
 		PermTemplatesWrite,
 		PermTrafficWrite,
+		PermStorageWrite,
+		PermStorageDelete,
+		PermNotificationsWrite,
 	}
 
 	for _, perm := range writePerms {
@@ -111,6 +114,8 @@ func TestViewerCanRead(t *testing.T) {
 		PermRegistriesRead,
 		PermTemplatesRead,
 		PermTrafficRead,
+		PermStorageRead,
+		PermNotificationsRead,
 	}
 
 	for _, perm := range readPerms {
@@ -144,6 +149,7 @@ func TestOperatorPermissions(t *testing.T) {
 		PermSystemWrite,
 		PermDNSWrite,
 		PermRegistriesWrite,
+		PermStorageWrite,
 	}
 	for _, perm := range operatorWritePerms {
 		if !HasPermission(RoleOperator, nil, perm) {
@@ -159,6 +165,7 @@ func TestOperatorPermissions(t *testing.T) {
 		PermDatabasesDelete,
 		PermSchedulerDelete,
 		PermRegistriesDelete,
+		PermStorageDelete,
 	}
 	for _, perm := range operatorNoDeletePerms {
 		if HasPermission(RoleOperator, nil, perm) {

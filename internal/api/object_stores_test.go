@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/backup"
@@ -57,22 +58,32 @@ func setupObjectStoreTestServer(t *testing.T) (*Server, *gin.Engine, func()) {
 
 	router := gin.New()
 	mw := auth.NewMiddlewareWithManager(&cfg.Auth, authManager)
+	server.authMiddleware = mw
 	api := router.Group("/api")
 	api.POST("/auth/login", mw.Login)
 
 	protected := api.Group("")
 	protected.Use(mw.RequireAuth())
-	protected.GET("/storage-credentials", mw.RequirePermission(auth.PermBackupsRead), server.listStorageCredentials)
-	protected.POST("/storage-credentials", mw.RequirePermission(auth.PermBackupsWrite), server.createStorageCredential)
-	protected.PUT("/storage-credentials/:id", mw.RequirePermission(auth.PermBackupsWrite), server.updateStorageCredential)
-	protected.DELETE("/storage-credentials/:id", mw.RequirePermission(auth.PermBackupsDelete), server.deleteStorageCredential)
+	protected.GET("/storage-credentials", mw.RequirePermission(auth.PermStorageRead), server.listStorageCredentials)
+	protected.POST("/storage-credentials", mw.RequirePermission(auth.PermStorageWrite), server.createStorageCredential)
+	protected.PUT("/storage-credentials/:id", mw.RequirePermission(auth.PermStorageWrite), server.updateStorageCredential)
+	protected.DELETE("/storage-credentials/:id", mw.RequirePermission(auth.PermStorageDelete), server.deleteStorageCredential)
 	protected.GET("/backup-destinations", mw.RequirePermission(auth.PermBackupsRead), server.listBackupDestinations)
-	protected.POST("/object-stores/provision-managed", mw.RequirePermission(auth.PermBackupsWrite), server.provisionManagedObjectStore)
-	protected.GET("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsRead), server.listStoreObjects)
-	protected.POST("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsWrite), server.uploadStoreObject)
-	protected.GET("/object-stores/:name/objects/download", mw.RequirePermission(auth.PermBackupsRead), server.downloadStoreObject)
-	protected.DELETE("/object-stores/:name/objects", mw.RequirePermission(auth.PermBackupsWrite), server.deleteStoreObject)
-	protected.POST("/object-stores/:name/attach", mw.RequirePermission(auth.PermDeploymentsWrite), server.attachStoreToDeployment)
+	protected.GET("/object-stores", mw.RequirePermission(auth.PermStorageRead), server.listBackupDestinations)
+	protected.POST("/object-stores/provision-managed", mw.RequirePermission(auth.PermStorageWrite), server.provisionManagedObjectStore)
+	protected.GET("/object-stores/:name/objects", mw.RequirePermission(auth.PermStorageRead), server.listStoreObjects)
+	protected.POST("/object-stores/:name/objects", mw.RequirePermission(auth.PermStorageWrite), server.uploadStoreObject)
+	protected.GET("/object-stores/:name/objects/download", mw.RequirePermission(auth.PermStorageRead), server.downloadStoreObject)
+	protected.DELETE("/object-stores/:name/objects", mw.RequirePermission(auth.PermStorageDelete), server.deleteStoreObject)
+	protected.POST("/object-stores/:name/attach", mw.RequirePermission(auth.PermStorageWrite, auth.PermDeploymentsWrite), server.attachStoreToDeployment)
+	dnsGroup := protected.Group("/dns")
+	dnsGroup.Use(mw.RequirePermission(auth.PermDNSRead), server.requireDNSWriteForMutations())
+	dnsGroup.POST("/provider/zones", func(c *gin.Context) { c.Status(http.StatusOK) })
+	dnsGroup.POST("/provider/zones/:zone/records/create", func(c *gin.Context) { c.Status(http.StatusOK) })
+	firewallGroup := protected.Group("")
+	firewallGroup.Use(mw.RequirePermission(auth.PermSecurityRead), server.requireWriteForMethods(auth.PermSecurityWrite, http.MethodPut))
+	firewallGroup.GET("/firewall", func(c *gin.Context) { c.Status(http.StatusOK) })
+	firewallGroup.PUT("/firewall", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	cleanup := func() {
 		authManager.Close()
@@ -80,6 +91,87 @@ func setupObjectStoreTestServer(t *testing.T) (*Server, *gin.Engine, func()) {
 		os.Unsetenv("FLATRUN_ADMIN_PASSWORD")
 	}
 	return server, router, cleanup
+}
+
+func objectStoreKey(t *testing.T, server *Server, raw string, permissions []string, deployments auth.DeploymentAccess) string {
+	t.Helper()
+	user, err := server.authManager.CreateUser(raw, "", "password", auth.RoleService, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deployment, level := range deployments {
+		if err := server.authManager.AssignDeployment(user.ID, deployment, level, user.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := server.authManager.CreateAPIKeyFromRaw(raw, user.ID, raw, "", auth.Role(""), permissions, deployments, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestObjectStorePermissionsAreIndependentFromBackups(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+
+	backupKey := objectStoreKey(t, server, "backup-reader-key", []string{auth.PermBackupsRead.String()}, nil)
+	if res := osReq(t, router, http.MethodGet, "/api/object-stores", backupKey, nil); res.Code != http.StatusForbidden {
+		t.Fatalf("backup read status = %d, body = %s", res.Code, res.Body.String())
+	}
+
+	storageKey := objectStoreKey(t, server, "storage-reader-key", []string{auth.PermStorageRead.String()}, nil)
+	if res := osReq(t, router, http.MethodGet, "/api/object-stores", storageKey, nil); res.Code != http.StatusOK {
+		t.Fatalf("storage read status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if res := osReq(t, router, http.MethodPost, "/api/object-stores/provision-managed", storageKey, map[string]string{}); res.Code != http.StatusForbidden {
+		t.Fatalf("storage write status = %d, body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestServiceReadersCannotMutateDNSOrFirewall(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+
+	dnsKey := objectStoreKey(t, server, "dns-reader-key", []string{auth.PermDNSRead.String()}, nil)
+	if res := osReq(t, router, http.MethodPost, "/api/dns/provider/zones", dnsKey, nil); res.Code != http.StatusOK {
+		t.Fatalf("DNS list status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if res := osReq(t, router, http.MethodPost, "/api/dns/provider/zones/example/records/create", dnsKey, nil); res.Code != http.StatusForbidden {
+		t.Fatalf("DNS create status = %d, body = %s", res.Code, res.Body.String())
+	}
+
+	firewallKey := objectStoreKey(t, server, "firewall-reader-key", []string{auth.PermSecurityRead.String()}, nil)
+	if res := osReq(t, router, http.MethodGet, "/api/firewall", firewallKey, nil); res.Code != http.StatusOK {
+		t.Fatalf("firewall read status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if res := osReq(t, router, http.MethodPut, "/api/firewall", firewallKey, nil); res.Code != http.StatusForbidden {
+		t.Fatalf("firewall write status = %d, body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestObjectStoreAttachRequiresDeploymentAccess(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	server.config.Backup.Destinations = []config.BackupDestination{{Name: "store", Type: "s3"}}
+	key := objectStoreKey(t, server, "storage-attacher-key", []string{
+		auth.PermStorageWrite.String(), auth.PermDeploymentsWrite.String(),
+	}, auth.DeploymentAccess{"allowed": auth.AccessLevelWrite})
+
+	res := osReq(t, router, http.MethodPost, "/api/object-stores/store/attach", key, map[string]string{"deployment": "blocked"})
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("attach status = %d, body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestObjectStoreAttachRejectsDeploymentPath(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+	server.config.Backup.Destinations = []config.BackupDestination{{Name: "store", Type: "s3"}}
+
+	res := osReq(t, router, http.MethodPost, "/api/object-stores/store/attach", objStoreLogin(t, router), map[string]string{"deployment": "../outside"})
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("attach status = %d, body = %s", res.Code, res.Body.String())
+	}
 }
 
 func objStoreLogin(t *testing.T, router *gin.Engine) string {

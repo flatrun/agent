@@ -7025,7 +7025,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:read"
+        "x-permission": "notifications:read"
       }
     },
     "/api/notifications/rules": {
@@ -7039,7 +7039,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:read"
+        "x-permission": "notifications:read"
       },
       "put": {
         "operationId": "put-notifications-rules",
@@ -7072,7 +7072,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:write"
+        "x-permission": "notifications:write"
       }
     },
     "/api/notifications/targets": {
@@ -7093,7 +7093,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:read"
+        "x-permission": "notifications:read"
       },
       "put": {
         "operationId": "put-notifications-targets",
@@ -7122,7 +7122,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:write"
+        "x-permission": "notifications:write"
       }
     },
     "/api/notifications/test": {
@@ -7162,7 +7162,21 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:write"
+        "x-permission": "notifications:write"
+      }
+    },
+    "/api/object-stores": {
+      "get": {
+        "operationId": "get-object-stores",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "object-stores"
+        ],
+        "x-permission": "storage:read"
       }
     },
     "/api/object-stores/provision-managed": {
@@ -7186,7 +7200,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/object-stores/{name}/attach": {
@@ -7263,7 +7277,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:read"
+        "x-permission": "storage:read"
       },
       "post": {
         "operationId": "post-object-stores-by-name-buckets",
@@ -7309,7 +7323,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/object-stores/{name}/buckets/{bucket}": {
@@ -7341,7 +7355,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:delete"
+        "x-permission": "storage:delete"
       }
     },
     "/api/object-stores/{name}/objects": {
@@ -7379,7 +7393,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:delete"
       },
       "get": {
         "operationId": "get-object-stores-by-name-objects",
@@ -7422,7 +7436,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:read"
+        "x-permission": "storage:read"
       },
       "post": {
         "operationId": "post-object-stores-by-name-objects",
@@ -7444,7 +7458,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/object-stores/{name}/objects/download": {
@@ -7482,7 +7496,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:read"
+        "x-permission": "storage:read"
       }
     },
     "/api/object-stores/{name}/replicate": {
@@ -7530,7 +7544,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/openapi.json": {
@@ -9444,7 +9458,7 @@
         "tags": [
           "storage-credentials"
         ],
-        "x-permission": "backups:read"
+        "x-permission": "storage:read"
       },
       "post": {
         "operationId": "post-storage-credentials",
@@ -9493,7 +9507,7 @@
         "tags": [
           "storage-credentials"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/storage-credentials/{id}": {
@@ -9517,7 +9531,7 @@
         "tags": [
           "storage-credentials"
         ],
-        "x-permission": "backups:delete"
+        "x-permission": "storage:delete"
       },
       "put": {
         "operationId": "put-storage-credentials-by-id",
@@ -9567,7 +9581,7 @@
         "tags": [
           "storage-credentials"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/subdomain/generate": {

@@ -551,12 +551,12 @@ func (s *Server) setupRoutes() {
 
 			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getAgentUpdate)
 			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.triggerAgentUpdate)
-			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getNotificationTargets)
-			protected.GET("/notifications/incidents", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.listNotificationIncidents)
-			protected.GET("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.listNotificationRules)
-			protected.PUT("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationRules)
-			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationTargets)
-			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.testNotification)
+			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.getNotificationTargets)
+			protected.GET("/notifications/incidents", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.listNotificationIncidents)
+			protected.GET("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.listNotificationRules)
+			protected.PUT("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.updateNotificationRules)
+			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.updateNotificationTargets)
+			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.testNotification)
 			protected.GET("/config", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listConfig)
 			protected.GET("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.getConfigKey)
 			protected.PUT("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigWrite), s.updateConfigKey)
@@ -757,10 +757,10 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/source-credentials/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.deleteSourceCredential)
 
 			// Storage credential endpoints (S3 and other object-storage secrets)
-			protected.GET("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStorageCredentials)
-			protected.POST("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.createStorageCredential)
-			protected.PUT("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.updateStorageCredential)
-			protected.DELETE("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.deleteStorageCredential)
+			protected.GET("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.listStorageCredentials)
+			protected.POST("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.createStorageCredential)
+			protected.PUT("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.updateStorageCredential)
+			protected.DELETE("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermStorageDelete), s.deleteStorageCredential)
 
 			// Security endpoints
 			protected.GET("/security/stats", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.getSecurityStats)
@@ -819,16 +819,17 @@ func (s *Server) setupRoutes() {
 			protected.POST("/backup-destinations/test", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.testBackupDestination)
 
 			// Object stores
-			protected.POST("/object-stores/provision-managed", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.provisionManagedObjectStore)
-			protected.GET("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStoreBuckets)
-			protected.POST("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.createStoreBucket)
-			protected.DELETE("/object-stores/:name/buckets/:bucket", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.deleteStoreBucket)
-			protected.GET("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStoreObjects)
-			protected.POST("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.uploadStoreObject)
-			protected.GET("/object-stores/:name/objects/download", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.downloadStoreObject)
-			protected.DELETE("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.deleteStoreObject)
-			protected.POST("/object-stores/:name/attach", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.attachStoreToDeployment)
-			protected.POST("/object-stores/:name/replicate", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.replicateStore)
+			protected.GET("/object-stores", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.listBackupDestinations)
+			protected.POST("/object-stores/provision-managed", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.provisionManagedObjectStore)
+			protected.GET("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.listStoreBuckets)
+			protected.POST("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.createStoreBucket)
+			protected.DELETE("/object-stores/:name/buckets/:bucket", s.authMiddleware.RequirePermission(auth.PermStorageDelete), s.deleteStoreBucket)
+			protected.GET("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.listStoreObjects)
+			protected.POST("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.uploadStoreObject)
+			protected.GET("/object-stores/:name/objects/download", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.downloadStoreObject)
+			protected.DELETE("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermStorageDelete), s.deleteStoreObject)
+			protected.POST("/object-stores/:name/attach", s.authMiddleware.RequirePermission(auth.PermStorageWrite, auth.PermDeploymentsWrite), s.attachStoreToDeployment)
+			protected.POST("/object-stores/:name/replicate", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.replicateStore)
 
 			// Scheduler endpoints
 			protected.GET("/scheduler/tasks", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.listScheduledTasks)
@@ -890,6 +891,7 @@ func (s *Server) setupRoutes() {
 			// DNS plugin routes
 			dnsGroup := protected.Group("/dns")
 			dnsGroup.Use(s.authMiddleware.RequirePermission(auth.PermDNSRead))
+			dnsGroup.Use(s.requireDNSWriteForMutations())
 			{
 				dnsGroup.GET("/providers", s.listDNSProviders)
 
@@ -900,11 +902,14 @@ func (s *Server) setupRoutes() {
 				}
 
 				// PowerDNS routes
-				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(protected)
+				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(dnsGroup)
 			}
 
 			// Firewall built-in app routes (config + plan; enforcement not wired yet)
-			_ = s.firewall.RegisterRoutes(protected)
+			firewallGroup := protected.Group("")
+			firewallGroup.Use(s.authMiddleware.RequirePermission(auth.PermSecurityRead))
+			firewallGroup.Use(s.requireWriteForMethods(auth.PermSecurityWrite, http.MethodPut))
+			_ = s.firewall.RegisterRoutes(firewallGroup)
 
 			// Cluster endpoints
 			protected.POST("/cluster/capacity/claim", s.authMiddleware.RequirePermission(auth.PermClusterCapacityClaim), s.clusterCapacityClaim)
@@ -7489,4 +7494,34 @@ func (s *Server) deploymentAuthOptions(name string) (credentials.AuthConfig, []d
 		return credentials.AuthConfig{}, nil
 	}
 	return cfg, []docker.RunOption{docker.WithDockerConfig(cfg.Dir())}
+}
+
+func (s *Server) requireDNSWriteForMutations() gin.HandlerFunc {
+	write := s.authMiddleware.RequirePermission(auth.PermDNSWrite)
+	return func(c *gin.Context) {
+		method := c.Request.Method
+		requestPath := c.Request.URL.Path
+		mutation := method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
+		mutation = mutation || method == http.MethodPost && (strings.Contains(requestPath, "/dns/powerdns/") || strings.HasSuffix(requestPath, "/records/create"))
+		if mutation {
+			write(c)
+			return
+		}
+		c.Next()
+	}
+}
+
+func (s *Server) requireWriteForMethods(permission auth.Permission, methods ...string) gin.HandlerFunc {
+	write := s.authMiddleware.RequirePermission(permission)
+	allowed := make(map[string]struct{}, len(methods))
+	for _, method := range methods {
+		allowed[method] = struct{}{}
+	}
+	return func(c *gin.Context) {
+		if _, ok := allowed[c.Request.Method]; ok {
+			write(c)
+			return
+		}
+		c.Next()
+	}
 }
