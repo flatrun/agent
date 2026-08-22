@@ -36,6 +36,14 @@ func TestBuildWorkloadCarriesPortableRuntimeInputs(t *testing.T) {
     entrypoint: ["/app/entrypoint"]
     command: ["serve", "--port", "8080"]
     working_dir: /app
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
 `, 2, "proxy")
 	if err != nil {
 		t.Fatal(err)
@@ -48,5 +56,8 @@ func TestBuildWorkloadCarriesPortableRuntimeInputs(t *testing.T) {
 	}
 	if len(workload.Networks) != 1 || workload.Networks[0] != "proxy" {
 		t.Fatalf("workload networks = %#v", workload.Networks)
+	}
+	if workload.Resources.CPULimit != 1.5 || workload.Resources.CPURequest != 0.5 || workload.Resources.MemoryLimit != 512<<20 || workload.Resources.MemoryRequest != 256<<20 {
+		t.Fatalf("workload resources = %#v", workload.Resources)
 	}
 }

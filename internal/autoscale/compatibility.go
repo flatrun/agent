@@ -3,8 +3,10 @@ package autoscale
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/pkg/models"
 	"gopkg.in/yaml.v3"
@@ -39,6 +41,21 @@ type composeCompatibilityService struct {
 	Entrypoint  any            `yaml:"entrypoint"`
 	Command     any            `yaml:"command"`
 	WorkingDir  string         `yaml:"working_dir"`
+	Deploy      composeDeploy  `yaml:"deploy"`
+}
+
+type composeDeploy struct {
+	Resources composeResources `yaml:"resources"`
+}
+
+type composeResources struct {
+	Limits       composeResourceValues `yaml:"limits"`
+	Reservations composeResourceValues `yaml:"reservations"`
+}
+
+type composeResourceValues struct {
+	CPUs   any `yaml:"cpus"`
+	Memory any `yaml:"memory"`
 }
 
 func AssessCompatibility(deployment *models.Deployment, composeContent string) Compatibility {
@@ -125,6 +142,11 @@ func BuildWorkload(deployment *models.Deployment, composeContent string, replica
 		Environment: map[string]string{}, Entrypoint: stringList(service.Entrypoint), Command: stringList(service.Command),
 		WorkingDir: service.WorkingDir, Labels: map[string]string{"flatrun.deployment": deployment.Name},
 	}
+	parsedResources, err := workloadResources(service.Deploy.Resources)
+	if err != nil {
+		return orchestrator.Workload{}, err
+	}
+	workload.Resources = parsedResources
 	if strings.TrimSpace(proxyNetwork) != "" {
 		workload.Networks = []string{proxyNetwork}
 	}
@@ -137,6 +159,48 @@ func BuildWorkload(deployment *models.Deployment, composeContent string, replica
 	}
 	workload.Health.Path = deployment.Metadata.HealthCheck.Path
 	return workload, nil
+}
+
+func workloadResources(resources composeResources) (orchestrator.Resources, error) {
+	cpuLimit, err := cpuValue(resources.Limits.CPUs)
+	if err != nil {
+		return orchestrator.Resources{}, fmt.Errorf("invalid CPU limit: %w", err)
+	}
+	cpuRequest, err := cpuValue(resources.Reservations.CPUs)
+	if err != nil {
+		return orchestrator.Resources{}, fmt.Errorf("invalid CPU reservation: %w", err)
+	}
+	memoryLimit, err := memoryValue(resources.Limits.Memory)
+	if err != nil {
+		return orchestrator.Resources{}, fmt.Errorf("invalid memory limit: %w", err)
+	}
+	memoryRequest, err := memoryValue(resources.Reservations.Memory)
+	if err != nil {
+		return orchestrator.Resources{}, fmt.Errorf("invalid memory reservation: %w", err)
+	}
+	return orchestrator.Resources{CPURequest: cpuRequest, CPULimit: cpuLimit, MemoryRequest: memoryRequest, MemoryLimit: memoryLimit}, nil
+}
+
+func cpuValue(value any) (float64, error) {
+	if value == nil {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprint(value)), 64)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%q", value)
+	}
+	return parsed, nil
+}
+
+func memoryValue(value any) (uint64, error) {
+	if value == nil {
+		return 0, nil
+	}
+	parsed, err := units.RAMInBytes(strings.TrimSpace(fmt.Sprint(value)))
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%q", value)
+	}
+	return uint64(parsed), nil
 }
 
 func environmentMap(value any) map[string]string {

@@ -85,7 +85,7 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 			return autoscale.Activation{}, fmt.Errorf("create Swarm provider: %w", err)
 		}
 		defer swarmProvider.Close()
-		workload.Placement, err = s.autoscalePlacement(ctx, swarmProvider, policy)
+		workload.Placement, err = s.autoscalePlacement(ctx, swarmProvider, policy, workload.Resources)
 		if err != nil {
 			return autoscale.Activation{}, err
 		}
@@ -120,7 +120,7 @@ func (s *Server) defaultRunAutoscaleActivation(ctx context.Context, name string)
 	return activation, nil
 }
 
-func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.SwarmProvider, policy autoscale.Policy) (orchestrator.Placement, error) {
+func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.SwarmProvider, policy autoscale.Policy, resources orchestrator.Resources) (orchestrator.Placement, error) {
 	identity, err := provider.EnsureLocalNodeLabel(ctx, "flatrun.capacity.local", "true")
 	if err != nil {
 		return orchestrator.Placement{}, err
@@ -129,6 +129,9 @@ func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.
 	manager := s.getClusterManager()
 	if !policy.AllowFleetCapacity || manager == nil {
 		return local, nil
+	}
+	if resources.CPULimit == 0 || resources.MemoryLimit == 0 {
+		return orchestrator.Placement{}, fmt.Errorf("Fleet capacity requires CPU and memory limits in the Compose deployment resources")
 	}
 	label := capacityNodeLabel(manager.ServerName())
 	if _, err := provider.EnsureLocalNodeLabel(ctx, label, "true"); err != nil {
@@ -155,6 +158,9 @@ func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.
 		if err := json.Unmarshal(result.Data, &claim); err != nil || !claim.Enabled || claim.Constraint != constraint {
 			continue
 		}
+		if !capacityClaimFits(claim, resources) {
+			continue
+		}
 		allowed++
 		if claim.MaxReplicas > 0 && (maxReplicas == 0 || claim.MaxReplicas < maxReplicas) {
 			maxReplicas = claim.MaxReplicas
@@ -164,6 +170,11 @@ func (s *Server) autoscalePlacement(ctx context.Context, provider *orchestrator.
 		return local, nil
 	}
 	return orchestrator.Placement{Constraints: []string{constraint}, MaxReplicasPerNode: uint64(maxReplicas)}, nil
+}
+
+func capacityClaimFits(claim clusterCapacityClaimResponse, resources orchestrator.Resources) bool {
+	return (claim.MaxCPU == 0 || resources.CPULimit <= claim.MaxCPU) &&
+		(claim.MaxMemory == 0 || resources.MemoryLimit <= claim.MaxMemory)
 }
 
 func autoscaleDomain(deployment *models.Deployment, workload orchestrator.Workload) (models.DomainConfig, error) {

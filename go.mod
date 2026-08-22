@@ -16,6 +16,7 @@ require (
 	github.com/digitalocean/godo v1.171.0
 	github.com/distribution/reference v0.6.0
 	github.com/docker/docker v28.5.2+incompatible
+	github.com/docker/go-units v0.5.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.10.1
@@ -94,7 +95,6 @@ require (
 	github.com/docker/compose/v5 v5.1.0 // indirect
 	github.com/docker/docker-credential-helpers v0.9.5 // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
-	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/eclipse/paho.golang v0.23.0 // indirect

@@ -136,3 +136,16 @@ func TestDeploymentAutoscalePolicyThroughHTTP(t *testing.T) {
 		t.Fatalf("activation returned %d for %q: %s", w.Code, activated, w.Body.String())
 	}
 }
+
+func TestCapacityClaimFitsWorkloadLimits(t *testing.T) {
+	resources := orchestrator.Resources{CPULimit: 2, MemoryLimit: 2 << 30}
+	if !capacityClaimFits(clusterCapacityClaimResponse{MaxCPU: 2, MaxMemory: 2 << 30}, resources) {
+		t.Fatal("matching capacity grant was rejected")
+	}
+	if capacityClaimFits(clusterCapacityClaimResponse{MaxCPU: 1, MaxMemory: 4 << 30}, resources) {
+		t.Fatal("CPU limit above the capacity grant was accepted")
+	}
+	if capacityClaimFits(clusterCapacityClaimResponse{MaxCPU: 4, MaxMemory: 1 << 30}, resources) {
+		t.Fatal("memory limit above the capacity grant was accepted")
+	}
+}
