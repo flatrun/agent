@@ -36,7 +36,7 @@ func TestBuildWorkloadCarriesPortableRuntimeInputs(t *testing.T) {
     entrypoint: ["/app/entrypoint"]
     command: ["serve", "--port", "8080"]
     working_dir: /app
-`, 2)
+`, 2, "proxy")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,5 +45,8 @@ func TestBuildWorkloadCarriesPortableRuntimeInputs(t *testing.T) {
 	}
 	if len(workload.Entrypoint) != 1 || len(workload.Command) != 3 {
 		t.Fatalf("workload commands = %#v / %#v", workload.Entrypoint, workload.Command)
+	}
+	if len(workload.Networks) != 1 || workload.Networks[0] != "proxy" {
+		t.Fatalf("workload networks = %#v", workload.Networks)
 	}
 }

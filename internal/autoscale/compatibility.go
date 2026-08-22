@@ -110,7 +110,7 @@ func AssessCompatibility(deployment *models.Deployment, composeContent string) C
 	return result
 }
 
-func BuildWorkload(deployment *models.Deployment, composeContent string, replicas int) (orchestrator.Workload, error) {
+func BuildWorkload(deployment *models.Deployment, composeContent string, replicas int, proxyNetwork string) (orchestrator.Workload, error) {
 	compatibility := AssessCompatibility(deployment, composeContent)
 	if !compatibility.Compatible {
 		return orchestrator.Workload{}, fmt.Errorf("workload is not scale-ready: %s", strings.Join(compatibility.Blockers, "; "))
@@ -124,6 +124,9 @@ func BuildWorkload(deployment *models.Deployment, composeContent string, replica
 		ID: deployment.Name, Image: service.Image, Replicas: replicas,
 		Environment: map[string]string{}, Entrypoint: stringList(service.Entrypoint), Command: stringList(service.Command),
 		WorkingDir: service.WorkingDir, Labels: map[string]string{"flatrun.deployment": deployment.Name},
+	}
+	if strings.TrimSpace(proxyNetwork) != "" {
+		workload.Networks = []string{proxyNetwork}
 	}
 	workload.Environment = environmentMap(service.Environment)
 	for _, domain := range deployment.Metadata.GetDomains() {

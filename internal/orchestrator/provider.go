@@ -36,6 +36,7 @@ type Workload struct {
 	Entrypoint  []string          `json:"entrypoint,omitempty"`
 	Command     []string          `json:"command,omitempty"`
 	WorkingDir  string            `json:"working_dir,omitempty"`
+	Networks    []string          `json:"networks,omitempty"`
 	Stateful    bool              `json:"stateful"`
 }
 

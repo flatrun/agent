@@ -183,9 +183,20 @@ func swarmSpec(workload Workload) swarm.ServiceSpec {
 		TaskTemplate: swarm.TaskSpec{
 			ContainerSpec: &swarm.ContainerSpec{Image: workload.Image, Labels: labels, Env: workloadEnvironment(workload.Environment), Command: workload.Entrypoint, Args: workload.Command, Dir: workload.WorkingDir},
 			Resources:     swarmResources(workload.Resources),
+			Networks:      swarmNetworks(workload.Networks),
 		},
 		Mode: swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
 	}
+}
+
+func swarmNetworks(networks []string) []swarm.NetworkAttachmentConfig {
+	result := make([]swarm.NetworkAttachmentConfig, 0, len(networks))
+	for _, network := range networks {
+		if strings.TrimSpace(network) != "" {
+			result = append(result, swarm.NetworkAttachmentConfig{Target: network})
+		}
+	}
+	return result
 }
 
 func workloadEnvironment(environment map[string]string) []string {
