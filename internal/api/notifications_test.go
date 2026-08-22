@@ -23,9 +23,38 @@ func setupNotifyTest(t *testing.T) (*Server, *gin.Engine) {
 	}
 	r := gin.New()
 	r.GET("/notifications/targets", s.getNotificationTargets)
+	r.GET("/notifications/incidents", s.listNotificationIncidents)
 	r.PUT("/notifications/targets", s.updateNotificationTargets)
 	r.POST("/internal/notify/emit", s.emitNotification)
+	r.POST("/internal/events", s.emitEvent)
 	return s, r
+}
+
+func TestEmitEventCorrelatesIncidentThroughHTTP(t *testing.T) {
+	_, r := setupNotifyTest(t)
+	emit := func(payload string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/internal/events", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Plugin-Token", "plugin-token")
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	first := emit(`{"source":"fleet","type":"node.unavailable","severity":"critical","title":"prod2 unavailable","scope":{"node":"prod2"}}`)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", first.Code, first.Body.String())
+	}
+	second := emit(`{"source":"capacity","type":"deployment.unavailable","severity":"critical","title":"app unavailable","scope":{"node":"prod2","deployment":"app"},"correlation_key":"node:prod2"}`)
+	if second.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", second.Code, second.Body.String())
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/notifications/incidents", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"event_count":2`) {
+		t.Fatalf("incidents status = %d, body = %s", w.Code, w.Body.String())
+	}
 }
 
 func TestGetNotificationTargetsMasksSecret(t *testing.T) {

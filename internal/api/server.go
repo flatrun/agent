@@ -524,6 +524,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getAgentUpdate)
 			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.triggerAgentUpdate)
 			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getNotificationTargets)
+			protected.GET("/notifications/incidents", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.listNotificationIncidents)
 			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationTargets)
 			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.testNotification)
 			protected.GET("/config", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listConfig)
@@ -890,6 +891,7 @@ func (s *Server) setupRoutes() {
 
 		// Plugin-emitted notifications (authenticated by the per-run plugin token).
 		api.POST("/internal/notify/emit", s.emitNotification)
+		api.POST("/internal/events", s.emitEvent)
 		// Log lines and triage for built-in apps, on the same plugin token. Both keep one
 		// implementation in the agent rather than a second one inside every app.
 		api.GET("/internal/logs/stream", s.streamInternalLogs)

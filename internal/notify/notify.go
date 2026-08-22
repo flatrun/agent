@@ -12,7 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/flatrun/agent/internal/events"
 	"github.com/nicholas-fedor/shoutrrr"
 	"github.com/nicholas-fedor/shoutrrr/pkg/router"
 	"gopkg.in/yaml.v3"
@@ -26,10 +28,14 @@ const MaskedURL = "********"
 // Target is one delivery destination. URL is a shoutrrr service URL, e.g.
 // "smtp://user:pass@host:587/?from=x&to=y" or "generic+https://example.com/hook".
 type Target struct {
-	ID      string `yaml:"id" json:"id"`
-	Name    string `yaml:"name" json:"name"`
-	URL     string `yaml:"url" json:"url"`
-	Enabled bool   `yaml:"enabled" json:"enabled"`
+	ID          string            `yaml:"id" json:"id"`
+	Name        string            `yaml:"name" json:"name"`
+	URL         string            `yaml:"url" json:"url"`
+	Enabled     bool              `yaml:"enabled" json:"enabled"`
+	Topics      []string          `yaml:"topics,omitempty" json:"topics,omitempty"`
+	Severities  []events.Severity `yaml:"severities,omitempty" json:"severities,omitempty"`
+	Nodes       []string          `yaml:"nodes,omitempty" json:"nodes,omitempty"`
+	Deployments []string          `yaml:"deployments,omitempty" json:"deployments,omitempty"`
 }
 
 // MarshalJSON masks the credential-bearing URL. YAML persistence does not use
@@ -50,15 +56,98 @@ type Config struct {
 
 // Service loads/saves targets and delivers messages.
 type Service struct {
-	path string
-	mu   sync.RWMutex
-	send func(url, message string) error // overridable in tests
+	path   string
+	mu     sync.RWMutex
+	send   func(url, message string) error // overridable in tests
+	events *events.Correlator
 }
 
 func NewService(basePath string) *Service {
 	return &Service{
-		path: filepath.Join(basePath, ".flatrun", "notifications.yml"),
+		path:   filepath.Join(basePath, ".flatrun", "notifications.yml"),
+		events: events.NewCorrelator(15 * time.Minute),
 	}
+}
+
+func (s *Service) Publish(event events.Event) (events.IngestResult, error) {
+	result := s.events.Ingest(event)
+	if result.Notification == events.NotificationNone {
+		return result, nil
+	}
+
+	kind := KindNegative
+	message := event.Message
+	switch result.Notification {
+	case events.NotificationResolved:
+		kind = KindPositive
+		message = fmt.Sprintf("Resolved after %d related events. %s", result.Incident.EventCount, event.Message)
+	case events.NotificationUpdated:
+		message = fmt.Sprintf("%d related events are grouped in this incident. %s", result.Incident.EventCount, event.Message)
+	}
+	if event.Severity == events.SeverityInfo && result.Notification != events.NotificationResolved {
+		kind = KindGeneric
+	}
+
+	notification := Notification{
+		Kind:    kind,
+		Title:   event.Title,
+		Message: message,
+		Panels: []Panel{{
+			Title:  "Incident ID",
+			Value:  result.Incident.ID,
+			Detail: fmt.Sprintf("Source: %s", event.Source),
+		}},
+	}
+	return result, s.deliverEvent(event, notification)
+}
+
+func (s *Service) Incidents() []events.Incident {
+	return s.events.List()
+}
+
+func (s *Service) deliverEvent(event events.Event, notification Notification) error {
+	cfg := s.Load()
+	var firstErr error
+	for _, target := range cfg.Targets {
+		if !target.Enabled || target.URL == "" || !targetMatches(target, event) {
+			continue
+		}
+		if err := s.deliver(target.URL, notification); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func targetMatches(target Target, event events.Event) bool {
+	return matchesString(target.Topics, event.Source) &&
+		matchesSeverity(target.Severities, event.Severity) &&
+		matchesString(target.Nodes, event.Scope.Node) &&
+		matchesString(target.Deployments, event.Scope.Deployment)
+}
+
+func matchesString(filter []string, value string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, candidate := range filter {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesSeverity(filter []events.Severity, value events.Severity) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, candidate := range filter {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) Load() Config {
