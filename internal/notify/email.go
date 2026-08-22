@@ -48,6 +48,17 @@ type emailData struct {
 	Panels     []emailPanel
 }
 
+type emailEmbed struct {
+	name string
+	mime string
+	data []byte
+}
+
+type renderedEmail struct {
+	html   string
+	embeds []emailEmbed
+}
+
 func normalizeKind(kind Kind) Kind {
 	switch kind {
 	case KindPositive, KindNegative:
@@ -84,22 +95,61 @@ func safeImageURL(raw string) template.URL {
 }
 
 func RenderEmail(notification Notification) (string, error) {
+	logo := "data:" + defaultEmailTheme.logoMIME + ";base64," + base64.StdEncoding.EncodeToString(defaultEmailTheme.logo)
+	return renderEmail(notification, template.URL(logo), false)
+}
+
+func renderEmailForDelivery(notification Notification) (renderedEmail, error) {
+	const logoName = "flatrun-logo.png"
+	body, err := renderEmail(notification, template.URL("cid:"+logoName), true)
+	if err != nil {
+		return renderedEmail{}, err
+	}
+	embeds := []emailEmbed{{name: logoName, mime: defaultEmailTheme.logoMIME, data: defaultEmailTheme.logo}}
+	for i, panel := range notification.Panels {
+		data, ok := pngData(panel.ImageURL)
+		if !ok {
+			continue
+		}
+		embeds = append(embeds, emailEmbed{
+			name: fmt.Sprintf("flatrun-panel-%d.png", i+1), mime: "image/png", data: data,
+		})
+	}
+	return renderedEmail{html: body, embeds: embeds}, nil
+}
+
+func renderEmail(notification Notification, logo template.URL, embedPanels bool) (string, error) {
 	accent, accentSoft, status := palette(notification.Kind)
 	panels := make([]emailPanel, 0, len(notification.Panels))
-	for _, panel := range notification.Panels {
+	for i, panel := range notification.Panels {
+		imageURL := safeImageURL(panel.ImageURL)
+		if embedPanels {
+			if _, ok := pngData(panel.ImageURL); ok {
+				imageURL = template.URL(fmt.Sprintf("cid:flatrun-panel-%d.png", i+1))
+			}
+		}
 		panels = append(panels, emailPanel{
-			Title: panel.Title, Value: panel.Value, Detail: panel.Detail, ImageURL: safeImageURL(panel.ImageURL),
+			Title: panel.Title, Value: panel.Value, Detail: panel.Detail, ImageURL: imageURL,
 		})
 	}
 	var body bytes.Buffer
 	err := defaultEmailTheme.template.ExecuteTemplate(&body, defaultEmailTheme.main, emailData{
-		Title: notification.Title, Message: notification.Message, Logo: defaultEmailTheme.logo,
+		Title: notification.Title, Message: notification.Message, Logo: logo,
 		Accent: accent, AccentSoft: accentSoft, Status: status, Panels: panels,
 	})
 	if err != nil {
 		return "", fmt.Errorf("render email notification: %w", err)
 	}
 	return body.String(), nil
+}
+
+func pngData(raw string) ([]byte, bool) {
+	const prefix = "data:image/png;base64,"
+	if !strings.HasPrefix(raw, prefix) {
+		return nil, false
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(raw, prefix))
+	return data, err == nil && len(data) >= 8 && bytes.Equal(data[:8], []byte("\x89PNG\r\n\x1a\n"))
 }
 
 func formatDelivery(rawURL string, notification Notification) (string, string, error) {

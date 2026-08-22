@@ -33,6 +33,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/compose v0.41.0
 	github.com/whilesmartgo/agents v0.4.0
 	github.com/whilesmartgo/mcp v0.2.0
+	github.com/wneessen/go-mail v0.7.2
 	go.opentelemetry.io/otel v1.41.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.41.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.41.0

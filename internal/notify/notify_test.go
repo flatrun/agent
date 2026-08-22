@@ -1,11 +1,14 @@
 package notify
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
 	"testing"
+
+	shoutrrrsmtp "github.com/nicholas-fedor/shoutrrr/pkg/services/email/smtp"
 )
 
 func TestTargetJSONMasksURL(t *testing.T) {
@@ -19,6 +22,35 @@ func TestTargetJSONMasksURL(t *testing.T) {
 	}
 	if !strings.Contains(out, MaskedURL) {
 		t.Errorf("URL should be masked: %s", out)
+	}
+}
+
+func TestEmailMessageEmbedsImagesReferencedByContentID(t *testing.T) {
+	png := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	message, err := buildEmailMessage(Notification{
+		Title: "Alert", Message: "Details", Panels: []Panel{{Title: "CPU", ImageURL: png}},
+	}, &shoutrrrsmtp.Config{
+		FromAddress: "alerts@example.com", ToAddresses: []string{"admin@example.com"}, Subject: "Alert",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw bytes.Buffer
+	if _, err := message.WriteTo(&raw); err != nil {
+		t.Fatal(err)
+	}
+	body := raw.String()
+	for _, expected := range []string{
+		"multipart/related", "cid:flatrun-logo.png", "cid:flatrun-panel-1.png",
+		"Content-Id: <flatrun-logo.png>", "Content-Id: <flatrun-panel-1.png>",
+		"Content-Disposition: inline",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("serialized email missing %q", expected)
+		}
+	}
+	if strings.Contains(body, "data:image/png;base64,") {
+		t.Error("serialized email still contains a data URL")
 	}
 }
 
