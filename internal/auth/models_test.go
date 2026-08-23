@@ -267,6 +267,16 @@ func TestActorContextCanAccessDeployment(t *testing.T) {
 	}
 }
 
+func TestActorContextCanAccessPeerDeployment(t *testing.T) {
+	actor := &ActorContext{Role: RoleOperator, Deployments: map[string]string{"prod3/database": AccessLevelWrite}}
+	if !actor.CanAccessPeerDeployment("prod3", "database", AccessLevelWrite) {
+		t.Fatal("server-qualified deployment grant was not accepted")
+	}
+	if actor.CanAccessPeerDeployment("prod1", "database", AccessLevelRead) {
+		t.Fatal("deployment grant crossed the server boundary")
+	}
+}
+
 func TestAccessLevelSufficient(t *testing.T) {
 	tests := []struct {
 		has      string

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/nginx"
 	"github.com/flatrun/agent/internal/proxy"
@@ -170,6 +171,31 @@ func TestListCertificates_AnnotatesDeploymentID(t *testing.T) {
 	}
 	if byDomain["orphan.example.com"] != "" {
 		t.Errorf("orphan cert should have empty DeploymentID, got %q", byDomain["orphan.example.com"])
+	}
+}
+
+func TestListCertificates_FiltersByDeploymentAccess(t *testing.T) {
+	server, deploymentsPath, certsPath := setupRenewalTestServer(t)
+	writeSelfSignedCert(t, certsPath, "mine.example.com")
+	writeSelfSignedCert(t, certsPath, "other.example.com")
+	writeSelfSignedCert(t, certsPath, "orphan.example.com")
+	writeDeploymentWithDomains(t, deploymentsPath, "mine", []models.DomainConfig{{Domain: "mine.example.com"}})
+	writeDeploymentWithDomains(t, deploymentsPath, "other", []models.DomainConfig{{Domain: "other.example.com"}})
+
+	router := gin.New()
+	router.Use(actorMiddleware(testActor(auth.RoleOperator, map[string]string{"mine": auth.AccessLevelRead})))
+	router.GET("/certificates", server.listCertificates)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/certificates", nil))
+
+	var payload struct {
+		Certificates []models.Certificate `json:"certificates"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if len(payload.Certificates) != 1 || payload.Certificates[0].Domain != "mine.example.com" {
+		t.Fatalf("unexpected certificates: %+v", payload.Certificates)
 	}
 }
 

@@ -33,6 +33,11 @@ func TestGetRolePermissions(t *testing.T) {
 	if len(operatorPerms) == 0 {
 		t.Error("Operator should have permissions")
 	}
+	for _, permission := range operatorPerms {
+		if permission == PermSystemWrite || permission == PermSystemFiles {
+			t.Fatalf("operator role includes host control permission %s", permission)
+		}
+	}
 
 	viewerPerms := GetRolePermissions(RoleViewer)
 	if len(viewerPerms) == 0 {
@@ -169,7 +174,6 @@ func TestOperatorPermissions(t *testing.T) {
 		PermDatabasesWrite,
 		PermInfrastructureWrite,
 		PermSchedulerWrite,
-		PermSystemWrite,
 		PermDNSWrite,
 		PermRegistriesWrite,
 		PermStorageWrite,

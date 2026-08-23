@@ -23,6 +23,7 @@ import (
 	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/pkg/config"
+	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/gin-gonic/gin"
 )
@@ -709,6 +710,19 @@ func clusterPolicyAccess(policy cluster.PeerPolicy) ([]string, auth.DeploymentAc
 			permissions[auth.PermContainersRead.String()] = true
 			permissions[auth.PermContainersWrite.String()] = true
 			unrestrictedDeployments = mergeClusterDeploymentAccess(deployments, grant.Deployments, auth.AccessLevelWrite, unrestrictedDeployments)
+		case cluster.CapabilityDeploymentsManage:
+			for _, permission := range []auth.Permission{
+				auth.PermDeploymentsRead, auth.PermDeploymentsWrite, auth.PermDeploymentsDelete,
+				auth.PermContainersRead, auth.PermContainersWrite, auth.PermContainersDelete,
+				auth.PermCertificatesRead, auth.PermCertificatesWrite, auth.PermCertificatesDelete,
+				auth.PermSecurityRead, auth.PermSecurityWrite, auth.PermImagesRead,
+				auth.PermImagesWrite, auth.PermImagesDelete, auth.PermBackupsRead,
+				auth.PermBackupsWrite, auth.PermBackupsDelete,
+				auth.PermSchedulerRead, auth.PermSchedulerWrite, auth.PermSchedulerDelete,
+			} {
+				permissions[permission.String()] = true
+			}
+			unrestrictedDeployments = mergeClusterDeploymentAccess(deployments, grant.Deployments, auth.AccessLevelAdmin, unrestrictedDeployments)
 		case cluster.CapabilityCapacityRead:
 			permissions[auth.PermSystemRead.String()] = true
 		case cluster.CapabilityCapacityOffer:
@@ -734,11 +748,24 @@ func mergeClusterDeploymentAccess(access auth.DeploymentAccess, names []string, 
 		return true
 	}
 	for _, name := range names {
-		if current, ok := access[name]; !ok || current == auth.AccessLevelRead && level == auth.AccessLevelWrite {
+		if current, ok := access[name]; !ok || clusterAccessLevelRank(level) > clusterAccessLevelRank(current) {
 			access[name] = level
 		}
 	}
 	return false
+}
+
+func clusterAccessLevelRank(level string) int {
+	switch level {
+	case auth.AccessLevelRead:
+		return 1
+	case auth.AccessLevelWrite:
+		return 2
+	case auth.AccessLevelAdmin:
+		return 3
+	default:
+		return 0
+	}
 }
 
 func (s *Server) applyClusterPeerPolicy(policy cluster.PeerPolicy) error {
@@ -833,6 +860,9 @@ func (s *Server) deleteClusterAPIKey(peerName string) error {
 }
 
 func (s *Server) clusterProxy(c *gin.Context) {
+	if !authorizePeerProxy(c) {
+		return
+	}
 	mgr := s.getClusterManager()
 	if mgr == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster is not enabled"})
@@ -853,18 +883,143 @@ func (s *Server) clusterProxy(c *gin.Context) {
 		body = c.Request.Body
 	}
 
-	data, status, headers, err := client.Forward(c.Request.Context(), c.Request.Method, "/api"+path, body)
+	forwardPath := "/api" + path
+	if c.Request.URL.RawQuery != "" {
+		forwardPath += "?" + c.Request.URL.RawQuery
+	}
+	resp, err := client.DoWithHeaders(c.Request.Context(), c.Request.Method, forwardPath, c.Request.Header, body)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Failed to proxy request: %v", err)})
 		return
 	}
 
-	for k, v := range headers {
-		if k != "Content-Length" && k != "Transfer-Encoding" {
-			c.Header(k, v)
+	defer resp.Body.Close()
+	for k, values := range resp.Header {
+		if k != "Content-Length" && k != "Transfer-Encoding" && k != "Connection" {
+			for _, value := range values {
+				c.Writer.Header().Add(k, value)
+			}
 		}
 	}
-	c.Data(status, "application/json", data)
+	if c.Request.Method == http.MethodGet && path == "/deployments" {
+		s.writeScopedPeerDeployments(c, name, resp)
+		return
+	}
+	c.Status(resp.StatusCode)
+	_, _ = io.Copy(c.Writer, resp.Body)
+}
+
+func (s *Server) writeScopedPeerDeployments(c *gin.Context, peer string, resp *http.Response) {
+	actor := auth.GetActorFromContext(c)
+	if actor == nil || actor.Role == auth.RoleAdmin || resp.StatusCode != http.StatusOK {
+		c.Status(resp.StatusCode)
+		_, _ = io.Copy(c.Writer, resp.Body)
+		return
+	}
+	var payload struct {
+		Deployments []models.Deployment `json:"deployments"`
+		Path        string              `json:"path,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Peer returned an invalid deployment list"})
+		return
+	}
+	visible := payload.Deployments[:0]
+	for _, deployment := range payload.Deployments {
+		if actor.CanAccessPeerDeployment(peer, deployment.Name, auth.AccessLevelRead) {
+			visible = append(visible, deployment)
+		}
+	}
+	payload.Deployments = visible
+	c.JSON(http.StatusOK, payload)
+}
+
+func authorizePeerProxy(c *gin.Context) bool {
+	actor := auth.GetActorFromContext(c)
+	if actor == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+		return false
+	}
+
+	path := c.Param("path")
+	peer := c.Param("name")
+	deployment := peerProxyDeployment(path)
+	if deployment == "" {
+		deployment = strings.TrimSpace(c.GetHeader("X-FlatRun-Deployment"))
+	}
+	if actor.Role != auth.RoleAdmin && path != "/deployments" && deployment == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "A deployment scope is required"})
+		return false
+	}
+	requiredLevel := auth.AccessLevelRead
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+		requiredLevel = auth.AccessLevelWrite
+	}
+	if c.Request.Method == http.MethodDelete {
+		requiredLevel = auth.AccessLevelAdmin
+	}
+	if deployment != "" && !actor.CanAccessPeerDeployment(peer, deployment, requiredLevel) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "No access to this peer deployment"})
+		return false
+	}
+	permission := auth.PermDeploymentsRead
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+		permission = auth.PermDeploymentsWrite
+	}
+	if c.Request.Method == http.MethodDelete {
+		permission = auth.PermDeploymentsDelete
+	}
+
+	switch {
+	case strings.HasPrefix(path, "/containers/"):
+		permission = auth.PermContainersRead
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			permission = auth.PermContainersWrite
+		}
+		if c.Request.Method == http.MethodDelete {
+			permission = auth.PermContainersDelete
+		}
+	case strings.HasPrefix(path, "/certificates"), strings.HasPrefix(path, "/proxy/"):
+		permission = auth.PermCertificatesRead
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			permission = auth.PermCertificatesWrite
+		}
+		if c.Request.Method == http.MethodDelete {
+			permission = auth.PermCertificatesDelete
+		}
+	case strings.Contains(path, "/security"):
+		permission = auth.PermSecurityRead
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			permission = auth.PermSecurityWrite
+		}
+	case strings.HasPrefix(path, "/backups"), strings.Contains(path, "/backups"):
+		permission = auth.PermBackupsRead
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			permission = auth.PermBackupsWrite
+		}
+		if c.Request.Method == http.MethodDelete {
+			permission = auth.PermBackupsDelete
+		}
+	case strings.HasPrefix(path, "/credentials"):
+		permission = auth.PermRegistriesRead
+	}
+
+	if !actor.HasPermission(permission) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Permission denied", "required": permission})
+		return false
+	}
+	return true
+}
+
+func peerProxyDeployment(path string) string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 2 && parts[0] == "deployments" {
+		name, err := url.PathUnescape(parts[1])
+		if err == nil {
+			return name
+		}
+	}
+	return ""
 }
 
 func (s *Server) clusterAggregateDeployments(c *gin.Context) {

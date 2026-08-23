@@ -171,6 +171,13 @@ func (a *ActorContext) CanAccessDeployment(name string, requiredLevel string) bo
 	return accessLevelSufficient(minAccessLevel(userLevel, keyLevel), requiredLevel)
 }
 
+func (a *ActorContext) CanAccessPeerDeployment(server, name, requiredLevel string) bool {
+	if a.Role == RoleAdmin {
+		return true
+	}
+	return a.CanAccessDeployment(server+"/"+name, requiredLevel)
+}
+
 func actorUserDeploymentLevel(a *ActorContext, name string) string {
 	if a.User != nil && a.User.Role == RoleAdmin {
 		return AccessLevelAdmin

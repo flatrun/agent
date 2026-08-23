@@ -107,6 +107,26 @@ func TestUpdateDeploymentMetadataAcceptsTCPHealthCheck(t *testing.T) {
 	}
 }
 
+func TestUpdateDeploymentMetadataAcceptsChecksForMultipleServices(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "stack", &models.ServiceMetadata{Name: "stack", Type: "compose"})
+
+	resp, parsed := doJSON(t, http.MethodPut, ts.URL+"/api/deployments/stack/metadata", map[string]interface{}{
+		"healthchecks": []map[string]interface{}{
+			{"type": "http", "service": "web", "port": 8080, "path": "/ready", "interval": "30s"},
+			{"type": "tcp", "service": "postgres", "port": 5432, "interval": "30s"},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metadata update status = %d, body %v", resp.StatusCode, parsed)
+	}
+
+	deployment, err := s.manager.GetDeployment("stack")
+	if err != nil || len(deployment.Metadata.HealthChecks) != 2 {
+		t.Fatalf("health checks not persisted: %+v, error %v", deployment.Metadata.HealthChecks, err)
+	}
+}
+
 func TestServiceActionPlan(t *testing.T) {
 	_, tmpDir, ts := setupPlanTestServer(t)
 	createTestDeployment(t, tmpDir, "myapp", nil)

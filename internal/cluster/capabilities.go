@@ -3,13 +3,14 @@ package cluster
 type Capability string
 
 const (
-	CapabilityFleetRead       Capability = "fleet.read"
-	CapabilityDeploymentsRead Capability = "deployments.read"
-	CapabilityDeploymentsRun  Capability = "deployments.run"
-	CapabilityCapacityRead    Capability = "capacity.read"
-	CapabilityCapacityOffer   Capability = "capacity.offer"
-	CapabilityEventsPublish   Capability = "events.publish"
-	CapabilityRoutingManage   Capability = "routing.manage"
+	CapabilityFleetRead         Capability = "fleet.read"
+	CapabilityDeploymentsRead   Capability = "deployments.read"
+	CapabilityDeploymentsRun    Capability = "deployments.run"
+	CapabilityDeploymentsManage Capability = "deployments.manage"
+	CapabilityCapacityRead      Capability = "capacity.read"
+	CapabilityCapacityOffer     Capability = "capacity.offer"
+	CapabilityEventsPublish     Capability = "events.publish"
+	CapabilityRoutingManage     Capability = "routing.manage"
 )
 
 type Grant struct {
@@ -36,7 +37,7 @@ func DefaultPeerGrants() []Grant {
 
 func ValidCapability(value Capability) bool {
 	switch value {
-	case CapabilityFleetRead, CapabilityDeploymentsRead, CapabilityDeploymentsRun,
+	case CapabilityFleetRead, CapabilityDeploymentsRead, CapabilityDeploymentsRun, CapabilityDeploymentsManage,
 		CapabilityCapacityRead, CapabilityCapacityOffer, CapabilityEventsPublish, CapabilityRoutingManage:
 		return true
 	default:
