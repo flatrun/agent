@@ -62,6 +62,47 @@ func TestAuthorizePeerProxyRequiresServerQualifiedDeploymentGrant(t *testing.T) 
 	}
 }
 
+func TestAuthorizePeerProxyRequiresModulePermissionForReads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	request := func(actor *auth.ActorContext) *httptest.ResponseRecorder {
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(contextkeys.Actor, actor)
+			c.Next()
+		})
+		router.GET("/cluster/peers/:name/proxy/*path", func(c *gin.Context) {
+			if authorizePeerProxy(c) {
+				c.Status(http.StatusNoContent)
+			}
+		})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(
+			http.MethodGet,
+			"/cluster/peers/prod3/proxy/deployments/database/backups",
+			nil,
+		))
+		return response
+	}
+
+	response := request(&auth.ActorContext{
+		Role:        auth.RoleService,
+		Permissions: []string{auth.PermClusterRead.String(), auth.PermDeploymentsRead.String()},
+		Deployments: map[string]string{"prod3/database": auth.AccessLevelRead},
+	})
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("backup read without permission accepted: %d %s", response.Code, response.Body.String())
+	}
+
+	response = request(&auth.ActorContext{
+		Role:        auth.RoleService,
+		Permissions: []string{auth.PermClusterRead.String(), auth.PermDeploymentsRead.String(), auth.PermBackupsRead.String()},
+		Deployments: map[string]string{"prod3/database": auth.AccessLevelRead},
+	})
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("backup read with permission rejected: %d %s", response.Code, response.Body.String())
+	}
+}
+
 type testClusterEnv struct {
 	server  *Server
 	router  *gin.Engine
@@ -464,6 +505,18 @@ func TestClusterPolicyAccessGrantsDeploymentManagement(t *testing.T) {
 		if !slices.Contains(permissions, permission) {
 			t.Fatalf("missing permission %q in %#v", permission, permissions)
 		}
+	}
+}
+
+func TestClusterPolicyAccessKeepsHighestDeploymentAccess(t *testing.T) {
+	_, deployments := clusterPolicyAccess(cluster.PeerPolicy{Grants: []cluster.Grant{
+		{Capability: cluster.CapabilityDeploymentsRead, Deployments: []string{"public-site"}},
+		{Capability: cluster.CapabilityDeploymentsManage, Deployments: []string{"public-site"}},
+		{Capability: cluster.CapabilityDeploymentsRun, Deployments: []string{"public-site"}},
+	}})
+
+	if deployments["public-site"] != auth.AccessLevelAdmin {
+		t.Fatalf("deployment access = %#v", deployments)
 	}
 }
 
@@ -987,7 +1040,7 @@ func TestClusterProxyAllowsReadWithoutWrite(t *testing.T) {
 	}
 	_, err = env.server.authManager.CreateAPIKeyFromRaw(
 		"fleet-reader-key", user.ID, "fleet-reader", "Fleet reader", auth.Role(""),
-		[]string{auth.PermClusterRead.String()}, nil, time.Time{},
+		[]string{auth.PermClusterRead.String(), auth.PermDeploymentsRead.String()}, nil, time.Time{},
 	)
 	if err != nil {
 		t.Fatal(err)

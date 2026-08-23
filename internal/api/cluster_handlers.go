@@ -748,11 +748,24 @@ func mergeClusterDeploymentAccess(access auth.DeploymentAccess, names []string, 
 		return true
 	}
 	for _, name := range names {
-		if current, ok := access[name]; !ok || current == auth.AccessLevelRead && level == auth.AccessLevelWrite {
+		if current, ok := access[name]; !ok || clusterAccessLevelRank(level) > clusterAccessLevelRank(current) {
 			access[name] = level
 		}
 	}
 	return false
+}
+
+func clusterAccessLevelRank(level string) int {
+	switch level {
+	case auth.AccessLevelRead:
+		return 1
+	case auth.AccessLevelWrite:
+		return 2
+	case auth.AccessLevelAdmin:
+		return 3
+	default:
+		return 0
+	}
 }
 
 func (s *Server) applyClusterPeerPolicy(policy cluster.PeerPolicy) error {
@@ -949,10 +962,10 @@ func authorizePeerProxy(c *gin.Context) bool {
 		c.JSON(http.StatusForbidden, gin.H{"error": "No access to this peer deployment"})
 		return false
 	}
-	if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead {
-		return true
+	permission := auth.PermDeploymentsRead
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+		permission = auth.PermDeploymentsWrite
 	}
-	permission := auth.PermDeploymentsWrite
 	if c.Request.Method == http.MethodDelete {
 		permission = auth.PermDeploymentsDelete
 	}
