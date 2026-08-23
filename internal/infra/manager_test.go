@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/flatrun/agent/pkg/config"
+	"github.com/flatrun/agent/templates"
 )
 
 func TestSetNginxRealtimeCapture(t *testing.T) {
@@ -239,6 +240,54 @@ func TestEnsureBaseNginxConfig(t *testing.T) {
 		}
 		if !strings.Contains(string(content), "server_names_hash_bucket_size") {
 			t.Errorf("refreshed config should contain server_names_hash_bucket_size, got:\n%s", content)
+		}
+		securityLua, err := os.ReadFile(filepath.Join(nginxDir, "lua", "security.lua"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(securityLua), "function _M.prepare_error_response()") {
+			t.Errorf("refreshed security.lua is missing error response support")
+		}
+		if _, err := os.Stat(filepath.Join(nginxDir, "lua", "traffic.lua")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(nginxDir, "html", ".flatrun", "error.html")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("refreshes stale lua beside a current config", func(t *testing.T) {
+		nginxDir := t.TempDir()
+		confPath := filepath.Join(nginxDir, "nginx.conf")
+		current, err := templates.GetNginxConfigWithData(true, templates.NginxConfigData{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(confPath, current, 0644); err != nil {
+			t.Fatal(err)
+		}
+		luaDir := filepath.Join(nginxDir, "lua")
+		if err := os.MkdirAll(luaDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(luaDir, "security.lua"), []byte("return {}\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := &config.Config{
+			DeploymentsPath: nginxDir,
+			Nginx:           config.NginxConfig{ConfigPath: filepath.Join(nginxDir, "conf.d")},
+		}
+		if err := NewManager(cfg).EnsureBaseNginxConfig(); err != nil {
+			t.Fatalf("EnsureBaseNginxConfig() = %v", err)
+		}
+
+		securityLua, err := os.ReadFile(filepath.Join(luaDir, "security.lua"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(securityLua), "function _M.prepare_error_response()") {
+			t.Errorf("stale security.lua was not refreshed")
 		}
 	})
 
