@@ -27,11 +27,60 @@ type composeFile struct {
 }
 
 type composeService struct {
-	Image    string        `yaml:"image"`
-	Ports    []interface{} `yaml:"ports"`
-	Expose   []interface{} `yaml:"expose"`
-	Networks []string      `yaml:"networks"`
-	Volumes  []string      `yaml:"volumes"`
+	Image    string          `yaml:"image"`
+	Ports    []interface{}   `yaml:"ports"`
+	Expose   []interface{}   `yaml:"expose"`
+	Networks composeNetworks `yaml:"networks"`
+	Volumes  []composeMount  `yaml:"volumes"`
+}
+
+type composeNetworks []string
+
+func (n *composeNetworks) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.SequenceNode:
+		var values []string
+		if err := node.Decode(&values); err != nil {
+			return err
+		}
+		*n = values
+	case yaml.MappingNode:
+		values := make([]string, 0, len(node.Content)/2)
+		for i := 0; i < len(node.Content); i += 2 {
+			values = append(values, node.Content[i].Value)
+		}
+		*n = values
+	}
+	return nil
+}
+
+type composeMount struct {
+	Source string
+	Target string
+}
+
+func (m *composeMount) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		parts := strings.Split(node.Value, ":")
+		if len(parts) >= 2 {
+			m.Source = parts[0]
+			m.Target = parts[1]
+		}
+		return nil
+	}
+	var value struct {
+		Type   string `yaml:"type"`
+		Source string `yaml:"source"`
+		Target string `yaml:"target"`
+	}
+	if err := node.Decode(&value); err != nil {
+		return err
+	}
+	if value.Type == "" || value.Type == "bind" {
+		m.Source = value.Source
+		m.Target = value.Target
+	}
+	return nil
 }
 
 func (d *Discovery) FindDeployments() ([]models.Deployment, error) {
@@ -195,7 +244,7 @@ func (d *Discovery) parseComposeServices(composePath string) ([]models.Service, 
 			Name:     name,
 			Image:    svc.Image,
 			Status:   "unknown",
-			Networks: svc.Networks,
+			Networks: []string(svc.Networks),
 		}
 
 		for _, p := range svc.Ports {
@@ -330,11 +379,7 @@ func copyTree(src, dst string) error {
 // from template metadata. For paths not in fileMounts, a basename-contains-dot
 // heuristic is used as a fallback to avoid creating files as directories.
 func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string, fileMounts []string) error {
-	var compose struct {
-		Services map[string]struct {
-			Volumes []string `yaml:"volumes"`
-		} `yaml:"services"`
-	}
+	var compose composeFile
 
 	if err := yaml.Unmarshal([]byte(composeContent), &compose); err != nil {
 		return nil // Skip if parse fails, not critical
@@ -349,7 +394,7 @@ func (d *Discovery) createBindMountDirs(deploymentPath, composeContent string, f
 
 	for _, service := range compose.Services {
 		for _, volume := range service.Volumes {
-			hostPath := extractBindMountPath(volume)
+			hostPath := volume.Source
 			if hostPath == "" {
 				continue
 			}
@@ -447,10 +492,24 @@ type MountOwnership struct {
 // regular file (e.g. a generated .env) is only chowned, never turned into a
 // directory.
 func (d *Discovery) ApplyMountOwnership(deploymentPath string, mounts []MountOwnership) error {
+	deploymentRoot, err := filepath.Abs(deploymentPath)
+	if err != nil {
+		return err
+	}
 	for _, m := range mounts {
 		base := m.HostPath
 		if !filepath.IsAbs(base) {
 			base = filepath.Join(deploymentPath, base)
+		}
+		base, err = filepath.Abs(base)
+		if err != nil {
+			return err
+		}
+		if !pathWithin(deploymentRoot, base) || base == deploymentRoot {
+			return fmt.Errorf("mount path %q must stay inside the deployment directory", m.HostPath)
+		}
+		if err := rejectSymlinkComponents(deploymentRoot, filepath.Dir(base)); err != nil {
+			return err
 		}
 
 		var uid, gid int
@@ -478,6 +537,17 @@ func (d *Discovery) ApplyMountOwnership(deploymentPath string, mounts []MountOwn
 		dirs := []string{base}
 		for _, sub := range m.Subdirectories {
 			subPath := filepath.Join(base, sub)
+			resolved, resolveErr := filepath.Abs(subPath)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			if !pathWithin(base, resolved) || resolved == base {
+				return fmt.Errorf("mount subdirectory %q must stay inside %q", sub, m.HostPath)
+			}
+			if err := rejectSymlinkComponents(base, resolved); err != nil {
+				return err
+			}
+			subPath = resolved
 			if err := os.MkdirAll(subPath, 0755); err != nil {
 				return fmt.Errorf("create subdirectory %s: %w", subPath, err)
 			}
@@ -502,6 +572,33 @@ func (d *Discovery) ApplyMountOwnership(deploymentPath string, mounts []MountOwn
 					return fmt.Errorf("chmod %s: %w", dir, err)
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func pathWithin(root, candidate string) bool {
+	prefix := filepath.Clean(root) + string(os.PathSeparator)
+	return strings.HasPrefix(filepath.Clean(candidate), prefix)
+}
+
+func rejectSymlinkComponents(root, candidate string) error {
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return err
+	}
+	current := root
+	for _, component := range strings.Split(relative, string(os.PathSeparator)) {
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if os.IsNotExist(statErr) {
+			return nil
+		}
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("mount subdirectory crosses symlink %q", current)
 		}
 	}
 	return nil
@@ -545,17 +642,32 @@ func InspectContainerUser(containerName string) (string, error) {
 
 // ExtractBindMounts parses compose content and returns bind mount host paths.
 func ExtractBindMounts(composeContent string) []string {
+	byService := ExtractBindMountsByService(composeContent)
+
+	var paths []string
+	seen := make(map[string]bool)
+	for _, servicePaths := range byService {
+		for _, hostPath := range servicePaths {
+			if !seen[hostPath] {
+				seen[hostPath] = true
+				paths = append(paths, hostPath)
+			}
+		}
+	}
+	return paths
+}
+
+func ExtractBindMountsByService(composeContent string) map[string][]string {
 	var compose composeFile
 	if err := yaml.Unmarshal([]byte(composeContent), &compose); err != nil {
 		return nil
 	}
 
-	var paths []string
-	seen := make(map[string]bool)
-
-	for _, service := range compose.Services {
+	paths := make(map[string][]string)
+	for serviceName, service := range compose.Services {
+		seen := make(map[string]bool)
 		for _, volume := range service.Volumes {
-			hostPath := extractBindMountPath(volume)
+			hostPath := volume.Source
 			if hostPath == "" {
 				continue
 			}
@@ -564,11 +676,10 @@ func ExtractBindMounts(composeContent string) []string {
 			}
 			if !seen[hostPath] {
 				seen[hostPath] = true
-				paths = append(paths, hostPath)
+				paths[serviceName] = append(paths[serviceName], hostPath)
 			}
 		}
 	}
-
 	return paths
 }
 

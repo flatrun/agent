@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -36,9 +37,14 @@ type RunOption func(*runOpts)
 type runOpts struct {
 	extraEnv      []string
 	lineSink      func(string)
+	context       context.Context
 	forceRecreate bool
 	noCache       bool
 	freshPull     bool
+}
+
+func WithContext(ctx context.Context) RunOption {
+	return func(o *runOpts) { o.context = ctx }
 }
 
 // WithForceRecreate recreates containers even when their config and image are
@@ -174,6 +180,10 @@ func (c *ComposeExecutor) RestartService(deploymentPath, service string, opts ..
 	return c.runCompose(deploymentPath, opts, "restart", service)
 }
 
+func (c *ComposeExecutor) RunService(deploymentPath, service string, opts ...RunOption) (string, error) {
+	return c.runCompose(deploymentPath, opts, "run", "--rm", "--no-deps", service)
+}
+
 func (c *ComposeExecutor) RebuildService(deploymentPath, service string, opts ...RunOption) (string, error) {
 	ro := resolveRunOpts(opts)
 	if ro.noCache {
@@ -213,10 +223,12 @@ func (c *ComposeExecutor) PS(deploymentPath string) (string, error) {
 }
 
 type ImageInfo struct {
-	Service  string `json:"service"`
-	Image    string `json:"image"`
-	IsLatest bool   `json:"is_latest"`
-	IsBuild  bool   `json:"is_build"`
+	Service     string `json:"service"`
+	Image       string `json:"image"`
+	SourceImage string `json:"source_image,omitempty"`
+	Resolved    bool   `json:"resolved"`
+	IsLatest    bool   `json:"is_latest"`
+	IsBuild     bool   `json:"is_build"`
 }
 
 func (c *ComposeExecutor) Pull(deploymentPath string, onlyLatest bool, opts ...RunOption) (string, error) {
@@ -253,16 +265,34 @@ func (c *ComposeExecutor) GetImageInfo(deploymentPath string) ([]ImageInfo, erro
 	if err := yaml.Unmarshal(data, &compose); err != nil {
 		return nil, err
 	}
+	resolved := make(map[string]string)
+	if output, err := c.runCompose(deploymentPath, nil, "config", "--format", "json"); err == nil {
+		var rendered struct {
+			Services map[string]struct {
+				Image string `json:"image"`
+			} `json:"services"`
+		}
+		if json.Unmarshal([]byte(output), &rendered) == nil {
+			for service, config := range rendered.Services {
+				resolved[service] = config.Image
+			}
+		}
+	}
 
 	var images []ImageInfo
 	for name, svc := range compose.Services {
 		info := ImageInfo{
-			Service: name,
-			Image:   svc.Image,
-			IsBuild: svc.Build != nil,
+			Service:     name,
+			Image:       svc.Image,
+			SourceImage: svc.Image,
+			IsBuild:     svc.Build != nil,
 		}
-		if svc.Image != "" {
-			info.IsLatest = isLatestTag(svc.Image)
+		if image := resolved[name]; image != "" {
+			info.Image = image
+			info.Resolved = true
+		}
+		if info.Image != "" {
+			info.IsLatest = isLatestTag(info.Image)
 		}
 		images = append(images, info)
 	}
@@ -422,14 +452,17 @@ func (c *ComposeExecutor) composeCommand(ctx context.Context, deploymentPath str
 }
 
 func (c *ComposeExecutor) runCompose(deploymentPath string, opts []RunOption, args ...string) (string, error) {
-	cmd, err := c.composeCommand(context.Background(), deploymentPath, args...)
-	if err != nil {
-		return "", err
-	}
-
 	var ro runOpts
 	for _, opt := range opts {
 		opt(&ro)
+	}
+	ctx := ro.context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd, err := c.composeCommand(ctx, deploymentPath, args...)
+	if err != nil {
+		return "", err
 	}
 
 	// Expose the agent's own uid/gid to compose substitution so a template can

@@ -177,12 +177,7 @@ func (m *Manager) SeedMounts(name string, hostPaths []string) error {
 		return err
 	}
 
-	var compose struct {
-		Services map[string]struct {
-			Image   string   `yaml:"image"`
-			Volumes []string `yaml:"volumes"`
-		} `yaml:"services"`
-	}
+	var compose composeFile
 	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
 		return fmt.Errorf("failed to read the compose file: %w", err)
 	}
@@ -201,7 +196,7 @@ func (m *Manager) SeedMounts(name string, hostPaths []string) error {
 			continue
 		}
 		for _, volume := range service.Volumes {
-			hostPath, containerPath := splitBindMount(volume)
+			hostPath, containerPath := volume.Source, volume.Target
 			if hostPath == "" || containerPath == "" || !wanted[normalizeMountHostPath(hostPath)] {
 				continue
 			}
@@ -313,6 +308,9 @@ func extractSeedTar(r io.Reader, destPath string, srcIsDir bool) error {
 
 		rel := stripRoot(header.Name)
 		if rel == "" {
+			if err := preserveSeedOwnership(destPath, header.Uid, header.Gid); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -343,7 +341,10 @@ func extractSeedFile(tr *tar.Reader, destPath string) error {
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return err
 		}
-		return writeSeedFile(tr, destPath, header.FileInfo().Mode())
+		if err := writeSeedFile(tr, destPath, header.FileInfo().Mode()); err != nil {
+			return err
+		}
+		return preserveSeedOwnership(destPath, header.Uid, header.Gid)
 	}
 }
 
@@ -352,14 +353,15 @@ func extractSeedFile(tr *tar.Reader, destPath string) error {
 // fifos) are skipped: an image may carry them, but they are not configuration
 // worth reproducing on the host.
 func writeSeedEntry(tr *tar.Reader, header *tar.Header, target string) error {
+	var err error
 	switch header.Typeflag {
 	case tar.TypeDir:
-		return os.MkdirAll(target, header.FileInfo().Mode().Perm())
+		err = os.MkdirAll(target, header.FileInfo().Mode().Perm())
 	case tar.TypeReg:
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
 		}
-		return writeSeedFile(tr, target, header.FileInfo().Mode())
+		err = writeSeedFile(tr, target, header.FileInfo().Mode())
 	case tar.TypeSymlink:
 		// A symlink's target is not followed, so a link pointing outside the
 		// deployment only breaks; it cannot be used to write through.
@@ -367,10 +369,21 @@ func writeSeedEntry(tr *tar.Reader, header *tar.Header, target string) error {
 			return err
 		}
 		_ = os.Remove(target)
-		return os.Symlink(header.Linkname, target)
+		err = os.Symlink(header.Linkname, target)
 	default:
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	return preserveSeedOwnership(target, header.Uid, header.Gid)
+}
+
+func preserveSeedOwnership(path string, uid, gid int) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	return os.Lchown(path, uid, gid)
 }
 
 func writeSeedFile(r io.Reader, path string, mode os.FileMode) error {

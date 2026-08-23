@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -712,6 +713,7 @@ func (s *Server) setupRoutes() {
 			// Deployment environment endpoints
 			protected.GET("/deployments/:name/env", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentEnv)
 			protected.PUT("/deployments/:name/env", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentEnv)
+			protected.PATCH("/deployments/:name/env/variables", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.patchDeploymentEnv)
 
 			// Database endpoints
 			protected.POST("/databases/test", s.authMiddleware.RequirePermission(auth.PermDatabasesRead), s.testDatabaseConnection)
@@ -1083,8 +1085,8 @@ func (s *Server) getDeployment(c *gin.Context) {
 
 type DatabaseConfigRequest struct {
 	Alias             string `json:"alias"`
-	Type              string `json:"type"`
-	Mode              string `json:"mode"`
+	Type              string `json:"type" binding:"required,oneof=mysql mariadb postgres postgresql mongodb redis"`
+	Mode              string `json:"mode" binding:"required,oneof=shared create existing external"`
 	Service           string `json:"service,omitempty"`
 	ExistingContainer string `json:"existing_container,omitempty"`
 	ExternalHost      string `json:"external_host,omitempty"`
@@ -1095,7 +1097,14 @@ type DatabaseConfigRequest struct {
 	EnvPrefix         string `json:"env_prefix,omitempty"`
 }
 
+type MountOwnershipRequest struct {
+	HostPath       string   `json:"host_path" binding:"required"`
+	User           string   `json:"user" binding:"required"`
+	Subdirectories []string `json:"subdirectories,omitempty"`
+}
+
 func (d *DatabaseConfigRequest) Validate() error {
+	d.Type = normalizeDatabaseType(d.Type)
 	validTypes := map[string]bool{
 		"mysql": true, "postgres": true, "mariadb": true,
 		"mongodb": true, "redis": true,
@@ -1137,6 +1146,13 @@ func (d *DatabaseConfigRequest) Validate() error {
 	return nil
 }
 
+func normalizeDatabaseType(databaseType string) string {
+	if databaseType == "postgresql" {
+		return "postgres"
+	}
+	return databaseType
+}
+
 func (s *Server) createDeployment(c *gin.Context) {
 	var req struct {
 		Name                      string                  `json:"name" binding:"required"`
@@ -1166,7 +1182,8 @@ func (s *Server) createDeployment(c *gin.Context) {
 		// SeedMounts names the bind mounts, by host path, to fill from the
 		// image when the host side is empty. A template's own seed mounts are
 		// added to these.
-		SeedMounts []string `json:"seed_mounts,omitempty"`
+		SeedMounts     []string                `json:"seed_mounts,omitempty"`
+		MountOwnership []MountOwnershipRequest `json:"mount_ownership,omitempty"`
 		// Source deploys from fetched code (a git URL today) instead of inline
 		// compose content: the fetched tree becomes the deployment directory and
 		// its compose file is what runs.
@@ -1205,7 +1222,11 @@ func (s *Server) createDeployment(c *gin.Context) {
 		req.ComposeContent = generated
 	}
 
-	if err := s.validateComposeContent(req.ComposeContent, req.Name); err != nil {
+	validationDir := ""
+	if fetched != nil {
+		validationDir = fetched.dir
+	}
+	if err := s.validateNewComposeContent(req.ComposeContent, req.Name, req.EnvVars, validationDir); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Invalid compose content: " + err.Error(),
 		})
@@ -1219,14 +1240,28 @@ func (s *Server) createDeployment(c *gin.Context) {
 
 	// Add proxy network if expose is enabled
 	proxyNetworkName := s.config.Infrastructure.DefaultProxyNetwork
-	if req.Metadata != nil && req.Metadata.Networking.Expose && proxyNetworkName != "" {
+	if req.Metadata != nil && (req.Metadata.Networking.Expose || len(req.Metadata.GetDomains()) > 0) && proxyNetworkName != "" {
 		if err := s.networksManager.EnsureNetwork(proxyNetworkName); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "Failed to ensure proxy network exists: " + err.Error(),
 			})
 			return
 		}
-		req.ComposeContent = s.addProxyNetwork(req.ComposeContent)
+		if len(req.Metadata.GetDomains()) > 0 {
+			for _, domain := range req.Metadata.GetDomains() {
+				if domain.Service == "" {
+					continue
+				}
+				updated, networkErr := docker.AddNetworkToComposeService(req.ComposeContent, proxyNetworkName, domain.Service)
+				if networkErr != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to add proxy network: " + networkErr.Error()})
+					return
+				}
+				req.ComposeContent = updated
+			}
+		} else {
+			req.ComposeContent = s.addProxyNetwork(req.ComposeContent)
+		}
 		if err := s.networksManager.EnsureContainerOnNetwork(proxyNetworkName, s.config.Nginx.ContainerName); err != nil {
 			log.Printf("Warning: failed to ensure nginx on network %s: %v", proxyNetworkName, err)
 		}
@@ -1250,6 +1285,25 @@ func (s *Server) createDeployment(c *gin.Context) {
 	// Add existing database container's network
 	if req.ExistingDatabaseContainer != "" {
 		req.ComposeContent = s.addContainerNetwork(req.ComposeContent, req.ExistingDatabaseContainer)
+	}
+
+	mountOwnership := make([]docker.MountOwnership, 0, len(req.MountOwnership))
+	if len(req.MountOwnership) > 0 {
+		declared := make(map[string]bool)
+		for _, hostPath := range docker.ExtractBindMounts(req.ComposeContent) {
+			declared[filepath.Clean(hostPath)] = true
+		}
+		for _, ownership := range req.MountOwnership {
+			if !declared[filepath.Clean(ownership.HostPath)] {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("mount ownership path %q is not a bind mount in compose", ownership.HostPath)})
+				return
+			}
+			mountOwnership = append(mountOwnership, docker.MountOwnership{
+				HostPath:       ownership.HostPath,
+				User:           ownership.User,
+				Subdirectories: ownership.Subdirectories,
+			})
+		}
 	}
 
 	var createErr error
@@ -1325,7 +1379,6 @@ func (s *Server) createDeployment(c *gin.Context) {
 	if req.TemplateID != "" {
 		s.processTemplateFiles(req.Name, req.TemplateID, allEnvVars)
 		s.processTemplateEnv(req.Name, req.TemplateID, req.ComposeContent, allEnvVars)
-		s.applyTemplateMountOwnership(req.Name, req.TemplateID)
 
 		// An object store joins the shared object-storage network; ensure it
 		// exists so the container can start (it is declared external).
@@ -1347,6 +1400,16 @@ func (s *Server) createDeployment(c *gin.Context) {
 	if seedMounts := append(req.SeedMounts, s.templateSeedMounts(req.TemplateID)...); len(seedMounts) > 0 {
 		if err := s.manager.SeedMounts(req.Name, seedMounts); err != nil {
 			log.Printf("Warning: failed to seed mounts for %s: %v", req.Name, err)
+		}
+	}
+
+	if req.TemplateID != "" {
+		s.applyTemplateMountOwnership(req.Name, req.TemplateID)
+	}
+	if len(mountOwnership) > 0 {
+		if err := s.manager.ApplyMountOwnership(req.Name, mountOwnership); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Deployment created but failed to set mount ownership: " + err.Error()})
+			return
 		}
 	}
 
@@ -1541,7 +1604,7 @@ func (s *Server) createDatabaseForDeployment(deploymentName string) ([]EnvVar, e
 	}
 
 	var databaseURL string
-	switch dbConfig.Type {
+	switch normalizeDatabaseType(dbConfig.Type) {
 	case "mysql", "mariadb":
 		databaseURL = fmt.Sprintf("mysql://%s:%s@%s:%d/%s", dbUser, dbPassword, dbHost, dbConfig.Port, dbName)
 	case "postgres":
@@ -1555,12 +1618,12 @@ func (s *Server) createDatabaseForDeployment(deploymentName string) ([]EnvVar, e
 func (s *Server) createDatabasesForDeployment(deploymentName string, databases []DatabaseConfigRequest) ([]EnvVar, []models.DatabaseConfig, error) {
 	var allEnvVars []EnvVar
 	var configs []models.DatabaseConfig
-	isFirst := true
+	includeLegacy := len(databases) == 1
 
 	for i, dbReq := range databases {
 		alias := dbReq.Alias
 		if alias == "" {
-			if isFirst {
+			if i == 0 {
 				alias = "primary"
 			} else {
 				alias = fmt.Sprintf("db%d", i+1)
@@ -1626,7 +1689,7 @@ func (s *Server) createDatabasesForDeployment(deploymentName string, databases [
 			config.Username = dbUser
 			config.IsShared = true
 
-			envVars = s.generateDatabaseEnvVars(envPrefix, dbHost, dbConfig.Port, dbName, dbUser, dbPassword, dbConfig.Type, isFirst)
+			envVars = s.generateDatabaseEnvVars(envPrefix, dbHost, dbConfig.Port, dbName, dbUser, dbPassword, normalizeDatabaseType(dbConfig.Type), includeLegacy)
 
 		case "existing":
 			config.Container = dbReq.ExistingContainer
@@ -1651,7 +1714,7 @@ func (s *Server) createDatabasesForDeployment(deploymentName string, databases [
 			}
 			config.Port = existDbPort
 
-			envVars = s.generateDatabaseEnvVars(envPrefix, dbReq.ExistingContainer, existDbPort, dbReq.DatabaseName, dbReq.Username, dbReq.Password, dbReq.Type, isFirst)
+			envVars = s.generateDatabaseEnvVars(envPrefix, dbReq.ExistingContainer, existDbPort, dbReq.DatabaseName, dbReq.Username, dbReq.Password, dbReq.Type, includeLegacy)
 
 		case "external":
 			config.Host = dbReq.ExternalHost
@@ -1663,19 +1726,19 @@ func (s *Server) createDatabasesForDeployment(deploymentName string, databases [
 				config.Username = dbReq.Username
 			}
 			if dbReq.Password != "" {
-				envVars = s.generateDatabaseEnvVars(envPrefix, dbReq.ExternalHost, dbReq.ExternalPort, dbReq.DatabaseName, dbReq.Username, dbReq.Password, dbReq.Type, isFirst)
+				envVars = s.generateDatabaseEnvVars(envPrefix, dbReq.ExternalHost, dbReq.ExternalPort, dbReq.DatabaseName, dbReq.Username, dbReq.Password, dbReq.Type, includeLegacy)
 			}
 		}
 
 		allEnvVars = append(allEnvVars, envVars...)
 		configs = append(configs, config)
-		isFirst = false
 	}
 
 	return allEnvVars, configs, nil
 }
 
 func (s *Server) generateDatabaseEnvVars(prefix string, host string, port int, dbName, username, password, dbType string, includeLegacy bool) []EnvVar {
+	dbType = normalizeDatabaseType(dbType)
 	var envVars []EnvVar
 
 	envVars = append(envVars,
@@ -1723,7 +1786,6 @@ func (s *Server) generateDatabaseEnvVars(prefix string, host string, port int, d
 
 func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, deploymentName)
-	envFilePath := filepath.Join(deploymentPath, ".env.flatrun")
 
 	var content strings.Builder
 	for _, env := range envVars {
@@ -1732,7 +1794,12 @@ func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 		}
 	}
 
-	return os.WriteFile(envFilePath, []byte(content.String()), 0600)
+	for _, name := range []string{".env", ".env.flatrun"} {
+		if err := os.WriteFile(filepath.Join(deploymentPath, name), []byte(content.String()), 0600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) deleteDatabaseForDeployment(deploymentName string) error {
@@ -1796,20 +1863,39 @@ func (s *Server) deleteDatabaseByAlias(deploymentName, alias string) error {
 func (s *Server) getDeploymentEnv(c *gin.Context) {
 	name := c.Param("name")
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, name)
-	envFilePath := filepath.Join(deploymentPath, ".env.flatrun")
-
-	content, err := os.ReadFile(envFilePath)
+	paths, err := filepath.Glob(filepath.Join(deploymentPath, ".env*"))
 	if err != nil {
-		if os.IsNotExist(err) {
-			c.JSON(http.StatusOK, gin.H{"env_vars": []EnvVar{}})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	envVars := parseEnvContent(string(content))
-	c.JSON(http.StatusOK, gin.H{"env_vars": envVars})
+	type environmentFile struct {
+		Path      string   `json:"path"`
+		Principal bool     `json:"principal"`
+		EnvVars   []EnvVar `json:"env_vars"`
+	}
+	principal := ".env"
+	if _, err := os.Stat(filepath.Join(deploymentPath, principal)); os.IsNotExist(err) {
+		principal = ".env.flatrun"
+	}
+	files := make([]environmentFile, 0, len(paths))
+	var principalVars []EnvVar
+	for _, envPath := range paths {
+		info, statErr := os.Stat(envPath)
+		if statErr != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		content, readErr := os.ReadFile(envPath)
+		if readErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": readErr.Error()})
+			return
+		}
+		file := environmentFile{Path: filepath.Base(envPath), Principal: filepath.Base(envPath) == principal, EnvVars: parseEnvContent(string(content))}
+		if file.Principal {
+			principalVars = file.EnvVars
+		}
+		files = append(files, file)
+	}
+	c.JSON(http.StatusOK, gin.H{"env_vars": principalVars, "principal_file": principal, "env_files": files})
 }
 
 func (s *Server) updateDeploymentEnv(c *gin.Context) {
@@ -1840,6 +1926,85 @@ func (s *Server) updateDeploymentEnv(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Environment variables updated"})
+}
+
+func (s *Server) patchDeploymentEnv(c *gin.Context) {
+	name := c.Param("name")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionUpdateEnv) {
+		return
+	}
+
+	var req struct {
+		Set    []EnvVar `json:"set"`
+		Remove []string `json:"remove"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	current, err := s.readPrincipalEnv(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	remove := make(map[string]bool, len(req.Remove))
+	for _, key := range req.Remove {
+		remove[key] = true
+	}
+	set := make(map[string]string, len(req.Set))
+	for _, env := range req.Set {
+		if env.Key == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Environment variable names cannot be empty"})
+			return
+		}
+		set[env.Key] = env.Value
+	}
+	merged := make([]EnvVar, 0, len(current)+len(set))
+	seen := make(map[string]bool, len(current)+len(set))
+	for _, env := range current {
+		if remove[env.Key] {
+			continue
+		}
+		if value, ok := set[env.Key]; ok {
+			env.Value = value
+		}
+		merged = append(merged, env)
+		seen[env.Key] = true
+	}
+	for _, env := range req.Set {
+		if !seen[env.Key] {
+			merged = append(merged, EnvVar{Key: env.Key, Value: set[env.Key]})
+			seen[env.Key] = true
+		}
+	}
+
+	if planRequested(c) {
+		s.planEnvUpdate(c, name, merged)
+		return
+	}
+	if !s.requirePlannedAction(c, name) {
+		return
+	}
+	if err := s.writeEnvFile(name, merged); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Environment variables updated", "env_vars": merged})
+}
+
+func (s *Server) readPrincipalEnv(name string) ([]EnvVar, error) {
+	deploymentPath := filepath.Join(s.config.DeploymentsPath, name)
+	for _, filename := range []string{".env", ".env.flatrun"} {
+		content, err := os.ReadFile(filepath.Join(deploymentPath, filename))
+		if err == nil {
+			return parseEnvContent(string(content)), nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return []EnvVar{}, nil
 }
 
 func parseEnvContent(content string) []EnvVar {
@@ -2287,8 +2452,10 @@ func (o actionOptions) runOptions() []docker.RunOption {
 func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionOptions, emit func(line string)) error {
 	authCfg, opts := s.deploymentAuthOptions(name)
 	defer authCfg.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), s.manager.CleanupTimeout())
+	defer cancel()
 
-	opts = append(opts, docker.WithLineSink(emit))
+	opts = append(opts, docker.WithLineSink(emit), docker.WithContext(ctx))
 	opts = append(opts, actOpts.runOptions()...)
 
 	var err error
@@ -2308,7 +2475,7 @@ func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionO
 }
 
 var streamableServiceActions = map[string]bool{
-	"start": true, "stop": true, "restart": true, "rebuild": true, "pull": true,
+	"start": true, "stop": true, "restart": true, "rebuild": true, "pull": true, "run": true,
 }
 
 // enqueueServiceJob runs a single service's action as a streamed background job
@@ -2316,7 +2483,7 @@ var streamableServiceActions = map[string]bool{
 // taken from the body so one route covers every action.
 func (s *Server) enqueueServiceJob(c *gin.Context) {
 	var req struct {
-		Action        string `json:"action"`
+		Action        string `json:"action" binding:"required,oneof=start stop restart rebuild pull run"`
 		ForceRecreate bool   `json:"force_recreate"`
 		NoCache       bool   `json:"no_cache"`
 		FreshPull     bool   `json:"fresh_pull"`
@@ -2367,8 +2534,10 @@ func (s *Server) runServiceActionJob(job *ActionJob) {
 func (s *Server) defaultRunServiceAction(action, name, service string, actOpts actionOptions, emit func(line string)) error {
 	authCfg, opts := s.deploymentAuthOptions(name)
 	defer authCfg.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), s.manager.CleanupTimeout())
+	defer cancel()
 
-	opts = append(opts, docker.WithLineSink(emit))
+	opts = append(opts, docker.WithLineSink(emit), docker.WithContext(ctx))
 	opts = append(opts, actOpts.runOptions()...)
 
 	var err error
@@ -2379,6 +2548,8 @@ func (s *Server) defaultRunServiceAction(action, name, service string, actOpts a
 		_, err = s.manager.StopService(name, service, opts...)
 	case "restart":
 		_, err = s.manager.RestartService(name, service, opts...)
+	case "run":
+		_, err = s.manager.RunService(name, service, opts...)
 	case "rebuild":
 		_, err = s.manager.RebuildService(name, service, opts...)
 	case "pull":
@@ -3201,24 +3372,24 @@ func (s *Server) updateSettings(c *gin.Context) {
 	var req struct {
 		Domain *struct {
 			DefaultDomain  string `json:"default_domain"`
-			AutoSubdomain  bool   `json:"auto_subdomain"`
-			AutoSSL        bool   `json:"auto_ssl"`
+			AutoSubdomain  *bool  `json:"auto_subdomain"`
+			AutoSSL        *bool  `json:"auto_ssl"`
 			SubdomainStyle string `json:"subdomain_style"`
 		} `json:"domain,omitempty"`
 		Nginx *struct {
-			Enabled              bool   `json:"enabled"`
+			Enabled              *bool  `json:"enabled"`
 			Image                string `json:"image"`
 			ContainerName        string `json:"container_name"`
 			ConfigPath           string `json:"config_path"`
 			ReloadCommand        string `json:"reload_command"`
-			External             bool   `json:"external"`
+			External             *bool  `json:"external"`
 			RejectUnknownDomains *bool  `json:"reject_unknown_domains"`
 		} `json:"nginx,omitempty"`
 		Certbot *struct {
-			Enabled     bool   `json:"enabled"`
+			Enabled     *bool  `json:"enabled"`
 			Image       string `json:"image"`
 			Email       string `json:"email"`
-			Staging     bool   `json:"staging"`
+			Staging     *bool  `json:"staging"`
 			CertsPath   string `json:"certs_path"`
 			WebrootPath string `json:"webroot_path"`
 			DNSProvider string `json:"dns_provider"`
@@ -3227,7 +3398,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 			DefaultProxyNetwork    string `json:"default_proxy_network"`
 			DefaultDatabaseNetwork string `json:"default_database_network"`
 			Database               *struct {
-				Enabled      bool   `json:"enabled"`
+				Enabled      *bool  `json:"enabled"`
 				Type         string `json:"type"`
 				Container    string `json:"container"`
 				Host         string `json:"host"`
@@ -3236,7 +3407,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 				RootPassword string `json:"root_password"`
 			} `json:"database,omitempty"`
 			Redis *struct {
-				Enabled   bool   `json:"enabled"`
+				Enabled   *bool  `json:"enabled"`
 				Container string `json:"container"`
 				Host      string `json:"host"`
 				Port      int    `json:"port"`
@@ -3244,12 +3415,12 @@ func (s *Server) updateSettings(c *gin.Context) {
 			} `json:"redis,omitempty"`
 		} `json:"infrastructure,omitempty"`
 		Security *struct {
-			Enabled            bool   `json:"enabled"`
-			RealtimeCapture    bool   `json:"realtime_capture"`
+			Enabled            *bool  `json:"enabled"`
+			RealtimeCapture    *bool  `json:"realtime_capture"`
 			ScanInterval       string `json:"scan_interval"`
 			RetentionDays      int    `json:"retention_days"`
 			RateThreshold      int    `json:"rate_threshold"`
-			AutoBlockEnabled   bool   `json:"auto_block_enabled"`
+			AutoBlockEnabled   *bool  `json:"auto_block_enabled"`
 			AutoBlockThreshold int    `json:"auto_block_threshold"`
 			AutoBlockDuration  string `json:"auto_block_duration"`
 		} `json:"security,omitempty"`
@@ -3264,17 +3435,27 @@ func (s *Server) updateSettings(c *gin.Context) {
 	}
 
 	if req.Domain != nil {
-		s.config.Domain.DefaultDomain = req.Domain.DefaultDomain
-		s.config.Domain.AutoSubdomain = req.Domain.AutoSubdomain
-		s.config.Domain.AutoSSL = req.Domain.AutoSSL
+		if req.Domain.DefaultDomain != "" {
+			s.config.Domain.DefaultDomain = req.Domain.DefaultDomain
+		}
+		if req.Domain.AutoSubdomain != nil {
+			s.config.Domain.AutoSubdomain = *req.Domain.AutoSubdomain
+		}
+		if req.Domain.AutoSSL != nil {
+			s.config.Domain.AutoSSL = *req.Domain.AutoSSL
+		}
 		if req.Domain.SubdomainStyle != "" {
 			s.config.Domain.SubdomainStyle = req.Domain.SubdomainStyle
 		}
 	}
 
 	if req.Nginx != nil {
-		s.config.Nginx.Enabled = req.Nginx.Enabled
-		s.config.Nginx.External = req.Nginx.External
+		if req.Nginx.Enabled != nil {
+			s.config.Nginx.Enabled = *req.Nginx.Enabled
+		}
+		if req.Nginx.External != nil {
+			s.config.Nginx.External = *req.Nginx.External
+		}
 		if req.Nginx.Image != "" {
 			s.config.Nginx.Image = req.Nginx.Image
 		}
@@ -3293,8 +3474,12 @@ func (s *Server) updateSettings(c *gin.Context) {
 	}
 
 	if req.Certbot != nil {
-		s.config.Certbot.Enabled = req.Certbot.Enabled
-		s.config.Certbot.Staging = req.Certbot.Staging
+		if req.Certbot.Enabled != nil {
+			s.config.Certbot.Enabled = *req.Certbot.Enabled
+		}
+		if req.Certbot.Staging != nil {
+			s.config.Certbot.Staging = *req.Certbot.Staging
+		}
 		if req.Certbot.Image != "" {
 			s.config.Certbot.Image = req.Certbot.Image
 		}
@@ -3320,10 +3505,18 @@ func (s *Server) updateSettings(c *gin.Context) {
 			s.config.Infrastructure.DefaultDatabaseNetwork = req.Infrastructure.DefaultDatabaseNetwork
 		}
 		if req.Infrastructure.Database != nil {
-			s.config.Infrastructure.Database.Enabled = req.Infrastructure.Database.Enabled
-			s.config.Infrastructure.Database.Type = req.Infrastructure.Database.Type
-			s.config.Infrastructure.Database.Container = req.Infrastructure.Database.Container
-			s.config.Infrastructure.Database.Host = req.Infrastructure.Database.Host
+			if req.Infrastructure.Database.Enabled != nil {
+				s.config.Infrastructure.Database.Enabled = *req.Infrastructure.Database.Enabled
+			}
+			if req.Infrastructure.Database.Type != "" {
+				s.config.Infrastructure.Database.Type = normalizeDatabaseType(req.Infrastructure.Database.Type)
+			}
+			if req.Infrastructure.Database.Container != "" {
+				s.config.Infrastructure.Database.Container = req.Infrastructure.Database.Container
+			}
+			if req.Infrastructure.Database.Host != "" {
+				s.config.Infrastructure.Database.Host = req.Infrastructure.Database.Host
+			}
 			if req.Infrastructure.Database.Port > 0 {
 				s.config.Infrastructure.Database.Port = req.Infrastructure.Database.Port
 			}
@@ -3335,9 +3528,15 @@ func (s *Server) updateSettings(c *gin.Context) {
 			}
 		}
 		if req.Infrastructure.Redis != nil {
-			s.config.Infrastructure.Redis.Enabled = req.Infrastructure.Redis.Enabled
-			s.config.Infrastructure.Redis.Container = req.Infrastructure.Redis.Container
-			s.config.Infrastructure.Redis.Host = req.Infrastructure.Redis.Host
+			if req.Infrastructure.Redis.Enabled != nil {
+				s.config.Infrastructure.Redis.Enabled = *req.Infrastructure.Redis.Enabled
+			}
+			if req.Infrastructure.Redis.Container != "" {
+				s.config.Infrastructure.Redis.Container = req.Infrastructure.Redis.Container
+			}
+			if req.Infrastructure.Redis.Host != "" {
+				s.config.Infrastructure.Redis.Host = req.Infrastructure.Redis.Host
+			}
 			if req.Infrastructure.Redis.Port > 0 {
 				s.config.Infrastructure.Redis.Port = req.Infrastructure.Redis.Port
 			}
@@ -3350,9 +3549,15 @@ func (s *Server) updateSettings(c *gin.Context) {
 	if req.Security != nil {
 		prevEnabled := s.config.Security.Enabled
 		prevRealtimeCapture := s.config.Security.RealtimeCapture
-		s.config.Security.Enabled = req.Security.Enabled
-		s.config.Security.RealtimeCapture = req.Security.RealtimeCapture
-		s.config.Security.AutoBlockEnabled = req.Security.AutoBlockEnabled
+		if req.Security.Enabled != nil {
+			s.config.Security.Enabled = *req.Security.Enabled
+		}
+		if req.Security.RealtimeCapture != nil {
+			s.config.Security.RealtimeCapture = *req.Security.RealtimeCapture
+		}
+		if req.Security.AutoBlockEnabled != nil {
+			s.config.Security.AutoBlockEnabled = *req.Security.AutoBlockEnabled
+		}
 		if req.Security.RetentionDays > 0 {
 			s.config.Security.RetentionDays = req.Security.RetentionDays
 		}
@@ -3387,8 +3592,12 @@ func (s *Server) updateSettings(c *gin.Context) {
 		s.config.SystemTerminal.ProtectedMode = *req.SystemTerminal.ProtectedMode
 	}
 
-	s.infraManager.UpdateConfig(s.config)
-	s.proxyOrchestrator.UpdateConfig(s.config)
+	if s.infraManager != nil {
+		s.infraManager.UpdateConfig(s.config)
+	}
+	if s.proxyOrchestrator != nil {
+		s.proxyOrchestrator.UpdateConfig(s.config)
+	}
 
 	if s.configPath != "" {
 		if err := config.Save(s.config, s.configPath); err != nil {
@@ -4307,7 +4516,7 @@ func (s *Server) createDatabaseService(db *DatabaseConfig) map[string]interface{
 		rootPassword = db.Password
 	}
 
-	switch db.Type {
+	switch normalizeDatabaseType(db.Type) {
 	case "mysql":
 		image = "mysql:8"
 		volumePath = "/var/lib/mysql"
@@ -4687,6 +4896,35 @@ func (s *Server) inferRegistryHostFromCompose(content string) string {
 }
 
 func (s *Server) validateComposeContent(content, name string) error {
+	return s.validateComposeContentIn(content, name, s.composeValidationDir(name))
+}
+
+func (s *Server) validateNewComposeContent(content, name string, envVars []EnvVar, sourceDir string) error {
+	dir := sourceDir
+	if dir == "" {
+		var err error
+		dir, err = os.MkdirTemp("", "flatrun-compose-validation-")
+		if err != nil {
+			return fmt.Errorf("create compose validation directory: %w", err)
+		}
+		defer os.RemoveAll(dir)
+	}
+
+	if len(envVars) > 0 {
+		var envContent strings.Builder
+		for _, env := range envVars {
+			if env.Key != "" {
+				envContent.WriteString(fmt.Sprintf("%s=%s\n", env.Key, env.Value))
+			}
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent.String()), 0600); err != nil {
+			return fmt.Errorf("write compose validation environment: %w", err)
+		}
+	}
+	return s.validateComposeContentIn(content, name, dir)
+}
+
+func (s *Server) validateComposeContentIn(content, name, workingDir string) error {
 	var compose composeFile
 	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
 		return fmt.Errorf("invalid YAML syntax: %w", err)
@@ -4724,7 +4962,7 @@ func (s *Server) validateComposeContent(content, name string) error {
 		}
 	}
 
-	if err := validateComposeWithComposeGo(content, s.composeValidationDir(name)); err != nil {
+	if err := validateComposeWithComposeGo(content, workingDir); err != nil {
 		return err
 	}
 
@@ -4756,6 +4994,7 @@ func validateComposeWithComposeGo(content, workingDir string) error {
 		Environment: map[string]string{},
 	}
 	_, err := loader.LoadWithContext(context.Background(), configDetails, func(o *loader.Options) {
+		o.SetProjectName("flatrun-validation", true)
 		// Resolve relative paths (notably a relative env_file) against WorkingDir so an
 		// existing deployment's ./.env is found in the deployment directory rather than
 		// being read relative to the agent's own working directory.
@@ -5646,6 +5885,10 @@ func (s *Server) setupProxy(c *gin.Context) {
 	if !s.requirePlannedAction(c, name) {
 		return
 	}
+	if err := s.ensureAllDomainProxyNetworks(deployment); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Failed to connect service to proxy network: " + err.Error()})
+		return
+	}
 
 	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
 	if err != nil {
@@ -5915,6 +6158,62 @@ func (s *Server) resolveService(name string, serviceName string) (string, error)
 	return s.manager.ResolveService(name, serviceName)
 }
 
+func (s *Server) ensureServiceProxyNetwork(deployment *models.Deployment, service string) error {
+	if s.config == nil {
+		return nil
+	}
+	network := s.config.Infrastructure.DefaultProxyNetwork
+	if network == "" {
+		return fmt.Errorf("default proxy network is not configured")
+	}
+	content, _, err := s.manager.GetComposeFile(deployment.Name)
+	if err != nil {
+		return err
+	}
+	updated, err := docker.AddNetworkToComposeService(content, network, service)
+	if err != nil {
+		return err
+	}
+	if s.networksManager != nil {
+		if err := s.networksManager.EnsureNetwork(network); err != nil {
+			return err
+		}
+	}
+	if updated != content {
+		if err := s.manager.UpdateDeployment(deployment.Name, updated); err != nil {
+			return err
+		}
+	}
+	for _, candidate := range deployment.Services {
+		if candidate.Name == service && candidate.ContainerID != "" {
+			if s.networksManager != nil {
+				if err := s.networksManager.EnsureContainerOnNetwork(network, candidate.ContainerID); err != nil {
+					return err
+				}
+			}
+			break
+		}
+	}
+	return nil
+}
+
+func (s *Server) ensureAllDomainProxyNetworks(deployment *models.Deployment) error {
+	if deployment.Metadata == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	for _, domain := range deployment.Metadata.GetDomains() {
+		if domain.Service == "" || seen[domain.Service] {
+			continue
+		}
+		seen[domain.Service] = true
+		if err := s.ensureServiceProxyNetwork(deployment, domain.Service); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) addDomain(c *gin.Context) {
 	name := c.Param("name")
 	deployment, err := s.manager.GetDeployment(name)
@@ -5939,13 +6238,21 @@ func (s *Server) addDomain(c *gin.Context) {
 	if !s.requirePlannedAction(c, name) {
 		return
 	}
+	originalMetadata, _ := cloneMetadata(deployment.Metadata)
+	originalCompose, _, _ := s.manager.GetComposeFile(name)
 
 	if err := s.mutateDomainAdd(deployment, &domain); err != nil {
 		respondAPIError(c, err)
 		return
 	}
+	if err := s.ensureServiceProxyNetwork(deployment, domain.Service); err != nil {
+		_ = s.manager.UpdateDeployment(name, originalCompose)
+		c.JSON(http.StatusConflict, gin.H{"error": "Failed to connect service to proxy network: " + err.Error()})
+		return
+	}
 
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		_ = s.manager.UpdateDeployment(name, originalCompose)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save domain: " + err.Error()})
 		return
 	}
@@ -5955,6 +6262,8 @@ func (s *Server) addDomain(c *gin.Context) {
 		var err error
 		result, err = s.proxyOrchestrator.SetupDeployment(deployment)
 		if err != nil {
+			_ = s.manager.SaveMetadata(name, originalMetadata)
+			_ = s.manager.UpdateDeployment(name, originalCompose)
 			c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
 			return
 		}
@@ -5993,19 +6302,29 @@ func (s *Server) updateDomain(c *gin.Context) {
 	if !s.requirePlannedAction(c, name) {
 		return
 	}
+	originalMetadata, _ := cloneMetadata(deployment.Metadata)
+	originalCompose, _, _ := s.manager.GetComposeFile(name)
 
 	if err := s.mutateDomainUpdate(deployment, domainID, &updatedDomain); err != nil {
 		respondAPIError(c, err)
 		return
 	}
+	if err := s.ensureServiceProxyNetwork(deployment, updatedDomain.Service); err != nil {
+		_ = s.manager.UpdateDeployment(name, originalCompose)
+		c.JSON(http.StatusConflict, gin.H{"error": "Failed to connect service to proxy network: " + err.Error()})
+		return
+	}
 
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		_ = s.manager.UpdateDeployment(name, originalCompose)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save domain: " + err.Error()})
 		return
 	}
 
 	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
 	if err != nil {
+		_ = s.manager.SaveMetadata(name, originalMetadata)
+		_ = s.manager.UpdateDeployment(name, originalCompose)
 		c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
 		return
 	}
@@ -6829,25 +7148,45 @@ func (s *Server) chmodDeploymentFile(c *gin.Context) {
 	path := c.Param("path")
 
 	var req struct {
-		Mode int `json:"mode" binding:"required"`
+		Mode      *int `json:"mode,omitempty"`
+		UID       *int `json:"uid,omitempty"`
+		GID       *int `json:"gid,omitempty"`
+		Recursive bool `json:"recursive,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
-	if req.Mode < 0 || req.Mode > 0o777 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be between 0 and 0777"})
+	if req.Mode == nil && (req.UID == nil || req.GID == nil) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode or both uid and gid are required"})
 		return
 	}
-
-	if err := s.filesManager.Chmod(name, path, os.FileMode(req.Mode)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if req.Mode != nil {
+		if *req.Mode < 0 || *req.Mode > 0o777 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be between 0 and 0777"})
+			return
+		}
+		if err := s.filesManager.Chmod(name, path, os.FileMode(*req.Mode)); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if req.UID != nil && req.GID != nil {
+		if err := s.filesManager.Chown(name, path, *req.UID, *req.GID, req.Recursive); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	info, _ := s.filesManager.GetFileInfo(name, path)
+	message := "Permissions updated"
+	if req.Mode == nil {
+		message = "Ownership updated"
+	} else if req.UID != nil {
+		message = "Permissions and ownership updated"
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Permissions updated",
+		"message": message,
 		"file":    info,
 	})
 }
@@ -6956,12 +7295,13 @@ func (s *Server) testDatabaseConnection(c *gin.Context) {
 
 func (s *Server) listDatabasesInServer(c *gin.Context) {
 	var cfg database.ConnectionConfig
-	if err := c.ShouldBindJSON(&cfg); err != nil {
+	if err := c.ShouldBindJSON(&cfg); err != nil && err != io.EOF {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
 		return
 	}
+	s.applyRegisteredDatabaseDefaults(&cfg)
 
 	databases, err := s.databaseManager.ListDatabases(&cfg)
 	if err != nil {
@@ -6974,6 +7314,28 @@ func (s *Server) listDatabasesInServer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"databases": databases,
 	})
+}
+
+func (s *Server) applyRegisteredDatabaseDefaults(connection *database.ConnectionConfig) {
+	registered := s.config.Infrastructure.Database
+	if connection.Type == "" {
+		connection.Type = registered.Type
+	}
+	if connection.Host == "" {
+		connection.Host = registered.Host
+	}
+	if connection.Port == 0 {
+		connection.Port = registered.Port
+	}
+	if connection.Username == "" {
+		connection.Username = registered.RootUser
+	}
+	if connection.Password == "" {
+		connection.Password = registered.RootPassword
+	}
+	if connection.Container == "" {
+		connection.Container = registered.Container
+	}
 }
 
 func (s *Server) listDatabaseTables(c *gin.Context) {

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.4.0-beta.7] - 2026-08-23
+
+Seventh beta of the Albacore release, focused on reliable first deployments through the CLI.
+
+### Added
+- Bind mount ownership declarations and file ownership changes
+- One-shot service jobs whose status and output follow the container process
+- Partial environment variable updates with plan support
+- OpenAPI metadata for accepted values and plan capable operations
+
+### Changed
+- Deployment environments use `.env` as the principal file while retaining `.env.flatrun` compatibility
+- Environment discovery reports every `.env` file and identifies the principal file
+- Deployment images report the resolved image alongside its compose source expression
+- Registered database connections provide defaults for database browsing
+- PostgreSQL and postgres are accepted as database type names
+
+### Fixed
+- Seeded bind mounts retain image ownership, and redeploys no longer apply one service owner to another service's mounts
+- PostgreSQL users can create tables in databases provisioned for them
+- Routed services join the proxy network before a domain is reported as configured
+- Failed domain changes restore deployment metadata and compose configuration
+- Deployment and service jobs time out instead of blocking later actions indefinitely
+- Nested settings updates preserve omitted sibling values
+- Multi-database deployments do not receive misleading legacy database variables
+- Compose validation can read environment values supplied in the same create request
+- Environment based image updates keep the compose expression and update its variable
+
 ## [0.4.0-beta.6] - 2026-08-23
 
 Sixth beta of the Albacore release, making connected servers manageable as one Fleet.

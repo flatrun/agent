@@ -187,6 +187,10 @@ sudo journalctl -u flatrun-agent -f
 
 Full documentation, guides, and the API reference live at [flatrun.dev/docs](https://flatrun.dev/docs).
 
+The running agent publishes its exact OpenAPI description at `/api/openapi.json`. It includes
+request fields, accepted values, permissions, response shapes, and plan support for the installed
+version.
+
 ## Security
 
 - Use strong, unique API keys.

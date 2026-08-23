@@ -397,6 +397,32 @@ services:
 	}
 }
 
+func TestAddNetworkToComposeServiceOnlyChangesRoutedService(t *testing.T) {
+	input := `services:
+  web:
+    image: nginx:alpine
+  worker:
+    image: busybox:latest
+`
+	result, err := AddNetworkToComposeService(input, "proxy", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseComposeYAML(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := parsed["services"].(map[string]interface{})
+	web := services["web"].(map[string]interface{})
+	worker := services["worker"].(map[string]interface{})
+	if web["networks"] == nil {
+		t.Fatalf("routed service did not join proxy: %s", result)
+	}
+	if worker["networks"] != nil {
+		t.Fatalf("unrouted service was changed: %s", result)
+	}
+}
+
 func TestMarshalComposeYAML_WithSecrets(t *testing.T) {
 	compose := map[string]interface{}{
 		"name": "myapp",

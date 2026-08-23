@@ -112,6 +112,12 @@ func build(root string) (*openAPI, error) {
 		}
 
 		if fn := handlers[r.Handler]; fn != nil {
+			if handlerCalls(fn.decl, "planRequested") {
+				if op.Extensions == nil {
+					op.Extensions = map[string]any{}
+				}
+				op.Extensions["x-plan-supported"] = true
+			}
 			if bound, contentType := boundRequestType(fn.pkg, fn.decl); bound != nil {
 				if ref := schemas.add(bound); ref != nil {
 					op.RequestBody = &requestBody{
@@ -146,6 +152,24 @@ func build(root string) (*openAPI, error) {
 	}
 
 	return spec, nil
+}
+
+func handlerCalls(fn *ast.FuncDecl, name string) bool {
+	found := false
+	ast.Inspect(fn, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch called := call.Fun.(type) {
+		case *ast.Ident:
+			found = found || called.Name == name
+		case *ast.SelectorExpr:
+			found = found || called.Sel.Name == name
+		}
+		return !found
+	})
+	return found
 }
 
 func readVersion(root string) string {
