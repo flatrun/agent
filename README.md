@@ -22,6 +22,9 @@ FlatRun inverts that. Every app is a directory: a `docker-compose.yml` and its d
 - **S3-compatible backups**: schedule deployment backups to any S3-compatible object store. Set your own endpoint and bucket; it is not tied to AWS.
 - **AI-native operation**: a built-in assistant reads a deployment's logs and config and answers in plain operator terms: diagnose a failure, suggest improvements, harden security, or explain what a stack is doing. It is off until you configure a provider, and secrets are redacted before anything is sent.
 - **Automatable end to end**: the same actions are available from the UI, the `flatrun` CLI, and a GitHub Action, so a deploy is a dashboard click or a CI step.
+- **Fleet management**: connect independent FlatRun servers, give each peer scoped access, and manage its deployments from one dashboard.
+- **Managed scaling**: validate a stateless workload, scale it through Docker Swarm or k3s, and use peer capacity only when an administrator grants explicit limits.
+- **Grouped notifications**: related events become one incident, then delivery rules route useful updates to email, webhooks, or other supported targets.
 
 ## Quick start
 
@@ -57,7 +60,7 @@ For local development or a manual install.
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.25+
 - Docker & Docker Compose v2
 - Access to the Docker socket (`/var/run/docker.sock`)
 - Linux server (Ubuntu 20.04+, Debian 11+, or similar)
