@@ -36,6 +36,7 @@ type ServiceMetadata struct {
 	Networking         NetworkingConfig          `yaml:"networking" json:"networking"`
 	SSL                SSLConfig                 `yaml:"ssl" json:"ssl"`
 	HealthCheck        HealthCheckConfig         `yaml:"healthcheck" json:"healthcheck"`
+	HealthChecks       []HealthCheckConfig       `yaml:"healthchecks,omitempty" json:"healthchecks,omitempty"`
 	QuickActions       []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
 	Security           *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
 	Backup             *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
@@ -340,6 +341,16 @@ type HealthCheckConfig struct {
 	SuccessStatuses  []int  `yaml:"success_statuses,omitempty" json:"success_statuses,omitempty"`
 	ResponseContains string `yaml:"response_contains,omitempty" json:"response_contains,omitempty"`
 	Command          string `yaml:"command,omitempty" json:"command,omitempty"`
+}
+
+func (m *ServiceMetadata) EffectiveHealthChecks() []HealthCheckConfig {
+	if m.HealthChecks != nil {
+		return m.HealthChecks
+	}
+	if m.HealthCheck.Type != "" || m.HealthCheck.Path != "" || m.HealthCheck.Command != "" || m.HealthCheck.Port != 0 {
+		return []HealthCheckConfig{m.HealthCheck}
+	}
+	return nil
 }
 
 type DeploymentStatus string

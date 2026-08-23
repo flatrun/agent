@@ -70,6 +70,36 @@ func (s *Server) getBackup(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"backup": b})
 }
 
+func (s *Server) requireBackupDeployment(c *gin.Context) {
+	if s.backupManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Backup manager not enabled"})
+		c.Abort()
+		return
+	}
+	b, err := s.backupManager.GetBackup(c.Param("id"))
+	if err != nil || b.DeploymentName != c.Param("name") {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Backup not found"})
+		c.Abort()
+		return
+	}
+	c.Next()
+}
+
+func (s *Server) requireBackupJobDeployment(c *gin.Context) {
+	if s.backupManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Backup manager not enabled"})
+		c.Abort()
+		return
+	}
+	job := s.backupManager.GetJob(c.Param("id"))
+	if job == nil || job.DeploymentName != c.Param("name") {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		c.Abort()
+		return
+	}
+	c.Next()
+}
+
 func (s *Server) createBackup(c *gin.Context) {
 	if s.backupManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Backup manager not enabled"})

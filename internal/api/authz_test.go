@@ -39,6 +39,37 @@ func actorMiddleware(actor *auth.ActorContext) gin.HandlerFunc {
 	}
 }
 
+func TestClusterServiceCredentialsRejectUnscopedSensitiveResources(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	actor := &auth.ActorContext{
+		Type: "api_key",
+		Role: auth.RoleService,
+		User: &auth.User{Role: auth.RoleService, Username: "__flatrun_cluster"},
+	}
+
+	for _, path := range []string{"/api/backups/other", "/api/credentials", "/api/security/events"} {
+		router := gin.New()
+		router.Use(actorMiddleware(actor), restrictClusterServiceResources)
+		router.GET(path, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d", path, response.Code)
+		}
+	}
+
+	router := gin.New()
+	router.Use(actorMiddleware(actor), restrictClusterServiceResources)
+	router.GET("/api/deployments/:name/security", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	request := httptest.NewRequest(http.MethodGet, "/api/deployments/app/security", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("deployment-scoped status = %d", response.Code)
+	}
+}
+
 func TestListVirtualHostsFiltersByDeploymentAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

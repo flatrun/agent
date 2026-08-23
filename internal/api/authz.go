@@ -35,6 +35,29 @@ func (s *Server) requireDeploymentAccess(c *gin.Context, deploymentName, level s
 	return true
 }
 
+func restrictClusterServiceResources(c *gin.Context) {
+	actor := auth.GetActorFromContext(c)
+	if actor == nil || actor.User == nil || actor.User.Role != auth.RoleService || actor.User.Username != "__flatrun_cluster" {
+		c.Next()
+		return
+	}
+
+	path := c.Request.URL.Path
+	if strings.HasPrefix(path, "/api/deployments/") || strings.HasPrefix(path, "/api/containers/") ||
+		strings.HasPrefix(path, "/api/proxy/") {
+		c.Next()
+		return
+	}
+	for _, prefix := range []string{"/api/backups", "/api/certificates", "/api/credentials", "/api/images", "/api/security"} {
+		if strings.HasPrefix(path, prefix) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Fleet credentials require a deployment-scoped endpoint"})
+			c.Abort()
+			return
+		}
+	}
+	c.Next()
+}
+
 func (s *Server) requireContainerAccess(c *gin.Context, containerID, level string) bool {
 	if containerID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Container ID required"})

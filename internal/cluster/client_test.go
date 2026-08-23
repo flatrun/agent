@@ -171,3 +171,46 @@ func TestClientForward(t *testing.T) {
 		t.Error("Expected forwarded=true")
 	}
 }
+
+func TestClientForwardsQueryAndRepresentationHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent/api/deployments/app/files" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if r.URL.RawQuery != "path=%2Fconfig" {
+			t.Fatalf("query = %q", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("Content-Type"); got != "multipart/form-data; boundary=test" {
+			t.Fatalf("content type = %q", got)
+		}
+		if got := r.Header.Get("Accept"); got != "application/octet-stream" {
+			t.Fatalf("accept = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer peer-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL+"/agent", "peer-key", 5*time.Second)
+	headers := http.Header{
+		"Authorization": []string{"Bearer local-user-key"},
+		"Content-Type":  []string{"multipart/form-data; boundary=test"},
+		"Accept":        []string{"application/octet-stream"},
+	}
+	resp, err := client.DoWithHeaders(
+		context.Background(),
+		http.MethodPost,
+		"/api/deployments/app/files?path=%2Fconfig",
+		headers,
+		strings.NewReader("payload"),
+	)
+	if err != nil {
+		t.Fatalf("forward request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -480,6 +481,7 @@ func (s *Server) setupRoutes() {
 
 		protected := api.Group("")
 		protected.Use(s.authMiddleware.RequireAuth())
+		protected.Use(restrictClusterServiceResources)
 		if s.auditMiddleware != nil {
 			protected.Use(s.auditMiddleware.Capture())
 		}
@@ -810,6 +812,10 @@ func (s *Server) setupRoutes() {
 			protected.GET("/backups/:id/download", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.downloadBackup)
 			protected.GET("/deployments/:name/backups", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentBackups)
 			protected.POST("/deployments/:name/backups", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createDeploymentBackup)
+			protected.DELETE("/deployments/:name/backups/:id", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.requireBackupDeployment, s.deleteBackup)
+			protected.GET("/deployments/:name/backups/:id/download", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.requireBackupDeployment, s.downloadBackup)
+			protected.POST("/deployments/:name/backups/:id/restore", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.requireBackupDeployment, s.restoreBackup)
+			protected.GET("/deployments/:name/backups/jobs/:id", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.requireBackupJobDeployment, s.getBackupJob)
 			protected.GET("/deployments/:name/backup-config", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentBackupConfig)
 			protected.PUT("/deployments/:name/backup-config", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentBackupConfig)
 			protected.POST("/backups/:id/restore", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.restoreBackup)
@@ -927,10 +933,10 @@ func (s *Server) setupRoutes() {
 				clusterGroup.POST("/accept", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterAccept)
 				clusterGroup.DELETE("/peers/:name", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterRemovePeer)
 				clusterGroup.GET("/peers/:name/proxy/*path", s.clusterProxy)
-				clusterGroup.POST("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
-				clusterGroup.PUT("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
-				clusterGroup.PATCH("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
-				clusterGroup.DELETE("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
+				clusterGroup.POST("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.clusterProxy)
+				clusterGroup.PUT("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.clusterProxy)
+				clusterGroup.PATCH("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.clusterProxy)
+				clusterGroup.DELETE("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.clusterProxy)
 				clusterGroup.GET("/deployments", s.clusterAggregateDeployments)
 				clusterGroup.GET("/stats", s.clusterAggregateStats)
 				clusterGroup.GET("/capacity", s.clusterAggregateCapacity)
@@ -1970,6 +1976,24 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 			return
 		}
 	}
+	if _, sentHealthChecks := sentFields["healthchecks"]; sentHealthChecks {
+		seenServices := make(map[string]struct{}, len(incoming.HealthChecks))
+		for _, healthCheck := range incoming.HealthChecks {
+			if err := validateHealthCheckConfig(healthCheck); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if healthCheck.Service == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "health check service is required"})
+				return
+			}
+			if _, exists := seenServices[healthCheck.Service]; exists {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "only one health check may be configured for each service"})
+				return
+			}
+			seenServices[healthCheck.Service] = struct{}{}
+		}
+	}
 
 	metadata := mergeMetadata(deployment.Metadata, &incoming, sentFields)
 
@@ -1997,6 +2021,9 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 }
 
 func validateHealthCheckConfig(config models.HealthCheckConfig) error {
+	if !healthCheckConfigured(config) && config.Port == 0 {
+		return nil
+	}
 	checkType := healthCheckType(config)
 	if checkType != "http" && checkType != "tcp" && checkType != "exec" {
 		return fmt.Errorf("health check type must be http, tcp, or exec")
@@ -2071,6 +2098,9 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	}
 	if _, ok := sentFields["healthcheck"]; ok {
 		merged.HealthCheck = incoming.HealthCheck
+	}
+	if _, ok := sentFields["healthchecks"]; ok {
+		merged.HealthChecks = incoming.HealthChecks
 	}
 	if _, ok := sentFields["quick_actions"]; ok {
 		merged.QuickActions = incoming.QuickActions
@@ -5257,6 +5287,16 @@ func (s *Server) listCertificates(c *gin.Context) {
 	}
 
 	s.annotateCertificatesWithDeployment(certificates)
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		visible := certificates[:0]
+		for _, certificate := range certificates {
+			if certificate.DeploymentID != "" && actor.CanAccessDeployment(certificate.DeploymentID, auth.AccessLevelRead) {
+				visible = append(visible, certificate)
+			}
+		}
+		certificates = visible
+	}
 
 	c.JSON(http.StatusOK, NewList(certificates, "certificates"))
 }
@@ -5311,6 +5351,18 @@ func (s *Server) requestCertificate(c *gin.Context) {
 			"error": err.Error(),
 		})
 		return
+	}
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		if req.Deployment == "" || !actor.CanAccessDeployment(req.Deployment, auth.AccessLevelWrite) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Write access to the certificate deployment is required"})
+			return
+		}
+		deployment, err := s.manager.GetDeployment(req.Deployment)
+		if err != nil || !deploymentHasDomain(deployment, req.Domain) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "The domain is not assigned to this deployment"})
+			return
+		}
 	}
 
 	result, err := s.proxyOrchestrator.RequestCertificate(req.Domain)
@@ -5369,6 +5421,11 @@ func (s *Server) enableSSLForDeployment(name, domain string) {
 }
 
 func (s *Server) renewCertificates(c *gin.Context) {
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Renewing every certificate requires administrator access"})
+		return
+	}
 	result, err := s.proxyOrchestrator.RenewCertificates()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -5385,18 +5442,18 @@ func (s *Server) renewCertificates(c *gin.Context) {
 
 func (s *Server) getCertificate(c *gin.Context) {
 	domain := c.Param("domain")
-	cert, err := s.proxyOrchestrator.SSLManager().GetCertificate(domain)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	cert, ok := s.requireCertificateAccess(c, domain, auth.AccessLevelRead)
+	if !ok {
 		return
 	}
-	annotated := []models.Certificate{*cert}
-	s.annotateCertificatesWithDeployment(annotated)
-	c.JSON(http.StatusOK, gin.H{"certificate": annotated[0]})
+	c.JSON(http.StatusOK, gin.H{"certificate": cert})
 }
 
 func (s *Server) renewCertificate(c *gin.Context) {
 	domain := c.Param("domain")
+	if _, ok := s.requireCertificateAccess(c, domain, auth.AccessLevelWrite); !ok {
+		return
+	}
 	force := c.Query("force") == "true"
 
 	result, err := s.proxyOrchestrator.RenewCertificate(domain, force)
@@ -5419,6 +5476,9 @@ func (s *Server) renewCertificate(c *gin.Context) {
 
 func (s *Server) setCertificateAutoRenew(c *gin.Context) {
 	domain := c.Param("domain")
+	if _, ok := s.requireCertificateAccess(c, domain, auth.AccessLevelWrite); !ok {
+		return
+	}
 
 	var req struct {
 		AutoRenew bool `json:"auto_renew"`
@@ -5489,6 +5549,12 @@ func (s *Server) renewDeploymentCertificates(c *gin.Context) {
 
 func (s *Server) deleteCertificate(c *gin.Context) {
 	domain := c.Param("domain")
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		if _, ok := s.requireCertificateAccess(c, domain, auth.AccessLevelAdmin); !ok {
+			return
+		}
+	}
 	force := c.DefaultQuery("force", "false") == "true"
 
 	vhosts := s.proxyOrchestrator.NginxManager().GetVhostsUsingSSLDomain(domain)
@@ -5512,6 +5578,36 @@ func (s *Server) deleteCertificate(c *gin.Context) {
 		"message": "Certificate deleted",
 		"domain":  domain,
 	})
+}
+
+func (s *Server) requireCertificateAccess(c *gin.Context, domain, level string) (*models.Certificate, bool) {
+	certificate, err := s.proxyOrchestrator.SSLManager().GetCertificate(domain)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return nil, false
+	}
+	annotated := []models.Certificate{*certificate}
+	s.annotateCertificatesWithDeployment(annotated)
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && actor.Role != auth.RoleAdmin {
+		if annotated[0].DeploymentID == "" || !actor.CanAccessDeployment(annotated[0].DeploymentID, level) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "No access to this certificate"})
+			return nil, false
+		}
+	}
+	return &annotated[0], true
+}
+
+func deploymentHasDomain(deployment *models.Deployment, domain string) bool {
+	if deployment == nil || deployment.Metadata == nil {
+		return false
+	}
+	for _, configured := range deployment.Metadata.GetDomains() {
+		if configured.Domain == domain || slices.Contains(configured.Aliases, domain) || slices.Contains(configured.RouteOnlyAliases, domain) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) getProxyStatus(c *gin.Context) {

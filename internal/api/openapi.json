@@ -1780,7 +1780,7 @@
         "tags": [
           "cluster"
         ],
-        "x-permission": "cluster:write"
+        "x-permission": "deployments:write"
       },
       "get": {
         "operationId": "get-cluster-peers-by-name-proxy-by-path",
@@ -1841,7 +1841,7 @@
         "tags": [
           "cluster"
         ],
-        "x-permission": "cluster:write"
+        "x-permission": "deployments:write"
       },
       "post": {
         "operationId": "post-cluster-peers-by-name-proxy-by-path",
@@ -1872,7 +1872,7 @@
         "tags": [
           "cluster"
         ],
-        "x-permission": "cluster:write"
+        "x-permission": "deployments:write"
       },
       "put": {
         "operationId": "put-cluster-peers-by-name-proxy-by-path",
@@ -1903,7 +1903,7 @@
         "tags": [
           "cluster"
         ],
-        "x-permission": "cluster:write"
+        "x-permission": "deployments:write"
       }
     },
     "/api/cluster/providers": {
@@ -4290,6 +4290,144 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:write"
+      }
+    },
+    "/api/deployments/{name}/backups/jobs/{id}": {
+      "get": {
+        "operationId": "get-deployments-by-name-backups-jobs-by-id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/deployments/{name}/backups/{id}": {
+      "delete": {
+        "operationId": "delete-deployments-by-name-backups-by-id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:delete"
+      }
+    },
+    "/api/deployments/{name}/backups/{id}/download": {
+      "get": {
+        "operationId": "get-deployments-by-name-backups-by-id-download",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/deployments/{name}/backups/{id}/restore": {
+      "post": {
+        "operationId": "post-deployments-by-name-backups-by-id-restore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backup.RestoreBackupRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Success"
@@ -14196,6 +14334,12 @@
           "healthcheck": {
             "$ref": "#/components/schemas/models.HealthCheckConfig"
           },
+          "healthchecks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/models.HealthCheckConfig"
+            }
+          },
           "kind": {
             "type": "string"
           },
@@ -14254,6 +14398,7 @@
           "networking",
           "ssl",
           "healthcheck",
+          "healthchecks",
           "quick_actions",
           "security",
           "backup",

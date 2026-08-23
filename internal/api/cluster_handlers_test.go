@@ -15,6 +15,7 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/cluster"
+	"github.com/flatrun/agent/internal/contextkeys"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/internal/routing"
@@ -36,6 +37,28 @@ func TestCapacityClaimUsesPeerSpecificGrant(t *testing.T) {
 	}
 	if capacityNodeLabel("prod1") == capacityNodeLabel("prod2") {
 		t.Fatal("peer labels must be isolated")
+	}
+}
+
+func TestAuthorizePeerProxyRequiresServerQualifiedDeploymentGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	request := httptest.NewRequest(http.MethodGet, "/cluster/peers/prod3/proxy/deployments/database", nil)
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	c.Request = request
+	c.Params = gin.Params{{Key: "name", Value: "prod3"}, {Key: "path", Value: "/deployments/database"}}
+	c.Set(contextkeys.Actor, &auth.ActorContext{Role: auth.RoleOperator, Deployments: map[string]string{"prod3/database": auth.AccessLevelRead}})
+	if !authorizePeerProxy(c) {
+		t.Fatalf("qualified grant rejected: %d %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(response)
+	c.Request = request
+	c.Params = gin.Params{{Key: "name", Value: "prod1"}, {Key: "path", Value: "/deployments/database"}}
+	c.Set(contextkeys.Actor, &auth.ActorContext{Role: auth.RoleOperator, Deployments: map[string]string{"prod3/database": auth.AccessLevelRead}})
+	if authorizePeerProxy(c) || response.Code != http.StatusForbidden {
+		t.Fatalf("grant crossed peer boundary: %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -140,10 +163,10 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 			clusterGroup.POST("/accept", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterAccept)
 			clusterGroup.DELETE("/peers/:name", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterRemovePeer)
 			clusterGroup.GET("/peers/:name/proxy/*path", server.clusterProxy)
-			clusterGroup.POST("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
-			clusterGroup.PUT("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
-			clusterGroup.PATCH("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
-			clusterGroup.DELETE("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.POST("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermDeploymentsWrite), server.clusterProxy)
+			clusterGroup.PUT("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermDeploymentsWrite), server.clusterProxy)
+			clusterGroup.PATCH("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermDeploymentsWrite), server.clusterProxy)
+			clusterGroup.DELETE("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermDeploymentsWrite), server.clusterProxy)
 			clusterGroup.GET("/deployments", server.clusterAggregateDeployments)
 			clusterGroup.GET("/stats", server.clusterAggregateStats)
 			clusterGroup.GET("/capacity", server.clusterAggregateCapacity)
@@ -419,6 +442,28 @@ func TestClusterPolicyAccessScopesDeployments(t *testing.T) {
 	}
 	if len(wanted) != 0 {
 		t.Fatalf("missing permissions = %#v", wanted)
+	}
+}
+
+func TestClusterPolicyAccessGrantsDeploymentManagement(t *testing.T) {
+	permissions, deployments := clusterPolicyAccess(cluster.PeerPolicy{Grants: []cluster.Grant{
+		{Capability: cluster.CapabilityDeploymentsManage, Deployments: []string{"public-site"}},
+	}})
+
+	if deployments["public-site"] != auth.AccessLevelAdmin {
+		t.Fatalf("deployment access = %#v", deployments)
+	}
+	wanted := []string{
+		auth.PermDeploymentsDelete.String(),
+		auth.PermSecurityWrite.String(),
+		auth.PermBackupsWrite.String(),
+		auth.PermCertificatesWrite.String(),
+		auth.PermSchedulerWrite.String(),
+	}
+	for _, permission := range wanted {
+		if !slices.Contains(permissions, permission) {
+			t.Fatalf("missing permission %q in %#v", permission, permissions)
+		}
 	}
 }
 
@@ -935,6 +980,9 @@ func TestClusterProxyAllowsReadWithoutWrite(t *testing.T) {
 	}
 	user, err := env.server.authManager.CreateUser("fleet-reader", "", "password", auth.RoleService, nil)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.authManager.AssignDeployment(user.ID, "remote/shop", auth.AccessLevelRead, 0); err != nil {
 		t.Fatal(err)
 	}
 	_, err = env.server.authManager.CreateAPIKeyFromRaw(

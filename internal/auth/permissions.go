@@ -135,7 +135,7 @@ var operatorPermissions = []Permission{
 	PermDatabasesRead, PermDatabasesWrite,
 	PermInfrastructureRead, PermInfrastructureWrite,
 	PermSchedulerRead, PermSchedulerWrite,
-	PermSystemRead, PermSystemWrite,
+	PermSystemRead,
 	PermDNSRead, PermDNSWrite,
 	PermRegistriesRead, PermRegistriesWrite,
 	PermTemplatesRead,

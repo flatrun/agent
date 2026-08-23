@@ -262,11 +262,23 @@ func (s *Server) addApplicationHealthDiagnostic(
 	addWithOutput func(string, string, DiagnosticStatus, string, string, string, string),
 ) {
 	metadata := deployment.Metadata
-	if metadata == nil || !healthCheckConfigured(metadata.HealthCheck) {
+	if metadata == nil || len(metadata.EffectiveHealthChecks()) == 0 {
 		add("application", "Application health", diagnosticSkipped, "No application health check is configured in service.yml.", "edit_healthcheck", "")
 		return
 	}
-	config := metadata.HealthCheck
+	for _, config := range metadata.EffectiveHealthChecks() {
+		s.addServiceHealthDiagnostic(ctx, deployment, config, add, addWithOutput)
+	}
+}
+
+func (s *Server) addServiceHealthDiagnostic(
+	ctx context.Context,
+	deployment *models.Deployment,
+	config models.HealthCheckConfig,
+	add func(string, string, DiagnosticStatus, string, string, string),
+	addWithOutput func(string, string, DiagnosticStatus, string, string, string, string),
+) {
+	metadata := deployment.Metadata
 	checkType := healthCheckType(config)
 	service := config.Service
 	if service == "" {
@@ -277,7 +289,7 @@ func (s *Server) addApplicationHealthDiagnostic(
 		port = metadata.Networking.ContainerPort
 	}
 	if service == "" || checkType != "exec" && (port < 1 || port > 65535) || checkType == "http" && !validHealthPath(config.Path) {
-		add("application", "Application health", diagnosticWarning, "The application health configuration is incomplete.", "edit_healthcheck", "")
+		add("application", "Application health: "+service, diagnosticWarning, "The service health configuration is incomplete.", "edit_healthcheck", service)
 		return
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -287,41 +299,42 @@ func (s *Server) addApplicationHealthDiagnostic(
 	case "tcp":
 		ip, err := s.manager.ContainerServiceIP(deployment.Name, service, "")
 		if err != nil {
-			addWithOutput("application", "Application health", diagnosticFailed, "The service container address could not be resolved.", err.Error(), "edit_healthcheck", strconv.Itoa(port))
+			addWithOutput("application", "Application health: "+service, diagnosticFailed, "The service container address could not be resolved.", err.Error(), "edit_healthcheck", service)
 			return
 		}
 		connection, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(probeCtx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 		if err != nil {
-			addWithOutput("application", "Application health", diagnosticFailed, fmt.Sprintf("TCP port %d did not accept a connection.", port), err.Error(), "edit_healthcheck", strconv.Itoa(port))
+			addWithOutput("application", "Application health: "+service, diagnosticFailed, fmt.Sprintf("TCP port %d did not accept a connection.", port), err.Error(), "edit_healthcheck", service)
 			return
 		}
 		_ = connection.Close()
-		add("application", "Application health", diagnosticPassed, fmt.Sprintf("TCP port %d accepted a connection.", port), "", strconv.Itoa(port))
+		add("application", "Application health: "+service, diagnosticPassed, fmt.Sprintf("TCP port %d accepted a connection.", port), "", service)
 	case "exec":
 		output, err := s.manager.ComposeExec(probeCtx, deployment.Name, service, config.Command)
 		if err != nil {
-			addWithOutput("application", "Application health", diagnosticFailed, "The health command returned an error.", output, "edit_healthcheck", "exec")
+			addWithOutput("application", "Application health: "+service, diagnosticFailed, "The health command returned an error.", output, "edit_healthcheck", service)
 			return
 		}
-		add("application", "Application health", diagnosticPassed, "The health command completed successfully.", "", "exec")
+		add("application", "Application health: "+service, diagnosticPassed, "The health command completed successfully.", "", service)
 	default:
+		title := "Application health: " + service
 		command := fmt.Sprintf("curl -sS -w '\\n%%{http_code}' --max-time 5 %s", shellLiteral("http://127.0.0.1:"+strconv.Itoa(port)+config.Path))
 		output, err := s.manager.ComposeExec(probeCtx, deployment.Name, service, command)
 		body, statusCode, parseErr := parseHealthResponse(output)
 		if err != nil || parseErr != nil {
-			addWithOutput("application", "Application health", diagnosticFailed, "The configured endpoint could not be reached from its service container.", output, "edit_healthcheck", config.Path)
+			addWithOutput("application", title, diagnosticFailed, "The configured endpoint could not be reached from its service container.", output, "edit_healthcheck", service)
 		} else if healthStatusAccepted(statusCode, config.SuccessStatuses) && healthBodyAccepted(body, config.ResponseContains) {
 			detail := fmt.Sprintf("GET %s returned HTTP %d.", config.Path, statusCode)
 			if config.ResponseContains != "" {
 				detail = fmt.Sprintf("GET %s returned HTTP %d and matched the expected response.", config.Path, statusCode)
 			}
-			add("application", "Application health", diagnosticPassed, detail, "", config.Path)
+			add("application", title, diagnosticPassed, detail, "", service)
 		} else if healthStatusAccepted(statusCode, config.SuccessStatuses) {
-			addWithOutput("application", "Application health", diagnosticFailed, fmt.Sprintf("GET %s returned HTTP %d but did not match the expected response.", config.Path, statusCode), body, "edit_healthcheck", config.Path)
+			addWithOutput("application", title, diagnosticFailed, fmt.Sprintf("GET %s returned HTTP %d but did not match the expected response.", config.Path, statusCode), body, "edit_healthcheck", service)
 		} else if statusCode == http.StatusNotFound {
-			addWithOutput("application", "Application health", diagnosticWarning, fmt.Sprintf("GET %s returned HTTP 404. Configure a health endpoint to enable this check.", config.Path), body, "edit_healthcheck", config.Path)
+			addWithOutput("application", title, diagnosticWarning, fmt.Sprintf("GET %s returned HTTP 404. Configure a health endpoint to enable this check.", config.Path), body, "edit_healthcheck", service)
 		} else {
-			addWithOutput("application", "Application health", diagnosticFailed, fmt.Sprintf("GET %s returned HTTP %d.", config.Path, statusCode), body, "edit_healthcheck", config.Path)
+			addWithOutput("application", title, diagnosticFailed, fmt.Sprintf("GET %s returned HTTP %d.", config.Path, statusCode), body, "edit_healthcheck", service)
 		}
 	}
 }
