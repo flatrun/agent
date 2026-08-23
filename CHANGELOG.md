@@ -9,10 +9,12 @@ Sixth beta of the Albacore release, making connected servers manageable as one F
 - Host and deployment capacity decisions with managed horizontal and vertical scaling
 - Docker Swarm and k3s orchestration adapters with nginx and Traefik routing adapters
 - Grouped incidents and configurable notification targets and delivery rules
+- HTTP, TCP, and container command health checks for web services and databases
 
 ### Fixed
 - Existing Fleet peers gain default access policies during startup repair without reconnecting
 - Existing peer credentials are restricted to their configured Fleet policy during startup
+- Fleet peer credentials can read deployments allowed by their peer policy
 - Fleet readers can open deployment details without gaining write access
 - Object storage and notifications have independent permission boundaries
 - Updates require dedicated access and remain admin-only by default
