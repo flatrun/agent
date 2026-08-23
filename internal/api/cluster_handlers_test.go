@@ -15,6 +15,7 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/cluster"
+	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/pkg/config"
@@ -102,6 +103,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		configPath:     tmpDir + "/config.yml",
 		authManager:    authManager,
 		clusterManager: clusterManager,
+		manager:        docker.NewManager(tmpDir),
 	}
 
 	router := gin.New()
@@ -116,6 +118,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 	protected.Use(authMiddleware.RequireAuth())
 	{
 		protected.GET("/capacity", authMiddleware.RequirePermission(auth.PermSystemRead), server.getCapacityStatus)
+		protected.GET("/deployments", authMiddleware.RequirePermission(auth.PermDeploymentsRead), server.listDeployments)
 		protected.GET("/test/deployments", authMiddleware.RequirePermission(auth.PermDeploymentsRead), func(c *gin.Context) {
 			c.Status(http.StatusNoContent)
 		})
@@ -160,6 +163,57 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		router:  router,
 		tmpDir:  tmpDir,
 		cleanup: cleanup,
+	}
+}
+
+func TestClusterDeploymentsIncludesPeerWhenLocalServerIsEmpty(t *testing.T) {
+	local := setupClusterTestServer(t, "local", true)
+	defer local.cleanup()
+	remote := setupClusterTestServer(t, "remote", true)
+	defer remote.cleanup()
+
+	if err := remote.server.manager.CreateDeployment("remote-app", `services:
+  app:
+    image: nginx:alpine
+`, nil); err != nil {
+		t.Fatal(err)
+	}
+	const peerKey = "local-to-remote-key"
+	if err := remote.server.createClusterAPIKey(peerKey, "local"); err != nil {
+		t.Fatal(err)
+	}
+	remoteHTTP := httptest.NewServer(remote.router)
+	defer remoteHTTP.Close()
+	if err := local.server.clusterManager.AddPeer("remote", remoteHTTP.URL, peerKey); err != nil {
+		t.Fatal(err)
+	}
+
+	token := clusterLogin(t, local.router)
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/deployments", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	local.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Servers map[string]struct {
+			Data struct {
+				Deployments []struct {
+					Name string `json:"name"`
+				} `json:"deployments"`
+			} `json:"data"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Servers["local"].Data.Deployments) != 0 {
+		t.Fatalf("local deployments = %#v", response.Servers["local"].Data.Deployments)
+	}
+	remoteDeployments := response.Servers["remote"].Data.Deployments
+	if len(remoteDeployments) != 1 || remoteDeployments[0].Name != "remote-app" {
+		t.Fatalf("remote deployments = %#v", remoteDeployments)
 	}
 }
 
