@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/flatrun/agent/pkg/pluginapi"
 )
 
 func alertHandler(t *testing.T) (http.Handler, *AlertEngine, *AlertStore) {
@@ -15,6 +17,73 @@ func alertHandler(t *testing.T) (http.Handler, *AlertEngine, *AlertStore) {
 	rules := NewAlertStore(t.TempDir())
 	h := HandlerWithAlerts(store, nil, nil, nil, nil, alerts{engine: engine, store: rules})
 	return h, engine, rules
+}
+
+func scopedAlertRequest(t *testing.T, method, path, body string, grants ...pluginapi.ResourceGrant) *http.Request {
+	t.Helper()
+	encoded, err := pluginapi.EncodeResourceAccess(pluginapi.ResourceAccess{Grants: grants})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set(pluginapi.ResourceAccessHeader, encoded)
+	return req
+}
+
+func TestAlertRulesAreScopedThroughTheHTTPAPI(t *testing.T) {
+	metrics := NewStore(10)
+	engine := NewAlertEngine(metrics)
+	store := NewAlertStore(t.TempDir())
+	if err := store.Save([]AlertRule{
+		{ID: "shop", Name: "Shop CPU", Deployment: "shop", Metric: MetricCPUUsage, Comparison: ComparisonAbove, Threshold: 80, Enabled: true},
+		{ID: "billing", Name: "Billing CPU", Deployment: "billing", Metric: MetricCPUUsage, Comparison: ComparisonAbove, Threshold: 80, Enabled: true},
+		{ID: "host", Name: "Host CPU", Metric: MetricHostCPU, Comparison: ComparisonAbove, Threshold: 80, Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	engine.SetRules(store.Load())
+	h := HandlerWithAlerts(metrics, nil, nil, nil, nil, alerts{engine: engine, store: store})
+
+	grant := pluginapi.ResourceGrant{Resource: "deployment", ID: "shop", Level: "write"}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, scopedAlertRequest(t, http.MethodGet, "/alerts/rules", "", grant))
+	var visible []AlertRule
+	if err := json.Unmarshal(rec.Body.Bytes(), &visible); err != nil {
+		t.Fatal(err)
+	}
+	if len(visible) != 1 || visible[0].ID != "shop" {
+		t.Fatalf("visible rules = %+v", visible)
+	}
+
+	body, _ := json.Marshal([]AlertRule{{ID: "shop", Name: "Shop memory", Deployment: "shop", Metric: MetricMemoryUsage, Comparison: ComparisonAbove, Threshold: 90, Enabled: true}})
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, scopedAlertRequest(t, http.MethodPut, "/alerts/rules", string(body), grant))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	all := store.Load()
+	if len(all) != 3 {
+		t.Fatalf("stored rules = %+v", all)
+	}
+	for _, rule := range all {
+		if rule.ID == "billing" && rule.Name != "Billing CPU" {
+			t.Fatal("scoped update changed another deployment")
+		}
+		if rule.ID == "host" && rule.Name != "Host CPU" {
+			t.Fatal("scoped update changed the host rule")
+		}
+	}
+}
+
+func TestAlertRulesRejectAnotherDeploymentThroughTheHTTPAPI(t *testing.T) {
+	h, _, _ := alertHandler(t)
+	grant := pluginapi.ResourceGrant{Resource: "deployment", ID: "shop", Level: "write"}
+	body := `[{"name":"Billing CPU","deployment":"billing","metric":"container.cpu.usage","comparison":"above","threshold":80,"enabled":true}]`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, scopedAlertRequest(t, http.MethodPut, "/alerts/rules", body, grant))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestAlertRulesRoundTripThroughTheAPI(t *testing.T) {

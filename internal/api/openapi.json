@@ -461,6 +461,20 @@
         }
       }
     },
+    "/api/alerts/target-options": {
+      "get": {
+        "operationId": "get-alerts-target-options",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "alerts"
+        ],
+        "x-permission": "alerts:read"
+      }
+    },
     "/api/apikeys": {
       "get": {
         "operationId": "get-apikeys",

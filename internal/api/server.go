@@ -56,6 +56,7 @@ import (
 	"github.com/flatrun/agent/internal/traffic"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
+	"github.com/flatrun/agent/pkg/pluginapi"
 	"github.com/flatrun/agent/pkg/plugins"
 	dnsPlugins "github.com/flatrun/agent/pkg/plugins/dns"
 	"github.com/flatrun/agent/pkg/plugins/firewall"
@@ -552,6 +553,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermUpdatesRead), s.getAgentUpdate)
 			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermUpdatesWrite), s.triggerAgentUpdate)
 			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.getNotificationTargets)
+			protected.GET("/alerts/target-options", s.authMiddleware.RequirePermission(auth.PermAlertsRead), s.getAlertTargetOptions)
 			protected.GET("/notifications/incidents", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.listNotificationIncidents)
 			protected.GET("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.listNotificationRules)
 			protected.PUT("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.updateNotificationRules)
@@ -616,7 +618,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/plugins/:name", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getPlugin)
 			protected.POST("/plugins/:name/deployments", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.createPluginDeployment)
 
-			protected.Any("/plugin/:name/*proxyPath", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.proxyToPlugin)
+			protected.Any("/plugin/:name/*proxyPath", s.proxyToPlugin)
 			protected.Any("/marketplace/*path", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.proxyMarketplace)
 			protected.GET("/templates", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.listTemplates)
 			protected.GET("/templates/categories", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getTemplateCategories)
@@ -3460,6 +3462,17 @@ func (s *Server) getNotificationTargets(c *gin.Context) {
 	c.JSON(http.StatusOK, s.notify.Load())
 }
 
+func (s *Server) getAlertTargetOptions(c *gin.Context) {
+	targets := s.notify.Load().Targets
+	options := make([]gin.H, 0, len(targets))
+	for _, target := range targets {
+		if target.Enabled {
+			options = append(options, gin.H{"id": target.ID, "name": target.Name})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"targets": options})
+}
+
 func (s *Server) updateNotificationTargets(c *gin.Context) {
 	var cfg notify.Config
 	if err := c.ShouldBindJSON(&cfg); err != nil {
@@ -3613,16 +3626,82 @@ func (s *Server) proxyMarketplace(c *gin.Context) {
 
 func (s *Server) proxyToPlugin(c *gin.Context) {
 	name := c.Param("name")
+	pluginPath := c.Param("proxyPath")
+	required := pluginPermission(name, pluginPath, c.Request.Method)
+	actor := auth.GetActorFromContext(c)
+	if actor == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+		return
+	}
+	if !actor.HasPermission(required) {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Permission denied: %s required", required)})
+		return
+	}
+	access := actorResourceAccess(actor)
+	encodedAccess, err := pluginapi.EncodeResourceAccess(access)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not prepare plugin access"})
+		return
+	}
 	proxy, ok := s.pluginHost.Proxy(name)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not running"})
 		return
 	}
-	c.Request.URL.Path = c.Param("proxyPath")
+	c.Request.Header.Del(pluginapi.ResourceAccessHeader)
+	c.Request.Header.Set(pluginapi.ResourceAccessHeader, encodedAccess)
+	c.Request.URL.Path = pluginPath
 	if c.Request.URL.Path == "" {
 		c.Request.URL.Path = "/"
 	}
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func pluginPermission(name, pluginPath, method string) auth.Permission {
+	write := method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
+	if name == "observability" && strings.HasPrefix(pluginPath, "/alerts/") {
+		if write {
+			return auth.PermAlertsWrite
+		}
+		return auth.PermAlertsRead
+	}
+	if write {
+		return auth.PermTemplatesWrite
+	}
+	return auth.PermTemplatesRead
+}
+
+func actorResourceAccess(actor *auth.ActorContext) pluginapi.ResourceAccess {
+	userIsAdmin := actor.User == nil && actor.Role == auth.RoleAdmin
+	if actor.User != nil {
+		userIsAdmin = actor.User.Role == auth.RoleAdmin
+	}
+	access := pluginapi.ResourceAccess{Global: userIsAdmin && (actor.APIKey == nil || len(actor.APIKey.Deployments) == 0)}
+	if access.Global {
+		return access
+	}
+	candidates := make(map[string]struct{}, len(actor.Deployments))
+	for id := range actor.Deployments {
+		candidates[id] = struct{}{}
+	}
+	if actor.APIKey != nil {
+		for id := range actor.APIKey.Deployments {
+			candidates[id] = struct{}{}
+		}
+	}
+	for id := range candidates {
+		level := ""
+		for _, candidate := range []string{auth.AccessLevelAdmin, auth.AccessLevelWrite, auth.AccessLevelRead} {
+			if actor.CanAccessDeployment(id, candidate) {
+				level = candidate
+				break
+			}
+		}
+		if level != "" {
+			access.Grants = append(access.Grants, pluginapi.ResourceGrant{Resource: "deployment", ID: id, Level: level})
+		}
+	}
+	return access
 }
 
 func (s *Server) getPlugin(c *gin.Context) {

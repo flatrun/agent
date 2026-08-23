@@ -2,9 +2,13 @@ package observ
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
+
+	"github.com/flatrun/agent/pkg/pluginapi"
 )
 
 // healthReporter is the slice of the health watcher the API needs; nil-safe so the handler
@@ -155,15 +159,22 @@ func HandlerWithAlerts(store *Store, history *MetricsDB, health healthReporter, 
 				http.Error(w, "invalid rules", http.StatusBadRequest)
 				return
 			}
-			// Saving assigns ids and rejects a rule that cannot be evaluated, so a bad
-			// rule never reaches the engine.
+			var err error
+			incoming, err = mergeScoped(
+				al.engine.Rules(), incoming, resourceAccess(r), alertRuleDeployment,
+				func(rule AlertRule) string { return rule.ID },
+			)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
 			if err := al.store.Save(incoming); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			al.engine.SetRules(al.store.Load())
 		}
-		writeJSON(w, al.engine.Rules())
+		writeJSON(w, filterScoped(al.engine.Rules(), resourceAccess(r), alertRuleDeployment))
 	})
 	mux.HandleFunc("/alerts/log-rules", func(w http.ResponseWriter, r *http.Request) {
 		if al.logEngine == nil || al.logStore == nil {
@@ -176,21 +187,34 @@ func HandlerWithAlerts(store *Store, history *MetricsDB, health healthReporter, 
 				http.Error(w, "invalid rules", http.StatusBadRequest)
 				return
 			}
-			// Saving assigns ids and rejects a rule that would match everything.
+			var err error
+			incoming, err = mergeScoped(
+				al.logEngine.Rules(), incoming, resourceAccess(r),
+				func(rule LogRule) string { return rule.Deployment },
+				func(rule LogRule) string { return rule.ID },
+			)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
 			if err := al.logStore.Save(incoming); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			al.logEngine.SetRules(al.logStore.Load())
 		}
-		writeJSON(w, al.logEngine.Rules())
+		writeJSON(w, filterScoped(
+			al.logEngine.Rules(), resourceAccess(r), func(rule LogRule) string { return rule.Deployment },
+		))
 	})
 	mux.HandleFunc("/alerts/incidents", func(w http.ResponseWriter, r *http.Request) {
 		if al.logEngine == nil {
 			writeJSON(w, []Incident{})
 			return
 		}
-		incidents := al.logEngine.Incidents()
+		incidents := filterScoped(
+			al.logEngine.Incidents(), resourceAccess(r), func(incident Incident) string { return incident.Deployment },
+		)
 		if deployment := r.URL.Query().Get("deployment"); deployment != "" {
 			filtered := make([]Incident, 0, len(incidents))
 			for _, in := range incidents {
@@ -205,19 +229,23 @@ func HandlerWithAlerts(store *Store, history *MetricsDB, health healthReporter, 
 	mux.HandleFunc("/alerts/responders", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, KnownResponders())
 	})
-	mux.HandleFunc("/alerts/firing", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/alerts/firing", func(w http.ResponseWriter, r *http.Request) {
 		if al.engine == nil {
 			writeJSON(w, []AlertEvent{})
 			return
 		}
-		writeJSON(w, al.engine.Firing())
+		writeJSON(w, filterScoped(
+			al.engine.Firing(), resourceAccess(r), func(event AlertEvent) string { return event.Deployment },
+		))
 	})
-	mux.HandleFunc("/alerts/events", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/alerts/events", func(w http.ResponseWriter, r *http.Request) {
 		if al.engine == nil {
 			writeJSON(w, []AlertEvent{})
 			return
 		}
-		writeJSON(w, al.engine.Events())
+		writeJSON(w, filterScoped(
+			al.engine.Events(), resourceAccess(r), func(event AlertEvent) string { return event.Deployment },
+		))
 	})
 	mux.HandleFunc("/health/events", func(w http.ResponseWriter, _ *http.Request) {
 		if health == nil {
@@ -247,6 +275,78 @@ func HandlerWithAlerts(store *Store, history *MetricsDB, health healthReporter, 
 		})
 	})
 	return mux
+}
+
+func resourceAccess(r *http.Request) pluginapi.ResourceAccess {
+	value := r.Header.Get(pluginapi.ResourceAccessHeader)
+	if value == "" {
+		return pluginapi.ResourceAccess{Global: true}
+	}
+	access, err := pluginapi.DecodeResourceAccess(value)
+	if err != nil {
+		return pluginapi.ResourceAccess{}
+	}
+	return access
+}
+
+func alertRuleDeployment(rule AlertRule) string {
+	switch rule.Metric {
+	case MetricHostCPU, MetricHostMemUtil, MetricHostMemUsage, MetricHostMemLimit, MetricHostDisk:
+		return ""
+	default:
+		return rule.Deployment
+	}
+}
+
+func filterScoped[T any](items []T, access pluginapi.ResourceAccess, deployment func(T) string) []T {
+	if access.Global {
+		return items
+	}
+	filtered := make([]T, 0, len(items))
+	for _, item := range items {
+		if name := deployment(item); name != "" && access.Allows("deployment", name, "read") {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func mergeScoped[T any](stored, incoming []T, access pluginapi.ResourceAccess, deployment func(T) string, id func(T) string) ([]T, error) {
+	if access.Global {
+		return incoming, nil
+	}
+	merged := make([]T, 0, len(stored)+len(incoming))
+	protectedIDs := make(map[string]struct{})
+	for _, item := range stored {
+		name := deployment(item)
+		if name == "" || !access.Allows("deployment", name, "write") {
+			merged = append(merged, item)
+			if itemID := id(item); itemID != "" {
+				protectedIDs[itemID] = struct{}{}
+			}
+		}
+	}
+	for _, item := range incoming {
+		name := deployment(item)
+		if name == "" || !access.Allows("deployment", name, "write") {
+			unchanged := false
+			for _, existing := range stored {
+				if id(existing) == id(item) && reflect.DeepEqual(existing, item) {
+					unchanged = true
+					break
+				}
+			}
+			if unchanged {
+				continue
+			}
+			return nil, fmt.Errorf("no write access to alert scope")
+		}
+		if _, exists := protectedIDs[id(item)]; exists {
+			return nil, fmt.Errorf("no write access to alert rule")
+		}
+		merged = append(merged, item)
+	}
+	return merged, nil
 }
 
 type containerMetrics struct {

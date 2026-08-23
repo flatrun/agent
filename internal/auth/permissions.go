@@ -27,6 +27,8 @@ const (
 
 	PermNotificationsRead  Permission = "notifications:read"
 	PermNotificationsWrite Permission = "notifications:write"
+	PermAlertsRead         Permission = "alerts:read"
+	PermAlertsWrite        Permission = "alerts:write"
 
 	PermUsersRead   Permission = "users:read"
 	PermUsersWrite  Permission = "users:write"
@@ -99,6 +101,7 @@ var adminPermissions = []Permission{
 	PermBackupsRead, PermBackupsWrite, PermBackupsDelete,
 	PermStorageRead, PermStorageWrite, PermStorageDelete,
 	PermNotificationsRead, PermNotificationsWrite,
+	PermAlertsRead, PermAlertsWrite,
 	PermUsersRead, PermUsersWrite, PermUsersDelete,
 	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
 	PermSettingsRead, PermSettingsWrite,
@@ -137,6 +140,7 @@ var operatorPermissions = []Permission{
 	PermRegistriesRead, PermRegistriesWrite,
 	PermTemplatesRead,
 	PermTrafficRead,
+	PermAlertsRead, PermAlertsWrite,
 }
 
 var viewerPermissions = []Permission{
@@ -157,6 +161,7 @@ var viewerPermissions = []Permission{
 	PermRegistriesRead,
 	PermTemplatesRead,
 	PermTrafficRead,
+	PermAlertsRead,
 }
 
 func GetRolePermissions(role Role) []Permission {

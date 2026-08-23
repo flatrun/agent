@@ -23,6 +23,7 @@ func setupNotifyTest(t *testing.T) (*Server, *gin.Engine) {
 	}
 	r := gin.New()
 	r.GET("/notifications/targets", s.getNotificationTargets)
+	r.GET("/alerts/target-options", s.getAlertTargetOptions)
 	r.GET("/notifications/incidents", s.listNotificationIncidents)
 	r.GET("/notifications/rules", s.listNotificationRules)
 	r.PUT("/notifications/rules", s.updateNotificationRules)
@@ -31,6 +32,24 @@ func setupNotifyTest(t *testing.T) (*Server, *gin.Engine) {
 	r.POST("/internal/notify/emit", s.emitNotification)
 	r.POST("/internal/events", s.emitEvent)
 	return s, r
+}
+
+func TestAlertTargetOptionsExposeOnlyEnabledNames(t *testing.T) {
+	s, r := setupNotifyTest(t)
+	if err := s.notify.Save(notify.Config{Targets: []notify.Target{
+		{ID: "ops", Name: "Ops", URL: "generic+https://example.com/secret", Enabled: true},
+		{ID: "off", Name: "Disabled", URL: "smtp://user:pass@example.com", Enabled: false},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/alerts/target-options", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); body != `{"targets":[{"id":"ops","name":"Ops"}]}` {
+		t.Fatalf("body = %s", body)
+	}
 }
 
 func TestNotificationRulesRoundTripThroughHTTP(t *testing.T) {
