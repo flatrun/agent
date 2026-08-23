@@ -196,6 +196,52 @@ func TestClusterCapacityIncludesLocalOfferPolicy(t *testing.T) {
 	}
 }
 
+func TestClusterRemovePeerDeletesOnlyItsServiceCredential(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+
+	if err := env.server.clusterManager.AddPeer("server-b", "https://server-b.example.com", "peer-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.createClusterAPIKey("credential-for-server-b", "server-b"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := env.server.authManager.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := env.server.authManager.CreateAPIKey(
+		admin.ID, "cluster-peer-server-b", "User-managed key", auth.RoleAdmin, nil, nil, time.Time{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	token := clusterLogin(t, env.router)
+	req := httptest.NewRequest(http.MethodDelete, "/api/cluster/peers/server-b", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := env.server.clusterManager.GetPeer("server-b"); err == nil {
+		t.Fatal("peer still exists")
+	}
+	keys, err := env.server.authManager.GetAllAPIKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matching []auth.APIKey
+	for _, key := range keys {
+		if key.Name == "cluster-peer-server-b" {
+			matching = append(matching, key)
+		}
+	}
+	if len(matching) != 1 || matching[0].UserID != admin.ID {
+		t.Fatalf("remaining matching keys = %+v", matching)
+	}
+}
+
 func TestUpdateClusterPeerPolicyThroughHTTP(t *testing.T) {
 	env := setupClusterTestServer(t, "server-a", true)
 	defer env.cleanup()

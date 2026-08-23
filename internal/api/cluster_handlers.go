@@ -797,29 +797,39 @@ func (s *Server) clusterRemovePeer(c *gin.Context) {
 	}
 
 	name := c.Param("name")
+	if err := s.deleteClusterAPIKey(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete peer credential"})
+		return
+	}
 	if err := mgr.RemovePeer(name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	s.revokeClusterAPIKey(name)
 
 	c.JSON(http.StatusOK, gin.H{"status": "removed", "peer": name})
 }
 
-func (s *Server) revokeClusterAPIKey(peerName string) {
+func (s *Server) deleteClusterAPIKey(peerName string) error {
 	if s.authManager == nil {
-		return
+		return nil
+	}
+	userID, err := s.clusterServiceUserID()
+	if err != nil {
+		return err
 	}
 	keys, err := s.authManager.GetAllAPIKeys()
 	if err != nil {
-		return
+		return err
 	}
 	name := fmt.Sprintf("cluster-peer-%s", peerName)
 	for _, key := range keys {
-		if key.Name == name {
-			_ = s.authManager.DeactivateAPIKey(key.ID)
+		if key.UserID == userID && key.Name == name {
+			if err := s.authManager.DeleteAPIKey(key.ID); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 func (s *Server) clusterProxy(c *gin.Context) {
