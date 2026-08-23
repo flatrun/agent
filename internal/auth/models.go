@@ -175,7 +175,7 @@ func actorUserDeploymentLevel(a *ActorContext, name string) string {
 	if a.User != nil && a.User.Role == RoleAdmin {
 		return AccessLevelAdmin
 	}
-	if a.User != nil && a.User.Role == RoleService && a.APIKey != nil {
+	if a.User != nil && a.User.Role == RoleService && a.User.Username == "__flatrun_cluster" && a.APIKey != nil {
 		return AccessLevelAdmin
 	}
 	if a.User == nil && a.Role == RoleAdmin {
