@@ -33,7 +33,7 @@
         "tags": [
           "agent"
         ],
-        "x-permission": "settings:read"
+        "x-permission": "updates:read"
       },
       "post": {
         "operationId": "post-agent-update",
@@ -55,7 +55,7 @@
         "tags": [
           "agent"
         ],
-        "x-permission": "settings:write"
+        "x-permission": "updates:write"
       }
     },
     "/api/ai/agents": {

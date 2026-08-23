@@ -38,6 +38,8 @@ const (
 
 	PermSettingsRead  Permission = "settings:read"
 	PermSettingsWrite Permission = "settings:write"
+	PermUpdatesRead   Permission = "updates:read"
+	PermUpdatesWrite  Permission = "updates:write"
 
 	PermConfigRead  Permission = "config:read"
 	PermConfigWrite Permission = "config:write"
@@ -100,6 +102,7 @@ var adminPermissions = []Permission{
 	PermUsersRead, PermUsersWrite, PermUsersDelete,
 	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
 	PermSettingsRead, PermSettingsWrite,
+	PermUpdatesRead, PermUpdatesWrite,
 	PermConfigRead, PermConfigWrite,
 	PermAuditRead,
 	PermContainersRead, PermContainersWrite, PermContainersDelete,
@@ -123,9 +126,6 @@ var operatorPermissions = []Permission{
 	PermSecurityRead,
 	PermBackupsRead, PermBackupsWrite,
 	PermStorageRead, PermStorageWrite,
-	PermNotificationsRead,
-	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
-	PermSettingsRead,
 	PermContainersRead, PermContainersWrite,
 	PermImagesRead, PermImagesWrite,
 	PermVolumesRead, PermVolumesWrite,
@@ -146,9 +146,6 @@ var viewerPermissions = []Permission{
 	PermSecurityRead,
 	PermBackupsRead,
 	PermStorageRead,
-	PermNotificationsRead,
-	PermAPIKeysRead,
-	PermSettingsRead,
 	PermContainersRead,
 	PermImagesRead,
 	PermVolumesRead,

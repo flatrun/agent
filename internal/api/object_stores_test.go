@@ -76,6 +76,8 @@ func setupObjectStoreTestServer(t *testing.T) (*Server, *gin.Engine, func()) {
 	protected.GET("/object-stores/:name/objects/download", mw.RequirePermission(auth.PermStorageRead), server.downloadStoreObject)
 	protected.DELETE("/object-stores/:name/objects", mw.RequirePermission(auth.PermStorageDelete), server.deleteStoreObject)
 	protected.POST("/object-stores/:name/attach", mw.RequirePermission(auth.PermStorageWrite, auth.PermDeploymentsWrite), server.attachStoreToDeployment)
+	protected.GET("/agent/update", mw.RequirePermission(auth.PermUpdatesRead), func(c *gin.Context) { c.Status(http.StatusOK) })
+	protected.POST("/agent/update", mw.RequirePermission(auth.PermUpdatesWrite), func(c *gin.Context) { c.Status(http.StatusOK) })
 	dnsGroup := protected.Group("/dns")
 	dnsGroup.Use(mw.RequirePermission(auth.PermDNSRead), server.requireDNSWriteForMutations())
 	dnsGroup.POST("/provider/zones", func(c *gin.Context) { c.Status(http.StatusOK) })
@@ -105,6 +107,18 @@ func objectStoreKey(t *testing.T, server *Server, raw string, permissions []stri
 		}
 	}
 	if _, err := server.authManager.CreateAPIKeyFromRaw(raw, user.ID, raw, "", auth.Role(""), permissions, deployments, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func roleKey(t *testing.T, server *Server, raw string, role auth.Role) string {
+	t.Helper()
+	user, err := server.authManager.CreateUser(raw, "", "password", auth.RoleService, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.authManager.CreateAPIKeyFromRaw(raw, user.ID, raw, "", role, nil, nil, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	return raw
@@ -146,6 +160,19 @@ func TestServiceReadersCannotMutateDNSOrFirewall(t *testing.T) {
 	}
 	if res := osReq(t, router, http.MethodPut, "/api/firewall", firewallKey, nil); res.Code != http.StatusForbidden {
 		t.Fatalf("firewall write status = %d, body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestOperatorCannotAccessUpdatesByDefault(t *testing.T) {
+	server, router, cleanup := setupObjectStoreTestServer(t)
+	defer cleanup()
+
+	key := roleKey(t, server, "operator-update-key", auth.RoleOperator)
+	if res := osReq(t, router, http.MethodGet, "/api/agent/update", key, nil); res.Code != http.StatusForbidden {
+		t.Fatalf("update read status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if res := osReq(t, router, http.MethodPost, "/api/agent/update", key, nil); res.Code != http.StatusForbidden {
+		t.Fatalf("update write status = %d, body = %s", res.Code, res.Body.String())
 	}
 }
 

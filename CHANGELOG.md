@@ -15,6 +15,8 @@ Sixth beta of the Albacore release, making connected servers manageable as one F
 - Existing peer credentials are restricted to their configured Fleet policy during startup
 - Fleet readers can open deployment details without gaining write access
 - Object storage and notifications have independent permission boundaries
+- Updates require dedicated access and remain admin-only by default
+- Settings, notifications, and API keys require explicit access for non-admin roles
 - Repeated metric alerts share one incident until every affected series recovers
 - Email headers keep the white logo visible in clients that ignore inline CSS
 

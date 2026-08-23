@@ -549,8 +549,8 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSettings)
 			protected.PUT("/settings/security", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSecuritySettings)
 
-			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getAgentUpdate)
-			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.triggerAgentUpdate)
+			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermUpdatesRead), s.getAgentUpdate)
+			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermUpdatesWrite), s.triggerAgentUpdate)
 			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.getNotificationTargets)
 			protected.GET("/notifications/incidents", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.listNotificationIncidents)
 			protected.GET("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.listNotificationRules)
