@@ -3,7 +3,7 @@
   "info": {
     "title": "FlatRun Agent API",
     "description": "Generated from the agent's routes and the types its handlers bind and return.",
-    "version": "0.4.0-beta.5"
+    "version": "0.4.0-beta.6"
   },
   "paths": {
     "/api/agent/update": {
