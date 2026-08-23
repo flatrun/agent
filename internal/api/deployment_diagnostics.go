@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -112,39 +113,7 @@ func (s *Server) runDeploymentDiagnostics(ctx context.Context, deployment *model
 	}
 	add("docker_health", "Docker health", dockerStatus, dockerDetail, "edit_compose", "")
 
-	metadata := deployment.Metadata
-	if metadata == nil || metadata.HealthCheck.Path == "" {
-		add("application", "Application endpoint", diagnosticSkipped, "No application health path is configured in service.yml.", "edit_healthcheck", "")
-	} else {
-		service := metadata.EffectivePrimaryService()
-		port := metadata.Networking.ContainerPort
-		path := metadata.HealthCheck.Path
-		if service == "" || port <= 0 || !validHealthPath(path) {
-			add("application", "Application endpoint", diagnosticWarning, "The application health configuration is incomplete.", "edit_healthcheck", "")
-		} else {
-			probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-			defer cancel()
-			command := fmt.Sprintf("curl -sS -w '\\n%%{http_code}' --max-time 5 %s", shellLiteral("http://127.0.0.1:"+strconv.Itoa(port)+path))
-			output, err := s.manager.ComposeExec(probeCtx, deployment.Name, service, command)
-			body, statusCode, parseErr := parseHealthResponse(output)
-			if err != nil || parseErr != nil {
-				detail := "The configured endpoint could not be reached from its service container."
-				addWithOutput("application", "Application endpoint", diagnosticFailed, detail, output, "edit_healthcheck", path)
-			} else if healthStatusAccepted(statusCode, metadata.HealthCheck.SuccessStatuses) && healthBodyAccepted(body, metadata.HealthCheck.ResponseContains) {
-				detail := fmt.Sprintf("GET %s returned HTTP %d.", path, statusCode)
-				if metadata.HealthCheck.ResponseContains != "" {
-					detail = fmt.Sprintf("GET %s returned HTTP %d and matched the expected response.", path, statusCode)
-				}
-				add("application", "Application endpoint", diagnosticPassed, detail, "", path)
-			} else if healthStatusAccepted(statusCode, metadata.HealthCheck.SuccessStatuses) {
-				addWithOutput("application", "Application endpoint", diagnosticFailed, fmt.Sprintf("GET %s returned HTTP %d but did not match the expected response.", path, statusCode), body, "edit_healthcheck", path)
-			} else if statusCode == http.StatusNotFound {
-				addWithOutput("application", "Application endpoint", diagnosticWarning, fmt.Sprintf("GET %s returned HTTP 404. Configure a health endpoint to enable this check.", path), body, "edit_healthcheck", path)
-			} else {
-				addWithOutput("application", "Application endpoint", diagnosticFailed, fmt.Sprintf("GET %s returned HTTP %d.", path, statusCode), body, "edit_healthcheck", path)
-			}
-		}
-	}
+	s.addApplicationHealthDiagnostic(ctx, deployment, add, addWithOutput)
 
 	proxyStatus := s.proxyOrchestrator.GetDeploymentProxyStatus(deployment)
 	if !proxyStatus.Exposed {
@@ -284,6 +253,89 @@ func (s *Server) addSecurityDiagnostic(result *DeploymentDiagnostics, deployment
 		result.Healthy = false
 	}
 	result.Steps = append(result.Steps, step)
+}
+
+func (s *Server) addApplicationHealthDiagnostic(
+	ctx context.Context,
+	deployment *models.Deployment,
+	add func(string, string, DiagnosticStatus, string, string, string),
+	addWithOutput func(string, string, DiagnosticStatus, string, string, string, string),
+) {
+	metadata := deployment.Metadata
+	if metadata == nil || !healthCheckConfigured(metadata.HealthCheck) {
+		add("application", "Application health", diagnosticSkipped, "No application health check is configured in service.yml.", "edit_healthcheck", "")
+		return
+	}
+	config := metadata.HealthCheck
+	checkType := healthCheckType(config)
+	service := config.Service
+	if service == "" {
+		service = metadata.EffectivePrimaryService()
+	}
+	port := config.Port
+	if port == 0 {
+		port = metadata.Networking.ContainerPort
+	}
+	if service == "" || checkType != "exec" && (port < 1 || port > 65535) || checkType == "http" && !validHealthPath(config.Path) {
+		add("application", "Application health", diagnosticWarning, "The application health configuration is incomplete.", "edit_healthcheck", "")
+		return
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	switch checkType {
+	case "tcp":
+		ip, err := s.manager.ContainerServiceIP(deployment.Name, service, "")
+		if err != nil {
+			addWithOutput("application", "Application health", diagnosticFailed, "The service container address could not be resolved.", err.Error(), "edit_healthcheck", strconv.Itoa(port))
+			return
+		}
+		connection, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(probeCtx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+		if err != nil {
+			addWithOutput("application", "Application health", diagnosticFailed, fmt.Sprintf("TCP port %d did not accept a connection.", port), err.Error(), "edit_healthcheck", strconv.Itoa(port))
+			return
+		}
+		_ = connection.Close()
+		add("application", "Application health", diagnosticPassed, fmt.Sprintf("TCP port %d accepted a connection.", port), "", strconv.Itoa(port))
+	case "exec":
+		output, err := s.manager.ComposeExec(probeCtx, deployment.Name, service, config.Command)
+		if err != nil {
+			addWithOutput("application", "Application health", diagnosticFailed, "The health command returned an error.", output, "edit_healthcheck", "exec")
+			return
+		}
+		add("application", "Application health", diagnosticPassed, "The health command completed successfully.", "", "exec")
+	default:
+		command := fmt.Sprintf("curl -sS -w '\\n%%{http_code}' --max-time 5 %s", shellLiteral("http://127.0.0.1:"+strconv.Itoa(port)+config.Path))
+		output, err := s.manager.ComposeExec(probeCtx, deployment.Name, service, command)
+		body, statusCode, parseErr := parseHealthResponse(output)
+		if err != nil || parseErr != nil {
+			addWithOutput("application", "Application health", diagnosticFailed, "The configured endpoint could not be reached from its service container.", output, "edit_healthcheck", config.Path)
+		} else if healthStatusAccepted(statusCode, config.SuccessStatuses) && healthBodyAccepted(body, config.ResponseContains) {
+			detail := fmt.Sprintf("GET %s returned HTTP %d.", config.Path, statusCode)
+			if config.ResponseContains != "" {
+				detail = fmt.Sprintf("GET %s returned HTTP %d and matched the expected response.", config.Path, statusCode)
+			}
+			add("application", "Application health", diagnosticPassed, detail, "", config.Path)
+		} else if healthStatusAccepted(statusCode, config.SuccessStatuses) {
+			addWithOutput("application", "Application health", diagnosticFailed, fmt.Sprintf("GET %s returned HTTP %d but did not match the expected response.", config.Path, statusCode), body, "edit_healthcheck", config.Path)
+		} else if statusCode == http.StatusNotFound {
+			addWithOutput("application", "Application health", diagnosticWarning, fmt.Sprintf("GET %s returned HTTP 404. Configure a health endpoint to enable this check.", config.Path), body, "edit_healthcheck", config.Path)
+		} else {
+			addWithOutput("application", "Application health", diagnosticFailed, fmt.Sprintf("GET %s returned HTTP %d.", config.Path, statusCode), body, "edit_healthcheck", config.Path)
+		}
+	}
+}
+
+func healthCheckType(config models.HealthCheckConfig) string {
+	checkType := strings.ToLower(strings.TrimSpace(config.Type))
+	if checkType == "" {
+		return "http"
+	}
+	return checkType
+}
+
+func healthCheckConfigured(config models.HealthCheckConfig) bool {
+	return strings.TrimSpace(config.Type) != "" || config.Path != "" || strings.TrimSpace(config.Command) != ""
 }
 
 var incidentIDPattern = regexp.MustCompile(`^FR-[A-F0-9]{12}$`)

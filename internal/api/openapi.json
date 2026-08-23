@@ -3,7 +3,7 @@
   "info": {
     "title": "FlatRun Agent API",
     "description": "Generated from the agent's routes and the types its handlers bind and return.",
-    "version": "0.4.0-beta.5"
+    "version": "0.4.0-beta.6"
   },
   "paths": {
     "/api/agent/update": {
@@ -33,7 +33,7 @@
         "tags": [
           "agent"
         ],
-        "x-permission": "settings:read"
+        "x-permission": "updates:read"
       },
       "post": {
         "operationId": "post-agent-update",
@@ -55,7 +55,7 @@
         "tags": [
           "agent"
         ],
-        "x-permission": "settings:write"
+        "x-permission": "updates:write"
       }
     },
     "/api/ai/agents": {
@@ -459,6 +459,20 @@
             "description": "Success"
           }
         }
+      }
+    },
+    "/api/alerts/target-options": {
+      "get": {
+        "operationId": "get-alerts-target-options",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "alerts"
+        ],
+        "x-permission": "alerts:read"
       }
     },
     "/api/apikeys": {
@@ -1727,6 +1741,162 @@
                 }
               }
             },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      }
+    },
+    "/api/cluster/peers/{name}/proxy/{path}": {
+      "delete": {
+        "operationId": "delete-cluster-peers-by-name-proxy-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      },
+      "get": {
+        "operationId": "get-cluster-peers-by-name-proxy-by-path",
+        "tags": [
+          "cluster"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patch-cluster-peers-by-name-proxy-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      },
+      "post": {
+        "operationId": "post-cluster-peers-by-name-proxy-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "cluster"
+        ],
+        "x-permission": "cluster:write"
+      },
+      "put": {
+        "operationId": "put-cluster-peers-by-name-proxy-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
             "description": "Success"
           }
         },
@@ -6869,7 +7039,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:read"
+        "x-permission": "notifications:read"
       }
     },
     "/api/notifications/rules": {
@@ -6883,7 +7053,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:read"
+        "x-permission": "notifications:read"
       },
       "put": {
         "operationId": "put-notifications-rules",
@@ -6916,7 +7086,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:write"
+        "x-permission": "notifications:write"
       }
     },
     "/api/notifications/targets": {
@@ -6937,7 +7107,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:read"
+        "x-permission": "notifications:read"
       },
       "put": {
         "operationId": "put-notifications-targets",
@@ -6966,7 +7136,7 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:write"
+        "x-permission": "notifications:write"
       }
     },
     "/api/notifications/test": {
@@ -7006,7 +7176,21 @@
         "tags": [
           "notifications"
         ],
-        "x-permission": "settings:write"
+        "x-permission": "notifications:write"
+      }
+    },
+    "/api/object-stores": {
+      "get": {
+        "operationId": "get-object-stores",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "object-stores"
+        ],
+        "x-permission": "storage:read"
       }
     },
     "/api/object-stores/provision-managed": {
@@ -7030,7 +7214,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/object-stores/{name}/attach": {
@@ -7107,7 +7291,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:read"
+        "x-permission": "storage:read"
       },
       "post": {
         "operationId": "post-object-stores-by-name-buckets",
@@ -7153,7 +7337,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/object-stores/{name}/buckets/{bucket}": {
@@ -7185,7 +7369,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:delete"
+        "x-permission": "storage:delete"
       }
     },
     "/api/object-stores/{name}/objects": {
@@ -7223,7 +7407,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:delete"
       },
       "get": {
         "operationId": "get-object-stores-by-name-objects",
@@ -7266,7 +7450,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:read"
+        "x-permission": "storage:read"
       },
       "post": {
         "operationId": "post-object-stores-by-name-objects",
@@ -7288,7 +7472,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/object-stores/{name}/objects/download": {
@@ -7326,7 +7510,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:read"
+        "x-permission": "storage:read"
       }
     },
     "/api/object-stores/{name}/replicate": {
@@ -7374,7 +7558,7 @@
         "tags": [
           "object-stores"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/openapi.json": {
@@ -9288,7 +9472,7 @@
         "tags": [
           "storage-credentials"
         ],
-        "x-permission": "backups:read"
+        "x-permission": "storage:read"
       },
       "post": {
         "operationId": "post-storage-credentials",
@@ -9337,7 +9521,7 @@
         "tags": [
           "storage-credentials"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/storage-credentials/{id}": {
@@ -9361,7 +9545,7 @@
         "tags": [
           "storage-credentials"
         ],
-        "x-permission": "backups:delete"
+        "x-permission": "storage:delete"
       },
       "put": {
         "operationId": "put-storage-credentials-by-id",
@@ -9411,7 +9595,7 @@
         "tags": [
           "storage-credentials"
         ],
-        "x-permission": "backups:write"
+        "x-permission": "storage:write"
       }
     },
     "/api/subdomain/generate": {
@@ -13607,13 +13791,22 @@
       "models.HealthCheckConfig": {
         "type": "object",
         "properties": {
+          "command": {
+            "type": "string"
+          },
           "interval": {
             "type": "string"
           },
           "path": {
             "type": "string"
           },
+          "port": {
+            "type": "integer"
+          },
           "response_contains": {
+            "type": "string"
+          },
+          "service": {
             "type": "string"
           },
           "success_statuses": {
@@ -13621,18 +13814,29 @@
             "items": {
               "type": "integer"
             }
+          },
+          "type": {
+            "type": "string"
           }
         },
         "x-property-order": [
+          "type",
+          "service",
+          "port",
           "path",
           "interval",
           "success_statuses",
-          "response_contains"
+          "response_contains",
+          "command"
         ],
         "x-columns": [
+          "type",
+          "service",
+          "port",
           "path",
           "interval",
-          "response_contains"
+          "response_contains",
+          "command"
         ]
       },
       "models.LogSource": {

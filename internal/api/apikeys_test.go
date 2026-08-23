@@ -337,13 +337,11 @@ func TestRevokeAPIKey(t *testing.T) {
 	}
 }
 
-func TestOperatorCanAccessOwnAPIKeys(t *testing.T) {
+func TestOperatorCannotAccessAPIKeysWithoutExplicitPermission(t *testing.T) {
 	server, router, cleanup := setupAPIKeyTestServer(t)
 	defer cleanup()
 
-	operator, _ := server.authManager.CreateUser("operator", "", "operatorpass", auth.RoleOperator, nil)
-
-	_, _, _ = server.authManager.CreateAPIKey(operator.ID, "Operator's Key", "", "", nil, nil, time.Time{})
+	_, _ = server.authManager.CreateUser("operator", "", "operatorpass", auth.RoleOperator, nil)
 
 	token := apiKeyLogin(t, router, "operator", "operatorpass")
 
@@ -353,16 +351,8 @@ func TestOperatorCanAccessOwnAPIKeys(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]interface{}
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-
-	keys := resp["api_keys"].([]interface{})
-	if len(keys) != 1 {
-		t.Errorf("Operator should see their own 1 key, got %d", len(keys))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -81,6 +81,32 @@ func TestRequirePlanToggleViaMetadata(t *testing.T) {
 	}
 }
 
+func TestUpdateDeploymentMetadataAcceptsTCPHealthCheck(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "database", &models.ServiceMetadata{Name: "database", Type: "postgres"})
+
+	resp, parsed := doJSON(t, http.MethodPut, ts.URL+"/api/deployments/database/metadata",
+		map[string]interface{}{
+			"healthcheck": map[string]interface{}{
+				"type":     "tcp",
+				"service":  "postgres",
+				"port":     5432,
+				"interval": "30s",
+			},
+		})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metadata update status = %d, body %v", resp.StatusCode, parsed)
+	}
+
+	deployment, err := s.manager.GetDeployment("database")
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	if deployment.Metadata.HealthCheck.Type != "tcp" || deployment.Metadata.HealthCheck.Service != "postgres" || deployment.Metadata.HealthCheck.Port != 5432 {
+		t.Fatalf("health check not persisted: %+v", deployment.Metadata.HealthCheck)
+	}
+}
+
 func TestServiceActionPlan(t *testing.T) {
 	_, tmpDir, ts := setupPlanTestServer(t)
 	createTestDeployment(t, tmpDir, "myapp", nil)

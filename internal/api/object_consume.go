@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/gin-gonic/gin"
 )
@@ -31,6 +32,13 @@ func (s *Server) attachStoreToDeployment(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if filepath.IsAbs(req.Deployment) || filepath.Base(req.Deployment) != req.Deployment || req.Deployment == "." || req.Deployment == ".." {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid deployment name"})
+		return
+	}
+	if !s.requireDeploymentAccess(c, req.Deployment, auth.AccessLevelWrite) {
 		return
 	}
 	prefix := req.Prefix

@@ -15,6 +15,7 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/cluster"
+	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/orchestrator"
 	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/pkg/config"
@@ -102,6 +103,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		configPath:     tmpDir + "/config.yml",
 		authManager:    authManager,
 		clusterManager: clusterManager,
+		manager:        docker.NewManager(tmpDir),
 	}
 
 	router := gin.New()
@@ -116,6 +118,7 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 	protected.Use(authMiddleware.RequireAuth())
 	{
 		protected.GET("/capacity", authMiddleware.RequirePermission(auth.PermSystemRead), server.getCapacityStatus)
+		protected.GET("/deployments", authMiddleware.RequirePermission(auth.PermDeploymentsRead), server.listDeployments)
 		protected.GET("/test/deployments", authMiddleware.RequirePermission(auth.PermDeploymentsRead), func(c *gin.Context) {
 			c.Status(http.StatusNoContent)
 		})
@@ -136,7 +139,11 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 			clusterGroup.POST("/invite", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterInvite)
 			clusterGroup.POST("/accept", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterAccept)
 			clusterGroup.DELETE("/peers/:name", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterRemovePeer)
-			clusterGroup.Any("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.GET("/peers/:name/proxy/*path", server.clusterProxy)
+			clusterGroup.POST("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.PUT("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.PATCH("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
+			clusterGroup.DELETE("/peers/:name/proxy/*path", authMiddleware.RequirePermission(auth.PermClusterWrite), server.clusterProxy)
 			clusterGroup.GET("/deployments", server.clusterAggregateDeployments)
 			clusterGroup.GET("/stats", server.clusterAggregateStats)
 			clusterGroup.GET("/capacity", server.clusterAggregateCapacity)
@@ -156,6 +163,57 @@ func setupClusterTestServer(t *testing.T, serverName string, clusterEnabled bool
 		router:  router,
 		tmpDir:  tmpDir,
 		cleanup: cleanup,
+	}
+}
+
+func TestClusterDeploymentsIncludesPeerWhenLocalServerIsEmpty(t *testing.T) {
+	local := setupClusterTestServer(t, "local", true)
+	defer local.cleanup()
+	remote := setupClusterTestServer(t, "remote", true)
+	defer remote.cleanup()
+
+	if err := remote.server.manager.CreateDeployment("remote-app", `services:
+  app:
+    image: nginx:alpine
+`, nil); err != nil {
+		t.Fatal(err)
+	}
+	const peerKey = "local-to-remote-key"
+	if err := remote.server.createClusterAPIKey(peerKey, "local"); err != nil {
+		t.Fatal(err)
+	}
+	remoteHTTP := httptest.NewServer(remote.router)
+	defer remoteHTTP.Close()
+	if err := local.server.clusterManager.AddPeer("remote", remoteHTTP.URL, peerKey); err != nil {
+		t.Fatal(err)
+	}
+
+	token := clusterLogin(t, local.router)
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/deployments", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	local.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Servers map[string]struct {
+			Data struct {
+				Deployments []struct {
+					Name string `json:"name"`
+				} `json:"deployments"`
+			} `json:"data"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Servers["local"].Data.Deployments) != 0 {
+		t.Fatalf("local deployments = %#v", response.Servers["local"].Data.Deployments)
+	}
+	remoteDeployments := response.Servers["remote"].Data.Deployments
+	if len(remoteDeployments) != 1 || remoteDeployments[0].Name != "remote-app" {
+		t.Fatalf("remote deployments = %#v", remoteDeployments)
 	}
 }
 
@@ -189,6 +247,52 @@ func TestClusterCapacityIncludesLocalOfferPolicy(t *testing.T) {
 	}
 	if local.Data.Offer.Enabled {
 		t.Fatal("fleet capacity should require explicit permission")
+	}
+}
+
+func TestClusterRemovePeerDeletesOnlyItsServiceCredential(t *testing.T) {
+	env := setupClusterTestServer(t, "server-a", true)
+	defer env.cleanup()
+
+	if err := env.server.clusterManager.AddPeer("server-b", "https://server-b.example.com", "peer-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.server.createClusterAPIKey("credential-for-server-b", "server-b"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := env.server.authManager.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := env.server.authManager.CreateAPIKey(
+		admin.ID, "cluster-peer-server-b", "User-managed key", auth.RoleAdmin, nil, nil, time.Time{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	token := clusterLogin(t, env.router)
+	req := httptest.NewRequest(http.MethodDelete, "/api/cluster/peers/server-b", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := env.server.clusterManager.GetPeer("server-b"); err == nil {
+		t.Fatal("peer still exists")
+	}
+	keys, err := env.server.authManager.GetAllAPIKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matching []auth.APIKey
+	for _, key := range keys {
+		if key.Name == "cluster-peer-server-b" {
+			matching = append(matching, key)
+		}
+	}
+	if len(matching) != 1 || matching[0].UserID != admin.ID {
+		t.Fatalf("remaining matching keys = %+v", matching)
 	}
 }
 
@@ -814,6 +918,47 @@ func TestClusterProxyForwardsToPeer(t *testing.T) {
 	}
 	if resp["proxied_method"] != "GET" {
 		t.Errorf("Proxied method = %s, want GET", resp["proxied_method"])
+	}
+}
+
+func TestClusterProxyAllowsReadWithoutWrite(t *testing.T) {
+	peerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"deployment":{"name":"shop"}}`))
+	}))
+	defer peerServer.Close()
+
+	env := setupClusterTestServer(t, "primary", true)
+	defer env.cleanup()
+	if err := env.server.clusterManager.AddPeer("remote", peerServer.URL, "key"); err != nil {
+		t.Fatal(err)
+	}
+	user, err := env.server.authManager.CreateUser("fleet-reader", "", "password", auth.RoleService, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = env.server.authManager.CreateAPIKeyFromRaw(
+		"fleet-reader-key", user.ID, "fleet-reader", "Fleet reader", auth.Role(""),
+		[]string{auth.PermClusterRead.String()}, nil, time.Time{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/peers/remote/proxy/deployments/shop", nil)
+	req.Header.Set("Authorization", "Bearer fleet-reader-key")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("read status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/cluster/peers/remote/proxy/deployments/shop/restart", nil)
+	req.Header.Set("Authorization", "Bearer fleet-reader-key")
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("write status = %d, body = %s", w.Code, w.Body.String())
 	}
 }
 

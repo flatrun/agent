@@ -203,6 +203,39 @@ func TestActorContextCanAccessDeployment(t *testing.T) {
 			want:           false,
 		},
 		{
+			name: "service user access is defined by its key",
+			actor: &ActorContext{
+				User:   &User{Username: "__flatrun_cluster", Role: RoleService},
+				Role:   RoleService,
+				APIKey: &APIKey{Deployments: DeploymentAccess{"my-app": AccessLevelRead}},
+			},
+			deploymentName: "my-app",
+			requiredLevel:  "read",
+			want:           true,
+		},
+		{
+			name: "service user remains limited by its key",
+			actor: &ActorContext{
+				User:   &User{Username: "__flatrun_cluster", Role: RoleService},
+				Role:   RoleService,
+				APIKey: &APIKey{Deployments: DeploymentAccess{"my-app": AccessLevelRead}},
+			},
+			deploymentName: "other-app",
+			requiredLevel:  "read",
+			want:           false,
+		},
+		{
+			name: "non fleet service user keeps intersected access",
+			actor: &ActorContext{
+				User:   &User{Username: "integration", Role: RoleService},
+				Role:   RoleService,
+				APIKey: &APIKey{Deployments: DeploymentAccess{"my-app": AccessLevelRead}},
+			},
+			deploymentName: "my-app",
+			requiredLevel:  "read",
+			want:           false,
+		},
+		{
 			name: "operator user with both grants takes the lower level",
 			actor: &ActorContext{
 				User:        &User{Role: RoleOperator},

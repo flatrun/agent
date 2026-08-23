@@ -113,8 +113,8 @@ func (s *Server) platformSection(deploymentName string) ai.Section {
 			} else {
 				fmt.Fprintf(&b, "This deployment is not exposed through the reverse proxy\n")
 			}
-			if meta.HealthCheck.Path != "" {
-				fmt.Fprintf(&b, "Configured health check path: %s\n", meta.HealthCheck.Path)
+			if healthCheckConfigured(meta.HealthCheck) {
+				fmt.Fprintf(&b, "Configured health check type: %s\n", healthCheckType(meta.HealthCheck))
 			}
 			if len(meta.Databases) > 0 {
 				aliases := make([]string, 0, len(meta.Databases))

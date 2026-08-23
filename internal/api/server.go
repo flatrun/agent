@@ -56,6 +56,7 @@ import (
 	"github.com/flatrun/agent/internal/traffic"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
+	"github.com/flatrun/agent/pkg/pluginapi"
 	"github.com/flatrun/agent/pkg/plugins"
 	dnsPlugins "github.com/flatrun/agent/pkg/plugins/dns"
 	"github.com/flatrun/agent/pkg/plugins/firewall"
@@ -549,14 +550,15 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/settings", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSettings)
 			protected.PUT("/settings/security", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateSecuritySettings)
 
-			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getAgentUpdate)
-			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.triggerAgentUpdate)
-			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.getNotificationTargets)
-			protected.GET("/notifications/incidents", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.listNotificationIncidents)
-			protected.GET("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.listNotificationRules)
-			protected.PUT("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationRules)
-			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.updateNotificationTargets)
-			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermSettingsWrite), s.testNotification)
+			protected.GET("/agent/update", s.authMiddleware.RequirePermission(auth.PermUpdatesRead), s.getAgentUpdate)
+			protected.POST("/agent/update", s.authMiddleware.RequirePermission(auth.PermUpdatesWrite), s.triggerAgentUpdate)
+			protected.GET("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.getNotificationTargets)
+			protected.GET("/alerts/target-options", s.authMiddleware.RequirePermission(auth.PermAlertsRead), s.getAlertTargetOptions)
+			protected.GET("/notifications/incidents", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.listNotificationIncidents)
+			protected.GET("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermNotificationsRead), s.listNotificationRules)
+			protected.PUT("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.updateNotificationRules)
+			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.updateNotificationTargets)
+			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.testNotification)
 			protected.GET("/config", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listConfig)
 			protected.GET("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.getConfigKey)
 			protected.PUT("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigWrite), s.updateConfigKey)
@@ -616,7 +618,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/plugins/:name", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getPlugin)
 			protected.POST("/plugins/:name/deployments", s.authMiddleware.RequirePermission(auth.PermTemplatesWrite), s.createPluginDeployment)
 
-			protected.Any("/plugin/:name/*proxyPath", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.proxyToPlugin)
+			protected.Any("/plugin/:name/*proxyPath", s.proxyToPlugin)
 			protected.Any("/marketplace/*path", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.proxyMarketplace)
 			protected.GET("/templates", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.listTemplates)
 			protected.GET("/templates/categories", s.authMiddleware.RequirePermission(auth.PermTemplatesRead), s.getTemplateCategories)
@@ -757,10 +759,10 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/source-credentials/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.deleteSourceCredential)
 
 			// Storage credential endpoints (S3 and other object-storage secrets)
-			protected.GET("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStorageCredentials)
-			protected.POST("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.createStorageCredential)
-			protected.PUT("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.updateStorageCredential)
-			protected.DELETE("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.deleteStorageCredential)
+			protected.GET("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.listStorageCredentials)
+			protected.POST("/storage-credentials", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.createStorageCredential)
+			protected.PUT("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.updateStorageCredential)
+			protected.DELETE("/storage-credentials/:id", s.authMiddleware.RequirePermission(auth.PermStorageDelete), s.deleteStorageCredential)
 
 			// Security endpoints
 			protected.GET("/security/stats", s.authMiddleware.RequirePermission(auth.PermSecurityRead), s.getSecurityStats)
@@ -819,16 +821,17 @@ func (s *Server) setupRoutes() {
 			protected.POST("/backup-destinations/test", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.testBackupDestination)
 
 			// Object stores
-			protected.POST("/object-stores/provision-managed", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.provisionManagedObjectStore)
-			protected.GET("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStoreBuckets)
-			protected.POST("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.createStoreBucket)
-			protected.DELETE("/object-stores/:name/buckets/:bucket", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.deleteStoreBucket)
-			protected.GET("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listStoreObjects)
-			protected.POST("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.uploadStoreObject)
-			protected.GET("/object-stores/:name/objects/download", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.downloadStoreObject)
-			protected.DELETE("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.deleteStoreObject)
-			protected.POST("/object-stores/:name/attach", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.attachStoreToDeployment)
-			protected.POST("/object-stores/:name/replicate", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.replicateStore)
+			protected.GET("/object-stores", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.listBackupDestinations)
+			protected.POST("/object-stores/provision-managed", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.provisionManagedObjectStore)
+			protected.GET("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.listStoreBuckets)
+			protected.POST("/object-stores/:name/buckets", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.createStoreBucket)
+			protected.DELETE("/object-stores/:name/buckets/:bucket", s.authMiddleware.RequirePermission(auth.PermStorageDelete), s.deleteStoreBucket)
+			protected.GET("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.listStoreObjects)
+			protected.POST("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.uploadStoreObject)
+			protected.GET("/object-stores/:name/objects/download", s.authMiddleware.RequirePermission(auth.PermStorageRead), s.downloadStoreObject)
+			protected.DELETE("/object-stores/:name/objects", s.authMiddleware.RequirePermission(auth.PermStorageDelete), s.deleteStoreObject)
+			protected.POST("/object-stores/:name/attach", s.authMiddleware.RequirePermission(auth.PermStorageWrite, auth.PermDeploymentsWrite), s.attachStoreToDeployment)
+			protected.POST("/object-stores/:name/replicate", s.authMiddleware.RequirePermission(auth.PermStorageWrite), s.replicateStore)
 
 			// Scheduler endpoints
 			protected.GET("/scheduler/tasks", s.authMiddleware.RequirePermission(auth.PermSchedulerRead), s.listScheduledTasks)
@@ -890,6 +893,7 @@ func (s *Server) setupRoutes() {
 			// DNS plugin routes
 			dnsGroup := protected.Group("/dns")
 			dnsGroup.Use(s.authMiddleware.RequirePermission(auth.PermDNSRead))
+			dnsGroup.Use(s.requireDNSWriteForMutations())
 			{
 				dnsGroup.GET("/providers", s.listDNSProviders)
 
@@ -900,11 +904,14 @@ func (s *Server) setupRoutes() {
 				}
 
 				// PowerDNS routes
-				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(protected)
+				NewPowerDNSHandlers(s.powerDNSManager).RegisterRoutes(dnsGroup)
 			}
 
 			// Firewall built-in app routes (config + plan; enforcement not wired yet)
-			_ = s.firewall.RegisterRoutes(protected)
+			firewallGroup := protected.Group("")
+			firewallGroup.Use(s.authMiddleware.RequirePermission(auth.PermSecurityRead))
+			firewallGroup.Use(s.requireWriteForMethods(auth.PermSecurityWrite, http.MethodPut))
+			_ = s.firewall.RegisterRoutes(firewallGroup)
 
 			// Cluster endpoints
 			protected.POST("/cluster/capacity/claim", s.authMiddleware.RequirePermission(auth.PermClusterCapacityClaim), s.clusterCapacityClaim)
@@ -919,7 +926,11 @@ func (s *Server) setupRoutes() {
 				clusterGroup.POST("/invite", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterInvite)
 				clusterGroup.POST("/accept", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterAccept)
 				clusterGroup.DELETE("/peers/:name", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterRemovePeer)
-				clusterGroup.Any("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
+				clusterGroup.GET("/peers/:name/proxy/*path", s.clusterProxy)
+				clusterGroup.POST("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
+				clusterGroup.PUT("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
+				clusterGroup.PATCH("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
+				clusterGroup.DELETE("/peers/:name/proxy/*path", s.authMiddleware.RequirePermission(auth.PermClusterWrite), s.clusterProxy)
 				clusterGroup.GET("/deployments", s.clusterAggregateDeployments)
 				clusterGroup.GET("/stats", s.clusterAggregateStats)
 				clusterGroup.GET("/capacity", s.clusterAggregateCapacity)
@@ -1986,8 +1997,21 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 }
 
 func validateHealthCheckConfig(config models.HealthCheckConfig) error {
-	if config.Path != "" && !validHealthPath(config.Path) {
+	checkType := healthCheckType(config)
+	if checkType != "http" && checkType != "tcp" && checkType != "exec" {
+		return fmt.Errorf("health check type must be http, tcp, or exec")
+	}
+	if len(config.Service) > 128 {
+		return fmt.Errorf("health check service cannot exceed 128 characters")
+	}
+	if config.Port < 0 || config.Port > 65535 {
+		return fmt.Errorf("health check port must be from 1 through 65535")
+	}
+	if checkType == "http" && config.Path != "" && !validHealthPath(config.Path) {
 		return fmt.Errorf("health check path must start with / and contain a valid request path")
+	}
+	if checkType != "http" && (config.Path != "" || len(config.SuccessStatuses) > 0 || config.ResponseContains != "") {
+		return fmt.Errorf("only HTTP health checks accept a path, status codes, or response text")
 	}
 	if len(config.SuccessStatuses) > 20 {
 		return fmt.Errorf("health check accepts at most 20 status codes")
@@ -1999,6 +2023,15 @@ func validateHealthCheckConfig(config models.HealthCheckConfig) error {
 	}
 	if len(config.ResponseContains) > 512 {
 		return fmt.Errorf("health check response text cannot exceed 512 characters")
+	}
+	if checkType == "exec" && strings.TrimSpace(config.Command) == "" {
+		return fmt.Errorf("exec health checks require a command")
+	}
+	if checkType != "exec" && config.Command != "" {
+		return fmt.Errorf("only exec health checks accept a command")
+	}
+	if len(config.Command) > 2048 || strings.ContainsRune(config.Command, 0) {
+		return fmt.Errorf("health check command is invalid or exceeds 2048 characters")
 	}
 	return nil
 }
@@ -3451,6 +3484,17 @@ func (s *Server) getNotificationTargets(c *gin.Context) {
 	c.JSON(http.StatusOK, s.notify.Load())
 }
 
+func (s *Server) getAlertTargetOptions(c *gin.Context) {
+	targets := s.notify.Load().Targets
+	options := make([]gin.H, 0, len(targets))
+	for _, target := range targets {
+		if target.Enabled {
+			options = append(options, gin.H{"id": target.ID, "name": target.Name})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"targets": options})
+}
+
 func (s *Server) updateNotificationTargets(c *gin.Context) {
 	var cfg notify.Config
 	if err := c.ShouldBindJSON(&cfg); err != nil {
@@ -3604,16 +3648,82 @@ func (s *Server) proxyMarketplace(c *gin.Context) {
 
 func (s *Server) proxyToPlugin(c *gin.Context) {
 	name := c.Param("name")
+	pluginPath := c.Param("proxyPath")
+	required := pluginPermission(name, pluginPath, c.Request.Method)
+	actor := auth.GetActorFromContext(c)
+	if actor == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+		return
+	}
+	if !actor.HasPermission(required) {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Permission denied: %s required", required)})
+		return
+	}
+	access := actorResourceAccess(actor)
+	encodedAccess, err := pluginapi.EncodeResourceAccess(access)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not prepare plugin access"})
+		return
+	}
 	proxy, ok := s.pluginHost.Proxy(name)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not running"})
 		return
 	}
-	c.Request.URL.Path = c.Param("proxyPath")
+	c.Request.Header.Del(pluginapi.ResourceAccessHeader)
+	c.Request.Header.Set(pluginapi.ResourceAccessHeader, encodedAccess)
+	c.Request.URL.Path = pluginPath
 	if c.Request.URL.Path == "" {
 		c.Request.URL.Path = "/"
 	}
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func pluginPermission(name, pluginPath, method string) auth.Permission {
+	write := method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
+	if name == "observability" && strings.HasPrefix(pluginPath, "/alerts/") {
+		if write {
+			return auth.PermAlertsWrite
+		}
+		return auth.PermAlertsRead
+	}
+	if write {
+		return auth.PermTemplatesWrite
+	}
+	return auth.PermTemplatesRead
+}
+
+func actorResourceAccess(actor *auth.ActorContext) pluginapi.ResourceAccess {
+	userIsAdmin := actor.User == nil && actor.Role == auth.RoleAdmin
+	if actor.User != nil {
+		userIsAdmin = actor.User.Role == auth.RoleAdmin
+	}
+	access := pluginapi.ResourceAccess{Global: userIsAdmin && (actor.APIKey == nil || len(actor.APIKey.Deployments) == 0)}
+	if access.Global {
+		return access
+	}
+	candidates := make(map[string]struct{}, len(actor.Deployments))
+	for id := range actor.Deployments {
+		candidates[id] = struct{}{}
+	}
+	if actor.APIKey != nil {
+		for id := range actor.APIKey.Deployments {
+			candidates[id] = struct{}{}
+		}
+	}
+	for id := range candidates {
+		level := ""
+		for _, candidate := range []string{auth.AccessLevelAdmin, auth.AccessLevelWrite, auth.AccessLevelRead} {
+			if actor.CanAccessDeployment(id, candidate) {
+				level = candidate
+				break
+			}
+		}
+		if level != "" {
+			access.Grants = append(access.Grants, pluginapi.ResourceGrant{Resource: "deployment", ID: id, Level: level})
+		}
+	}
+	return access
 }
 
 func (s *Server) getPlugin(c *gin.Context) {
@@ -7485,4 +7595,34 @@ func (s *Server) deploymentAuthOptions(name string) (credentials.AuthConfig, []d
 		return credentials.AuthConfig{}, nil
 	}
 	return cfg, []docker.RunOption{docker.WithDockerConfig(cfg.Dir())}
+}
+
+func (s *Server) requireDNSWriteForMutations() gin.HandlerFunc {
+	write := s.authMiddleware.RequirePermission(auth.PermDNSWrite)
+	return func(c *gin.Context) {
+		method := c.Request.Method
+		requestPath := c.Request.URL.Path
+		mutation := method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
+		mutation = mutation || method == http.MethodPost && (strings.Contains(requestPath, "/dns/powerdns/") || strings.HasSuffix(requestPath, "/records/create"))
+		if mutation {
+			write(c)
+			return
+		}
+		c.Next()
+	}
+}
+
+func (s *Server) requireWriteForMethods(permission auth.Permission, methods ...string) gin.HandlerFunc {
+	write := s.authMiddleware.RequirePermission(permission)
+	allowed := make(map[string]struct{}, len(methods))
+	for _, method := range methods {
+		allowed[method] = struct{}{}
+	}
+	return func(c *gin.Context) {
+		if _, ok := allowed[c.Request.Method]; ok {
+			write(c)
+			return
+		}
+		c.Next()
+	}
 }

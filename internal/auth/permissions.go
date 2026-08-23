@@ -21,6 +21,14 @@ const (
 	PermBackupsRead   Permission = "backups:read"
 	PermBackupsWrite  Permission = "backups:write"
 	PermBackupsDelete Permission = "backups:delete"
+	PermStorageRead   Permission = "storage:read"
+	PermStorageWrite  Permission = "storage:write"
+	PermStorageDelete Permission = "storage:delete"
+
+	PermNotificationsRead  Permission = "notifications:read"
+	PermNotificationsWrite Permission = "notifications:write"
+	PermAlertsRead         Permission = "alerts:read"
+	PermAlertsWrite        Permission = "alerts:write"
 
 	PermUsersRead   Permission = "users:read"
 	PermUsersWrite  Permission = "users:write"
@@ -32,6 +40,8 @@ const (
 
 	PermSettingsRead  Permission = "settings:read"
 	PermSettingsWrite Permission = "settings:write"
+	PermUpdatesRead   Permission = "updates:read"
+	PermUpdatesWrite  Permission = "updates:write"
 
 	PermConfigRead  Permission = "config:read"
 	PermConfigWrite Permission = "config:write"
@@ -89,9 +99,13 @@ var adminPermissions = []Permission{
 	PermNetworksRead, PermNetworksWrite, PermNetworksDelete,
 	PermSecurityRead, PermSecurityWrite,
 	PermBackupsRead, PermBackupsWrite, PermBackupsDelete,
+	PermStorageRead, PermStorageWrite, PermStorageDelete,
+	PermNotificationsRead, PermNotificationsWrite,
+	PermAlertsRead, PermAlertsWrite,
 	PermUsersRead, PermUsersWrite, PermUsersDelete,
 	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
 	PermSettingsRead, PermSettingsWrite,
+	PermUpdatesRead, PermUpdatesWrite,
 	PermConfigRead, PermConfigWrite,
 	PermAuditRead,
 	PermContainersRead, PermContainersWrite, PermContainersDelete,
@@ -114,8 +128,7 @@ var operatorPermissions = []Permission{
 	PermNetworksRead,
 	PermSecurityRead,
 	PermBackupsRead, PermBackupsWrite,
-	PermAPIKeysRead, PermAPIKeysWrite, PermAPIKeysDelete,
-	PermSettingsRead,
+	PermStorageRead, PermStorageWrite,
 	PermContainersRead, PermContainersWrite,
 	PermImagesRead, PermImagesWrite,
 	PermVolumesRead, PermVolumesWrite,
@@ -127,6 +140,7 @@ var operatorPermissions = []Permission{
 	PermRegistriesRead, PermRegistriesWrite,
 	PermTemplatesRead,
 	PermTrafficRead,
+	PermAlertsRead, PermAlertsWrite,
 }
 
 var viewerPermissions = []Permission{
@@ -135,8 +149,7 @@ var viewerPermissions = []Permission{
 	PermNetworksRead,
 	PermSecurityRead,
 	PermBackupsRead,
-	PermAPIKeysRead,
-	PermSettingsRead,
+	PermStorageRead,
 	PermContainersRead,
 	PermImagesRead,
 	PermVolumesRead,
@@ -148,6 +161,7 @@ var viewerPermissions = []Permission{
 	PermRegistriesRead,
 	PermTemplatesRead,
 	PermTrafficRead,
+	PermAlertsRead,
 }
 
 func GetRolePermissions(role Role) []Permission {

@@ -332,10 +332,14 @@ type SSLConfig struct {
 }
 
 type HealthCheckConfig struct {
+	Type             string `yaml:"type,omitempty" json:"type,omitempty"`
+	Service          string `yaml:"service,omitempty" json:"service,omitempty"`
+	Port             int    `yaml:"port,omitempty" json:"port,omitempty"`
 	Path             string `yaml:"path" json:"path"`
 	Interval         string `yaml:"interval" json:"interval"`
 	SuccessStatuses  []int  `yaml:"success_statuses,omitempty" json:"success_statuses,omitempty"`
 	ResponseContains string `yaml:"response_contains,omitempty" json:"response_contains,omitempty"`
+	Command          string `yaml:"command,omitempty" json:"command,omitempty"`
 }
 
 type DeploymentStatus string

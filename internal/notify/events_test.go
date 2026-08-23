@@ -126,3 +126,30 @@ func TestPublishUsesMatchingRules(t *testing.T) {
 		t.Fatalf("targets = %#v", targets)
 	}
 }
+
+func TestPublishUsesExplicitEventTargets(t *testing.T) {
+	service := NewService(t.TempDir())
+	defer service.Close()
+	if err := service.Save(Config{Targets: []Target{
+		{ID: "selected", URL: "generic+https://selected.example.test", Enabled: true},
+		{ID: "other", URL: "generic+https://other.example.test", Enabled: true},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var targets []string
+	service.send = func(target, _ string) error {
+		targets = append(targets, target)
+		return nil
+	}
+
+	_, err := service.Publish(events.Event{
+		Source: "observability", Type: "metric.alert", Severity: events.SeverityWarning,
+		Title: "High memory", TargetIDs: []string{"selected"}, OccurredAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || !strings.Contains(targets[0], "selected.example.test") {
+		t.Fatalf("targets = %#v", targets)
+	}
+}
