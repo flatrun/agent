@@ -13791,13 +13791,22 @@
       "models.HealthCheckConfig": {
         "type": "object",
         "properties": {
+          "command": {
+            "type": "string"
+          },
           "interval": {
             "type": "string"
           },
           "path": {
             "type": "string"
           },
+          "port": {
+            "type": "integer"
+          },
           "response_contains": {
+            "type": "string"
+          },
+          "service": {
             "type": "string"
           },
           "success_statuses": {
@@ -13805,18 +13814,29 @@
             "items": {
               "type": "integer"
             }
+          },
+          "type": {
+            "type": "string"
           }
         },
         "x-property-order": [
+          "type",
+          "service",
+          "port",
           "path",
           "interval",
           "success_statuses",
-          "response_contains"
+          "response_contains",
+          "command"
         ],
         "x-columns": [
+          "type",
+          "service",
+          "port",
           "path",
           "interval",
-          "response_contains"
+          "response_contains",
+          "command"
         ]
       },
       "models.LogSource": {

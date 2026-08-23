@@ -157,7 +157,9 @@ func BuildWorkload(deployment *models.Deployment, composeContent string, replica
 			break
 		}
 	}
-	workload.Health.Path = deployment.Metadata.HealthCheck.Path
+	if checkType := strings.ToLower(strings.TrimSpace(deployment.Metadata.HealthCheck.Type)); checkType == "" || checkType == "http" {
+		workload.Health.Path = deployment.Metadata.HealthCheck.Path
+	}
 	return workload, nil
 }
 

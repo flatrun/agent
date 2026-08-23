@@ -76,6 +76,21 @@ func (m *Manager) ContainerPrimaryIP(project, network string) (string, error) {
 	return m.apiClient.ContainerPrimaryIP(ctx, project, network)
 }
 
+func (m *Manager) ContainerServiceIP(deploymentName, service, network string) (string, error) {
+	if m.apiClient == nil {
+		return "", fmt.Errorf("docker api client unavailable")
+	}
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(deploymentName)
+	m.mu.RUnlock()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), statusReadTimeout)
+	defer cancel()
+	return m.apiClient.ContainerServiceIP(ctx, m.executor.getProjectName(deployment.Path), service, network)
+}
+
 // projectFor resolves a deployment's compose project name without shelling out.
 // It mirrors ComposeExecutor.getProjectName, except that the fallback probe for
 // an existing project reads the already-fetched index instead of running

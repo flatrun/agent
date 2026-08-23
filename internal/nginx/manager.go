@@ -557,6 +557,9 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 	ssl := deployment.Metadata.SSL
 
 	healthPath := deployment.Metadata.HealthCheck.Path
+	if checkType := strings.ToLower(strings.TrimSpace(deployment.Metadata.HealthCheck.Type)); checkType != "" && checkType != "http" {
+		healthPath = ""
+	}
 	if healthPath == "/" {
 		healthPath = ""
 	}

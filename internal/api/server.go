@@ -1997,8 +1997,21 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 }
 
 func validateHealthCheckConfig(config models.HealthCheckConfig) error {
-	if config.Path != "" && !validHealthPath(config.Path) {
+	checkType := healthCheckType(config)
+	if checkType != "http" && checkType != "tcp" && checkType != "exec" {
+		return fmt.Errorf("health check type must be http, tcp, or exec")
+	}
+	if len(config.Service) > 128 {
+		return fmt.Errorf("health check service cannot exceed 128 characters")
+	}
+	if config.Port < 0 || config.Port > 65535 {
+		return fmt.Errorf("health check port must be from 1 through 65535")
+	}
+	if checkType == "http" && config.Path != "" && !validHealthPath(config.Path) {
 		return fmt.Errorf("health check path must start with / and contain a valid request path")
+	}
+	if checkType != "http" && (config.Path != "" || len(config.SuccessStatuses) > 0 || config.ResponseContains != "") {
+		return fmt.Errorf("only HTTP health checks accept a path, status codes, or response text")
 	}
 	if len(config.SuccessStatuses) > 20 {
 		return fmt.Errorf("health check accepts at most 20 status codes")
@@ -2010,6 +2023,15 @@ func validateHealthCheckConfig(config models.HealthCheckConfig) error {
 	}
 	if len(config.ResponseContains) > 512 {
 		return fmt.Errorf("health check response text cannot exceed 512 characters")
+	}
+	if checkType == "exec" && strings.TrimSpace(config.Command) == "" {
+		return fmt.Errorf("exec health checks require a command")
+	}
+	if checkType != "exec" && config.Command != "" {
+		return fmt.Errorf("only exec health checks accept a command")
+	}
+	if len(config.Command) > 2048 || strings.ContainsRune(config.Command, 0) {
+		return fmt.Errorf("health check command is invalid or exceeds 2048 characters")
 	}
 	return nil
 }

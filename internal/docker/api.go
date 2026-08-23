@@ -104,6 +104,31 @@ func (a *APIClient) ContainerPrimaryIP(ctx context.Context, project, network str
 	return "", fmt.Errorf("container for project %q has no network address yet", project)
 }
 
+func (a *APIClient) ContainerServiceIP(ctx context.Context, project, service, network string) (string, error) {
+	containerID, err := a.FindContainer(ctx, project, service)
+	if err != nil {
+		return "", err
+	}
+	info, err := a.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect service container: %w", err)
+	}
+	if info.NetworkSettings == nil {
+		return "", fmt.Errorf("service %q in project %q has no network settings", service, project)
+	}
+	if network != "" {
+		if attached, ok := info.NetworkSettings.Networks[network]; ok && attached.IPAddress != "" {
+			return attached.IPAddress, nil
+		}
+	}
+	for _, attached := range info.NetworkSettings.Networks {
+		if attached.IPAddress != "" {
+			return attached.IPAddress, nil
+		}
+	}
+	return "", fmt.Errorf("service %q in project %q has no network address", service, project)
+}
+
 func (a *APIClient) ExecInContainer(ctx context.Context, containerID string, command string) (string, error) {
 	execConfig := container.ExecOptions{
 		Cmd:          []string{"sh", "-c", command},

@@ -82,6 +82,30 @@ func TestValidateHealthCheckConfig(t *testing.T) {
 	if err := validateHealthCheckConfig(models.HealthCheckConfig{Path: "/", SuccessStatuses: []int{700}}); err == nil {
 		t.Fatal("invalid health check status accepted")
 	}
+	if err := validateHealthCheckConfig(models.HealthCheckConfig{Type: "tcp", Service: "postgres", Port: 5432}); err != nil {
+		t.Fatalf("valid TCP health check rejected: %v", err)
+	}
+	if err := validateHealthCheckConfig(models.HealthCheckConfig{Type: "exec", Service: "postgres", Command: "pg_isready -U postgres"}); err != nil {
+		t.Fatalf("valid exec health check rejected: %v", err)
+	}
+	if err := validateHealthCheckConfig(models.HealthCheckConfig{Type: "tcp", Port: 5432, Path: "/"}); err == nil {
+		t.Fatal("HTTP fields accepted for TCP health check")
+	}
+	if err := validateHealthCheckConfig(models.HealthCheckConfig{Type: "exec"}); err == nil {
+		t.Fatal("exec health check without a command accepted")
+	}
+}
+
+func TestHealthCheckTypeCompatibility(t *testing.T) {
+	if got := healthCheckType(models.HealthCheckConfig{Path: "/ready"}); got != "http" {
+		t.Fatalf("legacy check type = %q", got)
+	}
+	if healthCheckConfigured(models.HealthCheckConfig{}) {
+		t.Fatal("empty health check treated as configured")
+	}
+	if !healthCheckConfigured(models.HealthCheckConfig{Type: "tcp", Port: 5432}) {
+		t.Fatal("TCP health check treated as empty")
+	}
 }
 
 func TestValidIncidentID(t *testing.T) {
