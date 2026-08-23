@@ -495,6 +495,14 @@ func RemoveVolumeFromService(content string, serviceName string, volumeMount str
 }
 
 func AddNetworkToCompose(content string, networkName string) (string, error) {
+	return addNetworkToComposeServices(content, networkName, nil)
+}
+
+func AddNetworkToComposeService(content, networkName, serviceName string) (string, error) {
+	return addNetworkToComposeServices(content, networkName, map[string]bool{serviceName: true})
+}
+
+func addNetworkToComposeServices(content string, networkName string, selected map[string]bool) (string, error) {
 	if networkName == "" {
 		return content, nil
 	}
@@ -515,6 +523,9 @@ func AddNetworkToCompose(content string, networkName string) (string, error) {
 	services, ok := compose["services"].(map[string]interface{})
 	if ok {
 		for serviceName, serviceData := range services {
+			if selected != nil && !selected[serviceName] {
+				continue
+			}
 			service, ok := serviceData.(map[string]interface{})
 			if !ok {
 				continue

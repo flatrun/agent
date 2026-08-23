@@ -19,6 +19,10 @@ func tarOf(t *testing.T, entries []tar.Header, bodies map[string]string) *bytes.
 	tw := tar.NewWriter(&buf)
 	for i := range entries {
 		h := entries[i]
+		if os.Geteuid() != 0 && h.Uid == 0 && h.Gid == 0 {
+			h.Uid = os.Geteuid()
+			h.Gid = os.Getegid()
+		}
 		if body, ok := bodies[h.Name]; ok {
 			h.Size = int64(len(body))
 		}

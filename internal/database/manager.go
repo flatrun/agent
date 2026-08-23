@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 type networkInfo struct {
@@ -64,6 +64,13 @@ type UserInfo struct {
 }
 
 type Manager struct{}
+
+func normalizeType(databaseType string) string {
+	if databaseType == "postgres" {
+		return "postgresql"
+	}
+	return databaseType
+}
 
 func NewManager() *Manager {
 	return &Manager{}
@@ -129,7 +136,7 @@ func parsePort(s string) int {
 }
 
 func isDbPort(port int, dbType string) bool {
-	switch dbType {
+	switch normalizeType(dbType) {
 	case "mysql", "mariadb":
 		return port == 3306
 	case "postgresql":
@@ -143,9 +150,10 @@ func isDbPort(port int, dbType string) bool {
 }
 
 func (m *Manager) buildDSN(cfg *ConnectionConfig) (string, error) {
+	cfgType := normalizeType(cfg.Type)
 	host, port, _ := m.resolveContainerConnection(cfg)
 
-	switch cfg.Type {
+	switch cfgType {
 	case "mysql", "mariadb":
 		db := cfg.Database
 		if db == "" {
@@ -167,7 +175,7 @@ func (m *Manager) buildDSN(cfg *ConnectionConfig) (string, error) {
 }
 
 func (m *Manager) getDriver(dbType string) string {
-	switch dbType {
+	switch normalizeType(dbType) {
 	case "mysql", "mariadb":
 		return "mysql"
 	case "postgresql":
@@ -219,7 +227,7 @@ func (m *Manager) ListDatabases(cfg *ConnectionConfig) ([]DatabaseInfo, error) {
 	defer db.Close()
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		query = "SHOW DATABASES"
 	case "postgresql":
@@ -269,7 +277,7 @@ func (m *Manager) ListTables(cfg *ConnectionConfig, database string) ([]TableInf
 	defer db.Close()
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		query = fmt.Sprintf(`
 			SELECT TABLE_NAME, TABLE_ROWS, ENGINE
@@ -322,7 +330,7 @@ func (m *Manager) ListUsers(cfg *ConnectionConfig) ([]UserInfo, error) {
 	defer db.Close()
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		query = "SELECT User, Host FROM mysql.user"
 	case "postgresql":
@@ -369,7 +377,7 @@ func (m *Manager) ListDatabaseUsers(cfg *ConnectionConfig, database string) ([]U
 	database = strings.ReplaceAll(database, ";", "")
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		query = fmt.Sprintf(`
 			SELECT DISTINCT User, Host FROM mysql.db WHERE Db = '%s'
@@ -428,7 +436,7 @@ func (m *Manager) CreateDatabase(cfg *ConnectionConfig, dbName string) error {
 	dbName = strings.ReplaceAll(dbName, "\"", "")
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		query = fmt.Sprintf("CREATE DATABASE `%s`", dbName)
 	case "postgresql":
@@ -457,7 +465,7 @@ func (m *Manager) CreateUser(cfg *ConnectionConfig, username, password, host str
 	defer db.Close()
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		if host == "" {
 			host = "%"
@@ -489,18 +497,47 @@ func (m *Manager) GrantPrivileges(cfg *ConnectionConfig, username, database, hos
 	defer db.Close()
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		if host == "" {
 			host = "%"
 		}
 		query = fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s'", database, username, host)
 	case "postgresql":
-		query = fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE \"%s\" TO %s", database, username)
+		query = fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", pq.QuoteIdentifier(database), pq.QuoteIdentifier(username))
 	}
 
-	_, err = db.Exec(query)
-	return err
+	if _, err = db.Exec(query); err != nil {
+		return err
+	}
+	if normalizeType(cfg.Type) != "postgresql" {
+		return nil
+	}
+	if _, err := db.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", pq.QuoteIdentifier(database), pq.QuoteIdentifier(username))); err != nil {
+		return err
+	}
+
+	targetConfig := *cfg
+	targetConfig.Database = database
+	targetDSN, err := m.buildDSN(&targetConfig)
+	if err != nil {
+		return err
+	}
+	targetDB, err := sql.Open(driver, targetDSN)
+	if err != nil {
+		return err
+	}
+	defer targetDB.Close()
+
+	for _, statement := range []string{
+		fmt.Sprintf("ALTER SCHEMA public OWNER TO %s", pq.QuoteIdentifier(username)),
+		fmt.Sprintf("GRANT ALL ON SCHEMA public TO %s", pq.QuoteIdentifier(username)),
+	} {
+		if _, err := targetDB.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Manager) RevokePrivileges(cfg *ConnectionConfig, username, database string) error {
@@ -521,7 +558,7 @@ func (m *Manager) RevokePrivileges(cfg *ConnectionConfig, username, database str
 	defer db.Close()
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		query = fmt.Sprintf("REVOKE ALL PRIVILEGES ON `%s`.* FROM '%s'@'%%'", database, username)
 	case "postgresql":
@@ -562,7 +599,7 @@ func (m *Manager) DeleteDatabase(cfg *ConnectionConfig, dbName string) error {
 	dbName = strings.ReplaceAll(dbName, "\"", "")
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		query = fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName)
 	case "postgresql":
@@ -591,7 +628,7 @@ func (m *Manager) DeleteUser(cfg *ConnectionConfig, username, host string) error
 	defer db.Close()
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		if host == "" {
 			host = "%"
@@ -645,7 +682,7 @@ func (m *Manager) QueryTable(cfg *ConnectionConfig, database, table string, limi
 	}
 
 	var query string
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		query = fmt.Sprintf("SELECT * FROM `%s` LIMIT %d OFFSET %d", table, limit, offset)
 	case "postgresql":
@@ -822,7 +859,7 @@ func (m *Manager) DescribeTable(cfg *ConnectionConfig, database, table string) (
 		Indexes: []IndexSchema{},
 	}
 
-	switch cfg.Type {
+	switch normalizeType(cfg.Type) {
 	case "mysql", "mariadb":
 		if err := m.describeMySQLTable(db, table, schema); err != nil {
 			return nil, err

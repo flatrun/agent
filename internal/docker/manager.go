@@ -468,40 +468,45 @@ func (m *Manager) applyMountOwnershipFromContainer(name, deploymentPath string) 
 		return
 	}
 
-	bindMounts := ExtractBindMounts(composeContent)
+	bindMounts := ExtractBindMountsByService(composeContent)
 	if len(bindMounts) == 0 {
 		return
 	}
-
-	containerName := m.getMainContainerName(deploymentPath)
-	if containerName == "" {
-		containerName = name
+	containers := m.getComposeContainers(deploymentPath)
+	containerByService := make(map[string]string, len(containers))
+	for _, container := range containers {
+		containerByService[container.Service] = container.Name
 	}
-
-	user, err := InspectContainerUser(containerName)
-	if err != nil {
-		return
+	pathUses := make(map[string]int)
+	for _, paths := range bindMounts {
+		for _, path := range paths {
+			pathUses[path]++
+		}
 	}
-
-	if user == "0:0" {
-		return
-	}
-
 	var mounts []MountOwnership
-	for _, path := range bindMounts {
-		mounts = append(mounts, MountOwnership{
-			HostPath: path,
-			User:     user,
-		})
+	for service, paths := range bindMounts {
+		containerName := containerByService[service]
+		if containerName == "" {
+			continue
+		}
+		user, err := InspectContainerUser(containerName)
+		if err != nil || user == "0:0" {
+			continue
+		}
+		for _, path := range paths {
+			if pathUses[path] == 1 {
+				mounts = append(mounts, MountOwnership{HostPath: path, User: user})
+			}
+		}
 	}
 
 	_ = m.discovery.ApplyMountOwnership(deploymentPath, mounts)
 }
 
-func (m *Manager) getMainContainerName(deploymentPath string) string {
+func (m *Manager) getComposeContainers(deploymentPath string) []composeContainer {
 	output, err := m.executor.PS(deploymentPath)
 	if err != nil {
-		return ""
+		return nil
 	}
 
 	var containers []composeContainer
@@ -525,17 +530,7 @@ func (m *Manager) getMainContainerName(deploymentPath string) string {
 		}
 	}
 
-	for _, c := range containers {
-		if c.Service == "app" || c.Service == "web" {
-			return c.Name
-		}
-	}
-
-	if len(containers) > 0 {
-		return containers[0].Name
-	}
-
-	return ""
+	return containers
 }
 
 func (m *Manager) snapshotBindMounts(name, deploymentPath string) string {
@@ -639,8 +634,8 @@ func (m *Manager) RestartDeployment(name string, opts ...RunOption) (string, err
 	}
 
 	go func() {
-		m.applyMountOwnershipFromContainer(name, deployment.Path)
 		m.restoreBindMounts(deployment.Path, snapshotDir)
+		m.applyMountOwnershipFromContainer(name, deployment.Path)
 	}()
 
 	return output, nil
@@ -666,8 +661,8 @@ func (m *Manager) RebuildDeployment(name string, opts ...RunOption) (string, err
 	}
 
 	go func() {
-		m.applyMountOwnershipFromContainer(name, deployment.Path)
 		m.restoreBindMounts(deployment.Path, snapshotDir)
+		m.applyMountOwnershipFromContainer(name, deployment.Path)
 	}()
 
 	return output, nil
@@ -708,6 +703,16 @@ func (m *Manager) RestartService(name, service string, opts ...RunOption) (strin
 	}
 
 	return m.executor.RestartService(deployment.Path, service, opts...)
+}
+
+func (m *Manager) RunService(name, service string, opts ...RunOption) (string, error) {
+	m.mu.RLock()
+	deployment, err := m.discovery.GetDeployment(name)
+	m.mu.RUnlock()
+	if err != nil {
+		return "", err
+	}
+	return m.executor.RunService(deployment.Path, service, opts...)
 }
 
 func (m *Manager) RebuildService(name, service string, opts ...RunOption) (string, error) {

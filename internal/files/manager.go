@@ -162,6 +162,31 @@ func (m *Manager) Chmod(deploymentName, relativePath string, mode os.FileMode) e
 	return os.Chmod(target, mode)
 }
 
+func (m *Manager) Chown(deploymentName, relativePath string, uid, gid int, recursive bool) error {
+	if uid < 0 || gid < 0 {
+		return fmt.Errorf("uid and gid must be zero or greater")
+	}
+	if filepath.Clean(strings.TrimPrefix(relativePath, "/")) == "." {
+		return fmt.Errorf("deployment root ownership cannot be changed")
+	}
+	target, err := m.resolvePath(deploymentName, relativePath)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(target); err != nil {
+		return err
+	}
+	if !recursive {
+		return os.Lchown(target, uid, gid)
+	}
+	return filepath.WalkDir(target, func(path string, _ os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		return os.Lchown(path, uid, gid)
+	})
+}
+
 func (m *Manager) WriteFile(deploymentName, relativePath string, content io.Reader) error {
 	filePath, err := m.resolvePath(deploymentName, relativePath)
 	if err != nil {

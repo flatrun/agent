@@ -460,14 +460,18 @@ func setDefaults(cfg *Config) {
 		switch cfg.Infrastructure.Database.Type {
 		case "mysql", "mariadb":
 			cfg.Infrastructure.Database.Port = 3306
-		case "postgres":
+		case "postgres", "postgresql":
 			cfg.Infrastructure.Database.Port = 5432
 		default:
 			cfg.Infrastructure.Database.Port = 3306
 		}
 	}
 	if cfg.Infrastructure.Database.RootUser == "" && cfg.Infrastructure.Database.Enabled {
-		cfg.Infrastructure.Database.RootUser = "root"
+		if cfg.Infrastructure.Database.Type == "postgres" || cfg.Infrastructure.Database.Type == "postgresql" {
+			cfg.Infrastructure.Database.RootUser = "postgres"
+		} else {
+			cfg.Infrastructure.Database.RootUser = "root"
+		}
 	}
 	if cfg.Infrastructure.Redis.Port == 0 && cfg.Infrastructure.Redis.Enabled {
 		cfg.Infrastructure.Redis.Port = 6379

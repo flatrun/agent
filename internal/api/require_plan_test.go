@@ -58,6 +58,36 @@ func TestRequirePlanOffByDefault(t *testing.T) {
 	}
 }
 
+func TestDeploymentEnvironmentPatchPreservesOtherVariables(t *testing.T) {
+	_, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "open", nil)
+	if err := os.WriteFile(filepath.Join(tmpDir, "open", ".env"), []byte("KEEP=one\nCHANGE=old\nREMOVE=gone\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]interface{}{
+		"set":    []map[string]string{{"key": "CHANGE", "value": "new"}, {"key": "ADD", "value": "two"}},
+		"remove": []string{"REMOVE"},
+	}
+	resp, parsed := doJSON(t, http.MethodPatch, ts.URL+"/api/deployments/open/env/variables", body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", resp.StatusCode, parsed)
+	}
+	content, err := os.ReadFile(filepath.Join(tmpDir, "open", ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(content)
+	for _, expected := range []string{"KEEP=one", "CHANGE=new", "ADD=two"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("environment is missing %q: %s", expected, got)
+		}
+	}
+	if strings.Contains(got, "REMOVE=") {
+		t.Fatalf("removed variable remains: %s", got)
+	}
+}
+
 func TestRequirePlanToggleViaMetadata(t *testing.T) {
 	s, tmpDir, ts := setupPlanTestServer(t)
 	createTestDeployment(t, tmpDir, "app", &models.ServiceMetadata{Name: "app", Type: "web"})

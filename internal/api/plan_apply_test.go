@@ -16,6 +16,7 @@ import (
 
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/database"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/files"
 	"github.com/flatrun/agent/internal/networks"
@@ -48,6 +49,7 @@ func setupPlanTestServer(t *testing.T) (*Server, string, *httptest.Server) {
 		configPath:        configPath,
 		router:            gin.New(),
 		manager:           docker.NewManager(tmpDir),
+		databaseManager:   database.NewManager(),
 		networksManager:   networks.NewManager(),
 		authMiddleware:    auth.NewMiddleware(&cfg.Auth),
 		proxyOrchestrator: proxy.NewOrchestrator(cfg),

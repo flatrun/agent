@@ -112,7 +112,7 @@ func TestGetImageInfo(t *testing.T) {
 	composeContent := `name: test-app
 services:
   web:
-    image: nginx:latest
+    image: ${WEB_IMAGE:-nginx:latest}
   db:
     image: postgres:15
   cache:
@@ -122,6 +122,9 @@ services:
 `
 	if err := os.WriteFile(filepath.Join(deploymentDir, "docker-compose.yml"), []byte(composeContent), 0644); err != nil {
 		t.Fatalf("Failed to write compose file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(deploymentDir, ".env"), []byte("WEB_IMAGE=nginx:1.27\n"), 0600); err != nil {
+		t.Fatalf("Failed to write environment file: %v", err)
 	}
 
 	executor := NewComposeExecutor(tmpDir)
@@ -140,8 +143,12 @@ services:
 		imageMap[img.Service] = img
 	}
 
-	if !imageMap["web"].IsLatest {
-		t.Error("Expected nginx:latest to be marked as latest")
+	if imageMap["web"].Image != "nginx:1.27" || imageMap["web"].SourceImage != "${WEB_IMAGE:-nginx:latest}" || !imageMap["web"].Resolved {
+		t.Errorf("Expected the web image to be resolved with its source retained, got %+v", imageMap["web"])
+	}
+
+	if imageMap["web"].IsLatest {
+		t.Error("Expected nginx:1.27 to NOT be marked as latest")
 	}
 
 	if imageMap["db"].IsLatest {

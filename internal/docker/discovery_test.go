@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -305,6 +306,42 @@ func TestApplyMountOwnership(t *testing.T) {
 		err := d.ApplyMountOwnership(deploymentPath, mounts)
 		if err == nil {
 			t.Fatal("Expected error for invalid user format")
+		}
+	})
+
+	t.Run("rejects mounts outside the deployment", func(t *testing.T) {
+		for _, hostPath := range []string{"../outside", filepath.Join(tmpDir, "outside")} {
+			err := d.ApplyMountOwnership(deploymentPath, []MountOwnership{{HostPath: hostPath}})
+			if err == nil {
+				t.Fatalf("expected %q to be rejected", hostPath)
+			}
+		}
+	})
+
+	t.Run("rejects subdirectories outside the mount", func(t *testing.T) {
+		err := d.ApplyMountOwnership(deploymentPath, []MountOwnership{{
+			HostPath:       "./safe",
+			Subdirectories: []string{"../../outside"},
+		}})
+		if err == nil {
+			t.Fatal("expected escaping subdirectory to be rejected")
+		}
+	})
+
+	t.Run("rejects subdirectories through a symlink", func(t *testing.T) {
+		base := filepath.Join(deploymentPath, "safe-link")
+		if err := os.MkdirAll(base, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(tmpDir, filepath.Join(base, "outside")); err != nil {
+			t.Fatal(err)
+		}
+		err := d.ApplyMountOwnership(deploymentPath, []MountOwnership{{
+			HostPath:       "./safe-link",
+			Subdirectories: []string{"outside/new"},
+		}})
+		if err == nil {
+			t.Fatal("expected symlinked subdirectory to be rejected")
 		}
 	})
 
@@ -755,6 +792,18 @@ func TestExtractBindMounts(t *testing.T) {
 			expected: []string{"./data"},
 		},
 		{
+			name: "long bind mount",
+			compose: `services:
+  app:
+    image: nginx
+    volumes:
+      - type: bind
+        source: ./data
+        target: /var/data
+`,
+			expected: []string{"./data"},
+		},
+		{
 			name: "multiple bind mounts",
 			compose: `services:
   app:
@@ -826,5 +875,25 @@ func TestExtractBindMounts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExtractBindMountsByService(t *testing.T) {
+	compose := `services:
+  web:
+    volumes:
+      - ./web:/app
+      - ./shared:/shared
+  graph:
+    volumes:
+      - ./graph:/var/lib/graph
+      - ./shared:/shared
+`
+	got := ExtractBindMountsByService(compose)
+	if !reflect.DeepEqual(got["web"], []string{"./web", "./shared"}) {
+		t.Fatalf("web mounts = %v", got["web"])
+	}
+	if !reflect.DeepEqual(got["graph"], []string{"./graph", "./shared"}) {
+		t.Fatalf("graph mounts = %v", got["graph"])
 	}
 }

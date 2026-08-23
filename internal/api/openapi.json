@@ -3,7 +3,7 @@
   "info": {
     "title": "FlatRun Agent API",
     "description": "Generated from the agent's routes and the types its handlers bind and return.",
-    "version": "0.4.0-beta.6"
+    "version": "0.4.0-beta.7"
   },
   "paths": {
     "/api/agent/update": {
@@ -2104,7 +2104,8 @@
         "tags": [
           "config"
         ],
-        "x-permission": "config:write"
+        "x-permission": "config:write",
+        "x-plan-supported": true
       }
     },
     "/api/containers": {
@@ -3682,6 +3683,12 @@
                   "metadata": {
                     "$ref": "#/components/schemas/models.ServiceMetadata"
                   },
+                  "mount_ownership": {
+                    "items": {
+                      "$ref": "#/components/schemas/api.MountOwnershipRequest"
+                    },
+                    "type": "array"
+                  },
                   "name": {
                     "type": "string"
                   },
@@ -3791,6 +3798,7 @@
                   "registry_credential",
                   "service_credentials",
                   "seed_mounts",
+                  "mount_ownership",
                   "source"
                 ]
               }
@@ -3851,7 +3859,8 @@
         "tags": [
           "deployments"
         ],
-        "x-permission": "deployments:delete"
+        "x-permission": "deployments:delete",
+        "x-plan-supported": true
       },
       "get": {
         "operationId": "get-deployments-by-name",
@@ -3919,7 +3928,8 @@
         "tags": [
           "deployments"
         ],
-        "x-permission": "deployments:write"
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
       }
     },
     "/api/deployments/{name}/actions/{actionId}": {
@@ -4909,7 +4919,8 @@
         "tags": [
           "deployments"
         ],
-        "x-permission": "deployments:write"
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
       }
     },
     "/api/deployments/{name}/domains/{domainId}": {
@@ -4941,7 +4952,8 @@
         "tags": [
           "deployments"
         ],
-        "x-permission": "deployments:write"
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
       },
       "put": {
         "operationId": "put-deployments-by-name-domains-by-domainId",
@@ -4981,7 +4993,8 @@
         "tags": [
           "deployments"
         ],
-        "x-permission": "deployments:write"
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
       }
     },
     "/api/deployments/{name}/env": {
@@ -5048,7 +5061,61 @@
         "tags": [
           "deployments"
         ],
-        "x-permission": "deployments:write"
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      }
+    },
+    "/api/deployments/{name}/env/variables": {
+      "patch": {
+        "operationId": "patch-deployments-by-name-env-variables",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "remove": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "set": {
+                    "items": {
+                      "$ref": "#/components/schemas/api.EnvVar"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object",
+                "x-property-order": [
+                  "set",
+                  "remove"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
       }
     },
     "/api/deployments/{name}/extract": {
@@ -5723,19 +5790,31 @@
             "application/json": {
               "schema": {
                 "properties": {
+                  "gid": {
+                    "type": "integer"
+                  },
                   "mode": {
+                    "type": "integer"
+                  },
+                  "recursive": {
+                    "type": "boolean"
+                  },
+                  "uid": {
                     "type": "integer"
                   }
                 },
-                "required": [
-                  "mode"
-                ],
                 "type": "object",
                 "x-columns": [
-                  "mode"
+                  "mode",
+                  "uid",
+                  "gid",
+                  "recursive"
                 ],
                 "x-property-order": [
-                  "mode"
+                  "mode",
+                  "uid",
+                  "gid",
+                  "recursive"
                 ]
               }
             }
@@ -6047,6 +6126,14 @@
               "schema": {
                 "properties": {
                   "action": {
+                    "enum": [
+                      "start",
+                      "stop",
+                      "restart",
+                      "rebuild",
+                      "pull",
+                      "run"
+                    ],
                     "type": "string"
                   },
                   "force_recreate": {
@@ -6059,6 +6146,9 @@
                     "type": "boolean"
                   }
                 },
+                "required": [
+                  "action"
+                ],
                 "type": "object",
                 "x-columns": [
                   "action",
@@ -7972,7 +8062,8 @@
         "tags": [
           "proxy"
         ],
-        "x-permission": "certificates:write"
+        "x-permission": "certificates:write",
+        "x-plan-supported": true
       }
     },
     "/api/proxy/status/{name}": {
@@ -11309,7 +11400,13 @@
             "type": "integer"
           },
           "mode": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "shared",
+              "create",
+              "existing",
+              "external"
+            ]
           },
           "password": {
             "type": "string"
@@ -11318,7 +11415,15 @@
             "type": "string"
           },
           "type": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "mysql",
+              "mariadb",
+              "postgres",
+              "postgresql",
+              "mongodb",
+              "redis"
+            ]
           },
           "username": {
             "type": "string"
@@ -11349,6 +11454,10 @@
           "username",
           "password",
           "env_prefix"
+        ],
+        "required": [
+          "type",
+          "mode"
         ]
       },
       "api.DeploymentDiagnosticStep": {
@@ -11634,6 +11743,36 @@
           "message"
         ],
         "x-render": "message"
+      },
+      "api.MountOwnershipRequest": {
+        "type": "object",
+        "properties": {
+          "host_path": {
+            "type": "string"
+          },
+          "subdirectories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "host_path",
+          "user",
+          "subdirectories"
+        ],
+        "x-columns": [
+          "host_path",
+          "user"
+        ],
+        "required": [
+          "host_path",
+          "user"
+        ]
       },
       "api.MountSelection": {
         "type": "object",

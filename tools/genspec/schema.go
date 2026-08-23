@@ -88,6 +88,7 @@ type schema struct {
 	Required             []string `json:"required,omitempty"`
 	Description          string   `json:"description,omitempty"`
 	AdditionalProperties *schema  `json:"additionalProperties,omitempty"`
+	Enum                 []string `json:"enum,omitempty"`
 }
 
 // schemaSet describes a type once however many endpoints use it.
@@ -211,6 +212,9 @@ func (s *schemaSet) fields(t *types.Struct, depth int, out *schema) {
 		if tag.required {
 			out.Required = append(out.Required, name)
 		}
+		if len(tag.enum) > 0 {
+			built.Enum = append([]string(nil), tag.enum...)
+		}
 	}
 }
 
@@ -232,6 +236,7 @@ type fieldTag struct {
 	skip     bool
 	required bool
 	hidden   bool
+	enum     []string
 }
 
 func parseTag(raw string) fieldTag {
@@ -246,8 +251,14 @@ func parseTag(raw string) fieldTag {
 	if jsonTag != "" {
 		tag.name = strings.Split(jsonTag, ",")[0]
 	}
-	if strings.Contains(parsed.Get("binding"), "required") {
+	binding := parsed.Get("binding")
+	if strings.Contains(binding, "required") {
 		tag.required = true
+	}
+	for _, rule := range strings.Split(binding, ",") {
+		if values := strings.TrimPrefix(rule, "oneof="); values != rule {
+			tag.enum = strings.Fields(values)
+		}
 	}
 	if strings.TrimSpace(parsed.Get("cli")) == "-" {
 		tag.hidden = true

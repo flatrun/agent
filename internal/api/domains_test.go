@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 
 	"github.com/flatrun/agent/internal/docker"
+	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 )
 
@@ -28,6 +30,9 @@ func setupDomainsTestServer(t *testing.T) (*Server, string, func()) {
 
 	server := &Server{
 		manager: manager,
+		config: &config.Config{Infrastructure: config.InfrastructureConfig{
+			DefaultProxyNetwork: "proxy",
+		}},
 	}
 
 	cleanup := func() {
@@ -379,6 +384,13 @@ func TestAddDomain(t *testing.T) {
 		}
 		if metadata.Domains[0].ID == "" {
 			t.Error("expected domain ID to be generated")
+		}
+		compose, _, err := server.manager.GetComposeFile("add-domain")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(compose, "- proxy") || !strings.Contains(compose, "proxy:\n    external: true") {
+			t.Fatalf("routed service did not join proxy network: %s", compose)
 		}
 	})
 

@@ -250,6 +250,46 @@ func TestServiceJobThreadsEffectiveApplyOptions(t *testing.T) {
 	}
 }
 
+func TestServiceRunJobUsesOneShotExecution(t *testing.T) {
+	s := newJobTestServer(&fakeRunner{})
+	action := make(chan string, 1)
+	s.runServiceAction = func(got, _, _ string, _ actionOptions, emit func(string)) error {
+		action <- got
+		emit("migration complete")
+		return nil
+	}
+	srv := newSkippableHTTPServer(t, newJobRouter(s))
+	defer srv.Close()
+
+	resp, err := http.Post(
+		srv.URL+"/api/deployments/app/services/migrate/job",
+		"application/json",
+		strings.NewReader(`{"action":"run"}`),
+	)
+	if err != nil {
+		t.Fatalf("service run request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %v", resp.StatusCode, body)
+	}
+
+	select {
+	case got := <-action:
+		if got != "run" {
+			t.Fatalf("action = %q, want run", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("service run was not invoked")
+	}
+	snap := pollJob(t, srv.URL, "app", body["job_id"].(string))
+	if snap.Status != JobSucceeded || snap.Output != "migration complete" {
+		t.Fatalf("job = %+v", snap)
+	}
+}
+
 func TestDeploymentJobStreamReplaysAndCompletes(t *testing.T) {
 	s := &Server{
 		jobs:           newJobRegistry(),

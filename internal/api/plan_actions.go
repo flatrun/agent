@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/plan"
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/pkg/config"
@@ -79,18 +80,18 @@ func (s *Server) vhostConfigPath(name string) string {
 }
 
 func (s *Server) planEnvUpdate(c *gin.Context, name string, envVars []EnvVar) {
-	envRel := filepath.Join(name, ".env.flatrun")
+	envRel := filepath.Join(name, ".env")
 	beforeBytes, readErr := os.ReadFile(filepath.Join(s.config.DeploymentsPath, envRel))
 	exists := readErr == nil
 	before := string(beforeBytes)
 	after := renderEnvContent(envVars)
 
 	p := s.newPlan("deployment.env.update", "deployment", name)
-	p.Snapshot.Files = plan.SnapshotFiles(s.config.DeploymentsPath, envRel)
+	p.Snapshot.Files = plan.SnapshotFiles(s.config.DeploymentsPath, envRel, filepath.Join(name, ".env.flatrun"))
 
 	if exists && before == after {
 		p.Changes = append(p.Changes, plan.Change{
-			Type: "file", ID: ".env.flatrun",
+			Type: "file", ID: ".env",
 			Actions:   []string{plan.ActionNoOp},
 			Reason:    "rendered content is identical to the current file",
 			Sensitive: true,
@@ -104,7 +105,7 @@ func (s *Server) planEnvUpdate(c *gin.Context, name string, envVars []EnvVar) {
 		}
 		added, changed, removed := diffEnvCounts(parseEnvContent(before), envVars)
 		p.Changes = append(p.Changes, plan.Change{
-			Type: "file", ID: ".env.flatrun",
+			Type: "file", ID: ".env",
 			Actions:   []string{action},
 			Reason:    fmt.Sprintf("%d variable(s) added, %d changed, %d removed", added, changed, removed),
 			Before:    beforePtr,
@@ -308,6 +309,30 @@ func (s *Server) planDomainChange(c *gin.Context, deployment *models.Deployment,
 
 	p := s.newPlan(action, "deployment", name)
 	p.Snapshot.Files = plan.SnapshotFiles(s.config.DeploymentsPath, metaRel, s.vhostConfigPath(name))
+	composeCurrent, composeName, composeErr := s.manager.GetComposeFile(name)
+	if composeErr == nil {
+		composeAfter := composeCurrent
+		for _, configured := range depCopy.Metadata.GetDomains() {
+			if configured.Service == "" {
+				continue
+			}
+			composeAfter, err = docker.AddNetworkToComposeService(composeAfter, s.config.Infrastructure.DefaultProxyNetwork, configured.Service)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		if composeAfter != composeCurrent {
+			composeRel := filepath.Join(name, composeName)
+			p.Snapshot.Files = plan.SnapshotFiles(s.config.DeploymentsPath, metaRel, composeRel, s.vhostConfigPath(name))
+			p.Changes = append(p.Changes, plan.Change{
+				Type: "file", ID: composeName,
+				Actions: []string{plan.ActionUpdate},
+				Reason:  "the routed service joins the proxy network",
+				Before:  plan.StrPtr(composeCurrent), After: plan.StrPtr(composeAfter),
+			})
+		}
+	}
 
 	afterMeta, err := yaml.Marshal(depCopy.Metadata)
 	if err != nil {
@@ -406,6 +431,12 @@ func applyPlannedDomainAdd(s *Server, p *plan.Plan) (gin.H, error) {
 	if err != nil {
 		return nil, apiErrf(http.StatusNotFound, "Deployment not found")
 	}
+	originalMetadata, _ := cloneMetadata(deployment.Metadata)
+	originalCompose, _, _ := s.manager.GetComposeFile(name)
+	rollback := func() {
+		_ = s.manager.SaveMetadata(name, originalMetadata)
+		_ = s.manager.UpdateDeployment(name, originalCompose)
+	}
 	var domain models.DomainConfig
 	if err := json.Unmarshal(p.Request.Body, &domain); err != nil {
 		return nil, apiErrf(http.StatusBadRequest, "invalid plan body: %s", err.Error())
@@ -413,13 +444,19 @@ func applyPlannedDomainAdd(s *Server, p *plan.Plan) (gin.H, error) {
 	if err := s.mutateDomainAdd(deployment, &domain); err != nil {
 		return nil, err
 	}
+	if err := s.ensureServiceProxyNetwork(deployment, domain.Service); err != nil {
+		rollback()
+		return nil, apiErrf(http.StatusConflict, "Failed to connect service to proxy network: %s", err.Error())
+	}
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		rollback()
 		return nil, apiErrf(http.StatusInternalServerError, "Failed to save domain: %s", err.Error())
 	}
 	var result *proxy.SetupResult
 	if s.proxyOrchestrator != nil {
 		result, err = s.proxyOrchestrator.SetupDeployment(deployment)
 		if err != nil {
+			rollback()
 			return nil, apiErrf(http.StatusConflict, "Failed to configure proxy: %s", err.Error())
 		}
 	}
@@ -433,6 +470,12 @@ func applyPlannedDomainUpdate(s *Server, p *plan.Plan) (gin.H, error) {
 	if err != nil {
 		return nil, apiErrf(http.StatusNotFound, "Deployment not found")
 	}
+	originalMetadata, _ := cloneMetadata(deployment.Metadata)
+	originalCompose, _, _ := s.manager.GetComposeFile(name)
+	rollback := func() {
+		_ = s.manager.SaveMetadata(name, originalMetadata)
+		_ = s.manager.UpdateDeployment(name, originalCompose)
+	}
 	var updatedDomain models.DomainConfig
 	if err := json.Unmarshal(p.Request.Body, &updatedDomain); err != nil {
 		return nil, apiErrf(http.StatusBadRequest, "invalid plan body: %s", err.Error())
@@ -440,11 +483,17 @@ func applyPlannedDomainUpdate(s *Server, p *plan.Plan) (gin.H, error) {
 	if err := s.mutateDomainUpdate(deployment, domainID, &updatedDomain); err != nil {
 		return nil, err
 	}
+	if err := s.ensureServiceProxyNetwork(deployment, updatedDomain.Service); err != nil {
+		rollback()
+		return nil, apiErrf(http.StatusConflict, "Failed to connect service to proxy network: %s", err.Error())
+	}
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
+		rollback()
 		return nil, apiErrf(http.StatusInternalServerError, "Failed to save domain: %s", err.Error())
 	}
 	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
 	if err != nil {
+		rollback()
 		return nil, apiErrf(http.StatusConflict, "Failed to configure proxy: %s", err.Error())
 	}
 	return gin.H{"message": "Domain updated successfully", "domain": updatedDomain, "proxy_result": result}, nil
@@ -484,6 +533,26 @@ func (s *Server) planProxySetup(c *gin.Context, deployment *models.Deployment) {
 	p := s.newPlan("proxy.setup", "deployment", name)
 	metaRel := filepath.Join(name, "service.yml")
 	p.Snapshot.Files = plan.SnapshotFiles(s.config.DeploymentsPath, metaRel, s.vhostConfigPath(name))
+	composeCurrent, composeName, composeErr := s.manager.GetComposeFile(name)
+	if composeErr == nil && deployment.Metadata != nil {
+		composeAfter := composeCurrent
+		for _, domain := range deployment.Metadata.GetDomains() {
+			if domain.Service == "" {
+				continue
+			}
+			var networkErr error
+			composeAfter, networkErr = docker.AddNetworkToComposeService(composeAfter, s.config.Infrastructure.DefaultProxyNetwork, domain.Service)
+			if networkErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": networkErr.Error()})
+				return
+			}
+		}
+		if composeAfter != composeCurrent {
+			composeRel := filepath.Join(name, composeName)
+			p.Snapshot.Files = plan.SnapshotFiles(s.config.DeploymentsPath, metaRel, composeRel, s.vhostConfigPath(name))
+			p.Changes = append(p.Changes, plan.Change{Type: "file", ID: composeName, Actions: []string{plan.ActionUpdate}, Reason: "routed services join the proxy network", Before: plan.StrPtr(composeCurrent), After: plan.StrPtr(composeAfter)})
+		}
+	}
 
 	rendered, err := s.proxyOrchestrator.RenderDeployment(deployment)
 	if err != nil {
@@ -532,6 +601,9 @@ func applyPlannedProxySetup(s *Server, p *plan.Plan) (gin.H, error) {
 	deployment, err := s.manager.GetDeployment(p.Resource.ID)
 	if err != nil {
 		return nil, apiErrf(http.StatusNotFound, "Deployment not found")
+	}
+	if err := s.ensureAllDomainProxyNetworks(deployment); err != nil {
+		return nil, apiErrf(http.StatusConflict, "Failed to connect service to proxy network: %s", err.Error())
 	}
 	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
 	if err != nil {
