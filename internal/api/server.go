@@ -161,7 +161,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	if cfg.API.EnableCORS {
 		corsConfig := cors.Config{
 			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-			AllowHeaders:     []string{"Content-Type", "Authorization", "Accept", "Origin", "Cache-Control", "X-Requested-With"},
+			AllowHeaders:     []string{"Content-Type", "Authorization", "Accept", "Origin", "Cache-Control", "X-Requested-With", "X-FlatRun-Deployment"},
 			AllowCredentials: true,
 			MaxAge:           12 * time.Hour,
 		}
