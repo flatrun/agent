@@ -1,5 +1,7 @@
 # FlatRun
 
+English | [Français](README.fr.md) | [Español](README.es.md) | [Português do Brasil](README.pt-BR.md) | [简体中文](README.zh-CN.md)
+
 [![CI](https://github.com/flatrun/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/flatrun/agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
