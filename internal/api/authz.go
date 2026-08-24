@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/contextkeys"
 	"github.com/gin-gonic/gin"
 )
 
@@ -41,6 +42,9 @@ func restrictClusterServiceResources(c *gin.Context) {
 		c.Next()
 		return
 	}
+	if !narrowClusterServiceDeployment(c, actor) {
+		return
+	}
 
 	path := c.Request.URL.Path
 	if strings.HasPrefix(path, "/api/deployments/") || strings.HasPrefix(path, "/api/containers/") ||
@@ -56,6 +60,38 @@ func restrictClusterServiceResources(c *gin.Context) {
 		}
 	}
 	c.Next()
+}
+
+func narrowClusterServiceDeployment(c *gin.Context, actor *auth.ActorContext) bool {
+	deployment := strings.TrimSpace(c.GetHeader("X-FlatRun-Deployment"))
+	if deployment == "" {
+		return true
+	}
+	if actor.APIKey == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "A Fleet peer credential is required"})
+		c.Abort()
+		return false
+	}
+
+	level := ""
+	for _, candidate := range []string{auth.AccessLevelAdmin, auth.AccessLevelWrite, auth.AccessLevelRead} {
+		if actor.CanAccessDeployment(deployment, candidate) {
+			level = candidate
+			break
+		}
+	}
+	if level == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "No access to this peer deployment"})
+		c.Abort()
+		return false
+	}
+
+	scopedActor := *actor
+	scopedKey := *actor.APIKey
+	scopedKey.Deployments = auth.DeploymentAccess{deployment: level}
+	scopedActor.APIKey = &scopedKey
+	c.Set(contextkeys.Actor, &scopedActor)
+	return true
 }
 
 func (s *Server) requireContainerAccess(c *gin.Context, containerID, level string) bool {

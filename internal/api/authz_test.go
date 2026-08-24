@@ -70,6 +70,71 @@ func TestClusterServiceCredentialsRejectUnscopedSensitiveResources(t *testing.T)
 	}
 }
 
+func TestClusterServiceDeploymentHeaderNarrowsResourceAccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	actor := &auth.ActorContext{
+		Type: "api_key",
+		Role: auth.RoleService,
+		User: &auth.User{Role: auth.RoleService, Username: "__flatrun_cluster"},
+		APIKey: &auth.APIKey{
+			Deployments: auth.DeploymentAccess{"allowed": auth.AccessLevelAdmin, "other": auth.AccessLevelAdmin},
+		},
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+		router := gin.New()
+		router.Use(actorMiddleware(actor), restrictClusterServiceResources)
+		router.Handle(method, "/api/resources/:deployment", func(c *gin.Context) {
+			scoped := auth.GetActorFromContext(c)
+			if !scoped.CanAccessDeployment(c.Param("deployment"), auth.AccessLevelRead) {
+				c.Status(http.StatusForbidden)
+				return
+			}
+			c.Status(http.StatusNoContent)
+		})
+
+		allowed := httptest.NewRequest(method, "/api/resources/allowed", nil)
+		allowed.Header.Set("X-FlatRun-Deployment", "allowed")
+		allowedResponse := httptest.NewRecorder()
+		router.ServeHTTP(allowedResponse, allowed)
+		if allowedResponse.Code != http.StatusNoContent {
+			t.Fatalf("%s allowed status = %d", method, allowedResponse.Code)
+		}
+
+		other := httptest.NewRequest(method, "/api/resources/other", nil)
+		other.Header.Set("X-FlatRun-Deployment", "allowed")
+		otherResponse := httptest.NewRecorder()
+		router.ServeHTTP(otherResponse, other)
+		if otherResponse.Code != http.StatusForbidden {
+			t.Fatalf("%s cross-deployment status = %d", method, otherResponse.Code)
+		}
+	}
+}
+
+func TestClusterServiceDeploymentHeaderCannotWidenPeerPolicy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	actor := &auth.ActorContext{
+		Type: "api_key",
+		Role: auth.RoleService,
+		User: &auth.User{Role: auth.RoleService, Username: "__flatrun_cluster"},
+		APIKey: &auth.APIKey{
+			Deployments: auth.DeploymentAccess{"allowed": auth.AccessLevelRead},
+		},
+	}
+
+	router := gin.New()
+	router.Use(actorMiddleware(actor), restrictClusterServiceResources)
+	router.GET("/api/resources", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	request := httptest.NewRequest(http.MethodGet, "/api/resources", nil)
+	request.Header.Set("X-FlatRun-Deployment", "other")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
 func TestListVirtualHostsFiltersByDeploymentAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
