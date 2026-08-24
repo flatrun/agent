@@ -1,8 +1,17 @@
-# FlatRun
+<p align="center">
+  <a href="https://flatrun.dev">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://flatrun.dev/flatrun-logo-white.svg">
+      <img src="https://flatrun.dev/flatrun-logo.svg" alt="FlatRun" width="360">
+    </picture>
+  </a>
+</p>
 
-[English](README.md) | [Français](README.fr.md) | [Español](README.es.md) | [Português do Brasil](README.pt-BR.md) | 简体中文
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português do Brasil</a> · 简体中文
+</p>
 
-## 在自己的服务器上运行容器应用
+# 在自己的服务器上运行容器应用
 
 FlatRun 让你从一个位置部署、保护、诊断、自动化和管理容器应用。它直接运行标准
 Docker Compose 项目，也可以通过 Docker Swarm 或 k3s 扩展符合条件的工作负载。

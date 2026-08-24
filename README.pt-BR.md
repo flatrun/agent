@@ -1,8 +1,17 @@
-# FlatRun
+<p align="center">
+  <a href="https://flatrun.dev">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://flatrun.dev/flatrun-logo-white.svg">
+      <img src="https://flatrun.dev/flatrun-logo.svg" alt="FlatRun" width="360">
+    </picture>
+  </a>
+</p>
 
-[English](README.md) | [Français](README.fr.md) | [Español](README.es.md) | Português do Brasil | [简体中文](README.zh-CN.md)
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · Português do Brasil · <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-## Execute aplicações em contêineres nos seus próprios servidores
+# Execute aplicações em contêineres nos seus próprios servidores
 
 O FlatRun permite implantar, proteger, diagnosticar, automatizar e gerenciar
 aplicações em contêineres em um só lugar. Ele executa projetos Docker Compose
