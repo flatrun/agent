@@ -5,10 +5,10 @@ English | [Français](README.fr.md) | [Español](README.es.md) | [Português do 
 [![CI](https://github.com/flatrun/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/flatrun/agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-# Run container applications on your own servers
+# Run containerized applications on your own servers
 
 FlatRun gives you one place to deploy, secure, diagnose, automate, and manage
-container applications across one server or a connected fleet. It runs
+containerized applications across one server or a connected fleet. It runs
 standard Docker Compose projects directly and can scale eligible workloads
 through Docker Swarm or k3s.
 
