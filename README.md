@@ -3,17 +3,49 @@
 [![CI](https://github.com/flatrun/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/flatrun/agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-FlatRun turns one server into a full hosting control plane: deploy apps, terminate SSL, manage DNS, run backups, give users scoped access, schedule jobs, and ask a built-in AI assistant what went wrong. It is a single Go agent with a web UI, a CLI, and GitHub Actions over standard Docker Compose. Everything it manages is plain files and standard Docker Compose on disk, so you operate it with the tools you already know.
+# Run Docker applications on your own servers
+
+FlatRun gives you one place to deploy, secure, diagnose, automate, and manage
+Docker applications across one server or a connected fleet. Your applications
+remain standard Docker Compose projects stored as files on your machines.
+
+Use FlatRun when raw Docker leaves too much operational work, a traditional
+hosting panel hides too much state, and Kubernetes is more machinery than your
+applications need.
 
 This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
 
-## Why this exists
+## From server to working application
+
+Install FlatRun on an Ubuntu or Debian server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/flatrun/installer/main/scripts/install.sh | sudo bash
+```
+
+Open `http://<your-server>:8080`, finish setup, and create a deployment from a
+template, an image, or a Compose file. FlatRun configures the containers,
+routing, and HTTPS from the same dashboard.
+
+Prefer a terminal or CI workflow? Install the CLI and connect it to the same
+agent API:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/flatrun/cli/main/scripts/install.sh | sudo sh
+flatrun profile add production --url https://panel.example.com --token your-api-key-here
+flatrun profile use production
+flatrun health
+```
+
+The dashboard, CLI, GitHub Action, and external integrations use the same API.
+
+## Why FlatRun exists
 
 Most hosting panels trap you twice. Your data goes into named Docker volumes you can't easily inspect, and your setup goes into a database only the panel understands. The day you want to move hosts, debug a container, or stop paying for the UI, you find your infrastructure is only legible to the tool that created it.
 
 FlatRun inverts that. Every app is a directory: a `docker-compose.yml` and its data and config sitting next to it. The panel reads and writes those files, but the files are the source of truth. Delete FlatRun tomorrow and every app keeps running under plain `docker compose`.
 
-## What you get
+## What you gain
 
 - **Nothing hidden**: configs, data, certs, and env live in the filesystem, not in volumes you have to `docker inspect` to see.
 - **Standard tools**: plain Docker Compose, operated with the `docker`, `docker compose`, and `git` you already know. Nothing proprietary to learn, and FlatRun stays optional.
@@ -26,15 +58,9 @@ FlatRun inverts that. Every app is a directory: a `docker-compose.yml` and its d
 - **Managed scaling**: validate a stateless workload, scale it through Docker Swarm or k3s, and use peer capacity only when an administrator grants explicit limits.
 - **Grouped notifications**: related events become one incident, then delivery rules route useful updates to email, webhooks, or other supported targets.
 
-## Quick start
+## What gets installed
 
-Install FlatRun on any Ubuntu/Debian server:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/flatrun/installer/main/scripts/install.sh | sudo bash
-```
-
-This installs three pieces:
+The installer adds three pieces:
 
 - **Agent** (`:8090`): this service, running as a systemd unit
 - **UI** (`:8080`): the dashboard
