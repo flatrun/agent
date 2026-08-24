@@ -1,9 +1,20 @@
-# FlatRun
+<p align="center">
+  <a href="https://flatrun.dev">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://flatrun.dev/flatrun-logo-white.svg">
+      <img src="https://flatrun.dev/flatrun-logo.svg" alt="FlatRun" width="360">
+    </picture>
+  </a>
+</p>
 
-English | [Français](README.fr.md) | [Español](README.es.md) | [Português do Brasil](README.pt-BR.md) | [简体中文](README.zh-CN.md)
+<p align="center">
+  English · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português do Brasil</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-[![CI](https://github.com/flatrun/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/flatrun/agent/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/flatrun/agent/actions/workflows/ci.yml"><img src="https://github.com/flatrun/agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
+</p>
 
 # Run containerized applications on your own servers
 

@@ -1,8 +1,17 @@
-# FlatRun
+<p align="center">
+  <a href="https://flatrun.dev">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://flatrun.dev/flatrun-logo-white.svg">
+      <img src="https://flatrun.dev/flatrun-logo.svg" alt="FlatRun" width="360">
+    </picture>
+  </a>
+</p>
 
-[English](README.md) | Français | [Español](README.es.md) | [Português do Brasil](README.pt-BR.md) | [简体中文](README.zh-CN.md)
+<p align="center">
+  <a href="README.md">English</a> · Français · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português do Brasil</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-## Exécutez des applications conteneurisées sur vos propres serveurs
+# Exécutez des applications conteneurisées sur vos propres serveurs
 
 FlatRun permet de déployer, sécuriser, diagnostiquer, automatiser et gérer des
 applications conteneurisées depuis une seule interface. Il exécute directement
