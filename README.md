@@ -3,15 +3,16 @@
 [![CI](https://github.com/flatrun/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/flatrun/agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-# Run Docker applications on your own servers
+# Run container applications on your own servers
 
 FlatRun gives you one place to deploy, secure, diagnose, automate, and manage
-Docker applications across one server or a connected fleet. Your applications
-remain standard Docker Compose projects stored as files on your machines.
+container applications across one server or a connected fleet. It runs
+standard Docker Compose projects directly and can scale eligible workloads
+through Docker Swarm or k3s.
 
-Use FlatRun when raw Docker leaves too much operational work, a traditional
-hosting panel hides too much state, and Kubernetes is more machinery than your
-applications need.
+FlatRun is for operators who want a clear container workflow without giving up
+control of their servers, Compose files, or data. Start with one Docker host,
+then connect peers and enable orchestration when the workload needs it.
 
 This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
 
