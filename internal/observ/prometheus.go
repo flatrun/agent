@@ -11,11 +11,12 @@ const prometheusContentType = "text/plain; version=0.0.4; charset=utf-8"
 
 // metricHelp describes each series for anything reading the exposition.
 var metricHelp = map[string]string{
-	MetricCPUUsage:    "Container CPU usage as a percentage of host capacity.",
-	MetricMemoryUsage: "Container memory usage in bytes.",
-	MetricMemoryLimit: "Container memory limit in bytes.",
-	MetricNetworkRx:   "Bytes received by the container per second.",
-	MetricNetworkTx:   "Bytes sent by the container per second.",
+	MetricCPUUsage:          "Container CPU usage as a percentage of host capacity.",
+	MetricMemoryUsage:       "Container memory usage in bytes.",
+	MetricMemoryLimit:       "Container memory limit in bytes.",
+	MetricMemoryUtilization: "Container memory usage as a percentage of its effective limit.",
+	MetricNetworkRx:         "Bytes received by the container per second.",
+	MetricNetworkTx:         "Bytes sent by the container per second.",
 }
 
 // renderPrometheus writes the store's latest sample per series in Prometheus text exposition

@@ -13,6 +13,8 @@ func TestRenderPrometheus(t *testing.T) {
 			Sample: Sample{Time: at, Value: 12.5}},
 		{SeriesKey: SeriesKey{Deployment: "shop", Container: "shop-db", Metric: MetricMemoryUsage},
 			Sample: Sample{Time: at, Value: 5_368_709_120}},
+		{SeriesKey: SeriesKey{Deployment: "shop", Container: "shop-db", Metric: MetricMemoryUtilization},
+			Sample: Sample{Time: at, Value: 92.5}},
 	})
 
 	// Prometheus allows only letters, digits and underscores, so the OTel dots convert.
@@ -35,6 +37,9 @@ func TestRenderPrometheus(t *testing.T) {
 	// A large byte count must not arrive in exponent form the scraper would misread.
 	if !strings.Contains(out, `container_memory_usage{deployment="shop",container="shop-db"} 5.36870912e+09`) {
 		t.Errorf("memory sample line wrong:\n%s", out)
+	}
+	if !strings.Contains(out, `container_memory_utilization{deployment="shop",container="shop-db"} 92.5`) {
+		t.Errorf("memory utilization sample line wrong:\n%s", out)
 	}
 }
 

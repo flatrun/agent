@@ -14,11 +14,12 @@ import (
 // OpenTelemetry container metric names (semconv). Emitting these verbatim keeps FlatRun's
 // metrics interoperable with any OTel backend.
 const (
-	MetricCPUUsage    = "container.cpu.usage"
-	MetricMemoryUsage = "container.memory.usage"
-	MetricMemoryLimit = "container.memory.limit"
-	MetricNetworkRx   = "container.network.io.rx"
-	MetricNetworkTx   = "container.network.io.tx"
+	MetricCPUUsage          = "container.cpu.usage"
+	MetricMemoryUsage       = "container.memory.usage"
+	MetricMemoryLimit       = "container.memory.limit"
+	MetricMemoryUtilization = "container.memory.utilization"
+	MetricNetworkRx         = "container.network.io.rx"
+	MetricNetworkTx         = "container.network.io.tx"
 )
 
 // Host (system-wide) metric names, semconv system.* conventions. These answer
@@ -135,13 +136,17 @@ func (s *Store) add(key SeriesKey, sample Sample) {
 // not a total that only climbs.
 func (s *Store) Record(c ContainerSample, t time.Time) {
 	rxRate, txRate := s.netRates(c, t)
-	s.record(SeriesKey{Deployment: c.Deployment, Container: c.Container}, map[string]float64{
+	metrics := map[string]float64{
 		MetricCPUUsage:    c.CPUPercent,
 		MetricMemoryUsage: float64(c.MemoryUsage),
 		MetricMemoryLimit: float64(c.MemoryLimit),
 		MetricNetworkRx:   rxRate,
 		MetricNetworkTx:   txRate,
-	}, t)
+	}
+	if c.MemoryLimit > 0 {
+		metrics[MetricMemoryUtilization] = float64(c.MemoryUsage) / float64(c.MemoryLimit) * 100
+	}
+	s.record(SeriesKey{Deployment: c.Deployment, Container: c.Container}, metrics, t)
 }
 
 // netRates converts a container's cumulative network counters into a per-second
