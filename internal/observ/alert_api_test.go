@@ -116,6 +116,21 @@ func TestAlertRulesRoundTripThroughTheAPI(t *testing.T) {
 	}
 }
 
+func TestContainerMemoryUtilizationRuleThroughTheAPI(t *testing.T) {
+	h, engine, _ := alertHandler(t)
+	body := `[{"name":"Memory high","metric":"container.memory.utilization","comparison":"above","threshold":90,"for_seconds":300,"enabled":true}]`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/alerts/rules", strings.NewReader(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	rules := engine.Rules()
+	if len(rules) != 1 || rules[0].Metric != MetricMemoryUtilization || rules[0].Threshold != 90 {
+		t.Errorf("engine rules = %+v", rules)
+	}
+}
+
 func TestAlertRulesRejectAnUnusableRule(t *testing.T) {
 	h, engine, _ := alertHandler(t)
 

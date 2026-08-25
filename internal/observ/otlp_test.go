@@ -108,4 +108,7 @@ func TestMetricUnits(t *testing.T) {
 	if got := metricUnit(MetricCPUUsage); got != "%" {
 		t.Errorf("cpu unit = %q, want %%", got)
 	}
+	if got := metricUnit(MetricMemoryUtilization); got != "%" {
+		t.Errorf("memory utilization unit = %q, want %%", got)
+	}
 }

@@ -14,8 +14,8 @@ func TestStoreRecordExpandsSemconvSeries(t *testing.T) {
 	}, t0)
 
 	keys := s.Series()
-	if len(keys) != 5 {
-		t.Fatalf("expected 5 semconv series, got %d: %+v", len(keys), keys)
+	if len(keys) != 6 {
+		t.Fatalf("expected 6 semconv series, got %d: %+v", len(keys), keys)
 	}
 
 	cpu := s.Range(SeriesKey{Deployment: "shop", Container: "shop-web", Metric: MetricCPUUsage}, t0)
@@ -25,6 +25,21 @@ func TestStoreRecordExpandsSemconvSeries(t *testing.T) {
 	mem := s.Range(SeriesKey{Deployment: "shop", Container: "shop-web", Metric: MetricMemoryUsage}, t0)
 	if len(mem) != 1 || mem[0].Value != 100 {
 		t.Errorf("memory series = %+v, want one sample of 100", mem)
+	}
+	utilization := s.Range(SeriesKey{Deployment: "shop", Container: "shop-web", Metric: MetricMemoryUtilization}, t0)
+	if len(utilization) != 1 || utilization[0].Value != 10 {
+		t.Errorf("memory utilization series = %+v, want one sample of 10", utilization)
+	}
+}
+
+func TestStoreOmitsMemoryUtilizationWithoutALimit(t *testing.T) {
+	s := NewStore(10)
+	t0 := time.Unix(1_700_000_000, 0)
+	s.Record(ContainerSample{Deployment: "shop", Container: "shop-web", MemoryUsage: 100}, t0)
+
+	got := s.Range(SeriesKey{Deployment: "shop", Container: "shop-web", Metric: MetricMemoryUtilization}, t0)
+	if got != nil {
+		t.Errorf("memory utilization without a limit = %+v, want no series", got)
 	}
 }
 

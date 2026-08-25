@@ -238,4 +238,13 @@ func TestAlertEventMessage(t *testing.T) {
 	if got := mem.Message(); got != "Memory: shop-db in shop is 5.0 GB, above 4.0 GB." {
 		t.Errorf("Message() = %q", got)
 	}
+
+	utilization := AlertEvent{
+		RuleName: "Memory utilization", Deployment: "shop", Container: "shop-db",
+		Metric: MetricMemoryUtilization, Value: 92.5, Threshold: 90,
+		Comparison: ComparisonAbove, State: AlertFiring,
+	}
+	if got := utilization.Message(); got != "Memory utilization: shop-db in shop is 92.5%, above 90.0%." {
+		t.Errorf("Message() = %q", got)
+	}
 }

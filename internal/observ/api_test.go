@@ -12,7 +12,7 @@ import (
 func TestHandlerLatestGroupsByDeployment(t *testing.T) {
 	store := NewStore(10)
 	now := time.Unix(1_700_000_000, 0)
-	store.Record(ContainerSample{Deployment: "shop", Container: "shop-web", CPUPercent: 10, MemoryUsage: 200}, now)
+	store.Record(ContainerSample{Deployment: "shop", Container: "shop-web", CPUPercent: 10, MemoryUsage: 200, MemoryLimit: 1000}, now)
 	store.Record(ContainerSample{Deployment: "shop", Container: "shop-db", CPUPercent: 4, MemoryUsage: 500}, now)
 
 	rec := httptest.NewRecorder()
@@ -37,7 +37,7 @@ func TestHandlerLatestGroupsByDeployment(t *testing.T) {
 			web = &got[0].Containers[i]
 		}
 	}
-	if web == nil || web.Metrics[MetricCPUUsage] != 10 || web.Metrics[MetricMemoryUsage] != 200 {
+	if web == nil || web.Metrics[MetricCPUUsage] != 10 || web.Metrics[MetricMemoryUsage] != 200 || web.Metrics[MetricMemoryUtilization] != 20 {
 		t.Errorf("shop-web container = %+v", web)
 	}
 }

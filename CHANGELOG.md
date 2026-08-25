@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Container memory utilization metrics for percentage-based alerts and dashboards
+
 ## [0.4.0-beta.7] - 2026-08-23
 
 Seventh beta of the Albacore release, focused on reliable first deployments through the CLI.

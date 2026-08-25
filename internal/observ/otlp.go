@@ -77,6 +77,7 @@ func registerGauges(meter metric.Meter, store *Store) error {
 		MetricCPUUsage,
 		MetricMemoryUsage,
 		MetricMemoryLimit,
+		MetricMemoryUtilization,
 		MetricNetworkRx,
 		MetricNetworkTx,
 	} {
@@ -113,7 +114,7 @@ func registerGauges(meter metric.Meter, store *Store) error {
 // bytes as bytes rather than a bare number.
 func metricUnit(name string) string {
 	switch name {
-	case MetricCPUUsage:
+	case MetricCPUUsage, MetricMemoryUtilization:
 		return "%"
 	case MetricMemoryUsage, MetricMemoryLimit, MetricNetworkRx, MetricNetworkTx:
 		return "By"
