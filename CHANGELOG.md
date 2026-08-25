@@ -1,12 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Container memory utilization metrics for percentage-based alerts and dashboards
+
 ## [0.4.0-beta.7] - 2026-08-23
 
 Seventh beta of the Albacore release, focused on reliable first deployments through the CLI.
 
 ### Added
 - Bind mount ownership declarations and file ownership changes
-- Container memory utilization metrics for percentage-based alerts and dashboards
 - One-shot service jobs whose status and output follow the container process
 - Partial environment variable updates with plan support
 - OpenAPI metadata for accepted values and plan capable operations
