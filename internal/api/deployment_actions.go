@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/mail"
 	"strings"
 
+	"github.com/flatrun/agent/internal/access"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -202,8 +202,7 @@ func (s *Server) validateDomainAccess(policy *models.DomainAccessConfig) error {
 		return apiErrf(http.StatusBadRequest, "At least one allowed email is required")
 	}
 	for _, email := range policy.AllowedEmails {
-		address, err := mail.ParseAddress(strings.TrimSpace(email))
-		if err != nil || !strings.EqualFold(address.Address, strings.TrimSpace(email)) {
+		if !access.ValidEmail(email) {
 			return apiErrf(http.StatusBadRequest, "Allowed email %q is invalid", email)
 		}
 	}

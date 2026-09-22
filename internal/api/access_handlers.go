@@ -67,6 +67,10 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 
 func (s *Server) getAccessEmailTargets(c *gin.Context) {
 	options := make([]gin.H, 0)
+	if s.notify == nil {
+		c.JSON(http.StatusOK, gin.H{"targets": options})
+		return
+	}
 	for _, target := range s.notify.Load().Targets {
 		if target.Enabled && strings.HasPrefix(target.URL, "smtp://") {
 			options = append(options, gin.H{"id": target.ID, "name": target.Name})
@@ -81,8 +85,12 @@ func (s *Server) verifyApplicationAccess(c *gin.Context) {
 		return
 	}
 	email, host, returnPath, err := s.access.VerifyMagicLink(c.Query("token"))
+	if err != nil {
+		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
+		return
+	}
 	policy, ok := s.applicationAccessPolicy(host, returnPath)
-	if err != nil || !ok || !access.Allows(policy, email) || !strings.EqualFold(hostnameOnly(c.Request.Host), hostnameOnly(host)) {
+	if !ok || !access.Allows(policy, email) || !strings.EqualFold(hostnameOnly(c.Request.Host), hostnameOnly(host)) {
 		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
 		return
 	}

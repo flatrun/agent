@@ -72,3 +72,22 @@ func TestAnyVerifiedPolicyRequiresOneValidEmailAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchingRouteOnlyAliasDoesNotModifyAliases(t *testing.T) {
+	aliases := make([]string, 1, 2)
+	aliases[0] = "www.example.com"
+	backing := aliases[:2]
+	backing[1] = "keep.example.com"
+	domain := models.DomainConfig{
+		Domain:           "example.com",
+		Aliases:          aliases,
+		RouteOnlyAliases: []string{"internal.example.com"},
+	}
+
+	if !matchesHost(domain, "internal.example.com") {
+		t.Fatal("route-only alias did not match")
+	}
+	if backing[1] != "keep.example.com" {
+		t.Fatalf("alias backing array was modified: %q", backing[1])
+	}
+}

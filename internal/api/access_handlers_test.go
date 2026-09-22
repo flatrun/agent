@@ -196,6 +196,18 @@ func TestAccessEmailTargetsRespectDeploymentGrants(t *testing.T) {
 	}
 }
 
+func TestAccessEmailTargetsAreEmptyWithoutNotificationService(t *testing.T) {
+	server := &Server{}
+	router := gin.New()
+	router.GET("/api/deployments/:name/access/email-targets", server.getAccessEmailTargets)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/deployments/shop/access/email-targets", nil))
+	if response.Code != http.StatusOK || response.Body.String() != "{\"targets\":[]}" {
+		t.Fatalf("selector response = %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestApplicationAccessLoginRejectsUnsafeReturnPath(t *testing.T) {
 	server := &Server{}
 	router := gin.New()

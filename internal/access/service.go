@@ -226,7 +226,12 @@ func matchesHost(domain models.DomainConfig, host string) bool {
 	if hostname(domain.Domain) == host {
 		return true
 	}
-	for _, alias := range append(domain.Aliases, domain.RouteOnlyAliases...) {
+	for _, alias := range domain.Aliases {
+		if hostname(alias) == host {
+			return true
+		}
+	}
+	for _, alias := range domain.RouteOnlyAliases {
 		if hostname(alias) == host {
 			return true
 		}
