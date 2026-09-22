@@ -14,10 +14,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type accessEmailSender interface {
+	SendEmailTo(string, string, notify.Notification) error
+}
+
 func (s *Server) checkApplicationAccess(c *gin.Context) {
 	policy, ok := s.applicationAccessPolicy(c.GetHeader("X-Original-Host"), c.GetHeader("X-Original-URI"))
 	if !ok {
-		c.Status(http.StatusNoContent)
+		c.Status(http.StatusUnauthorized)
 		return
 	}
 	cookie, err := c.Cookie(access.CookieName)
@@ -41,7 +45,7 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 	email := strings.TrimSpace(c.PostForm("email"))
 	returnPath := safeAccessReturn(c.PostForm("return"))
 	policy, ok := s.applicationAccessPolicy(c.Request.Host, returnPath)
-	if ok && s.access != nil && access.Allows(policy, email) && s.access.AllowEmailRequest(c.Request.Host, email) {
+	if ok && s.access != nil && s.accessEmailSender != nil && access.Allows(policy, email) && s.access.AllowEmailRequest(c.Request.Host, email) {
 		token, err := s.access.MagicLink(email, c.Request.Host, returnPath)
 		if err == nil {
 			scheme := c.GetHeader("X-Forwarded-Proto")
@@ -49,7 +53,7 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 				scheme = "http"
 			}
 			link := fmt.Sprintf("%s://%s/_flatrun/access/verify?token=%s", scheme, c.Request.Host, url.QueryEscape(token))
-			err = s.notify.SendEmailTo(policy.EmailTargetID, email, notify.Notification{
+			err = s.accessEmailSender.SendEmailTo(policy.EmailTargetID, email, notify.Notification{
 				Title: "Your FlatRun access link", Message: "Open this link to continue: " + link,
 			})
 		}
@@ -59,6 +63,16 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusAccepted, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Check your email</title></head><body><main><h1>Check your email</h1><p>If this address is allowed, a sign-in link is on its way.</p></main></body></html>`)
+}
+
+func (s *Server) getAccessEmailTargets(c *gin.Context) {
+	options := make([]gin.H, 0)
+	for _, target := range s.notify.Load().Targets {
+		if target.Enabled && strings.HasPrefix(target.URL, "smtp://") {
+			options = append(options, gin.H{"id": target.ID, "name": target.Name})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"targets": options})
 }
 
 func (s *Server) verifyApplicationAccess(c *gin.Context) {

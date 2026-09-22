@@ -86,6 +86,7 @@ type Server struct {
 	pluginHost         *pluginhost.Host
 	notify             *notify.Service
 	access             *access.Service
+	accessEmailSender  accessEmailSender
 	pluginToken        string
 	authMiddleware     *auth.Middleware
 	authManager        *auth.Manager
@@ -368,6 +369,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		pluginHost:         pluginHost,
 		notify:             notifyService,
 		access:             accessService,
+		accessEmailSender:  notifyService,
 		pluginToken:        pluginToken,
 		authMiddleware:     authMiddleware,
 		authManager:        authManager,
@@ -555,6 +557,7 @@ func (s *Server) setupRoutes() {
 
 			// Domain endpoints
 			protected.GET("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDomains)
+			protected.GET("/deployments/:name/access/email-targets", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.getAccessEmailTargets)
 			protected.POST("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDomain)
 			protected.PUT("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDomain)
 			protected.DELETE("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteDomain)

@@ -1,17 +1,35 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flatrun/agent/internal/access"
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/docker"
+	"github.com/flatrun/agent/internal/notify"
+	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
+
+type recordingAccessSender struct {
+	targetID  string
+	recipient string
+	message   string
+}
+
+func (s *recordingAccessSender) SendEmailTo(targetID, recipient string, message notify.Notification) error {
+	s.targetID = targetID
+	s.recipient = recipient
+	s.message = message.Message
+	return nil
+}
 
 func TestApplicationAccessCheckUsesTheVisitorHTTPBoundary(t *testing.T) {
 	base := t.TempDir()
@@ -43,9 +61,11 @@ domains:
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{manager: docker.NewManager(base), access: accessService}
+	sender := &recordingAccessSender{}
+	server := &Server{manager: docker.NewManager(base), access: accessService, accessEmailSender: sender}
 	router := gin.New()
 	router.GET("/api/access/check", server.checkApplicationAccess)
+	router.POST("/api/access/request", server.requestApplicationAccess)
 	router.GET("/api/access/verify", server.verifyApplicationAccess)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/access/check", nil)
@@ -57,11 +77,34 @@ domains:
 		t.Fatalf("anonymous response = %d", response.Code)
 	}
 
-	link, err := accessService.MagicLink("person@example.com", "private.example.com", "/")
-	if err != nil {
-		t.Fatal(err)
+	request = httptest.NewRequest(http.MethodPost, "/api/access/request", strings.NewReader(url.Values{
+		"email": {"person@example.com"}, "return": {"/"},
+	}.Encode()))
+	request.Host = "private.example.com"
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("X-Forwarded-Proto", "https")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || sender.targetID != "smtp" || sender.recipient != "person@example.com" {
+		t.Fatalf("access request = %d, target = %q, recipient = %q", response.Code, sender.targetID, sender.recipient)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/api/access/verify?token="+link, nil)
+	link := strings.TrimPrefix(sender.message, "Open this link to continue: ")
+	parsed, err := url.Parse(link)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != "private.example.com" {
+		t.Fatalf("access link = %q, error = %v", link, err)
+	}
+	sender.message = ""
+	request = httptest.NewRequest(http.MethodPost, "/api/access/request", strings.NewReader(url.Values{
+		"email": {"other@example.com"}, "return": {"/"},
+	}.Encode()))
+	request.Host = "private.example.com"
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || sender.message != "" {
+		t.Fatalf("unlisted email response = %d, message = %q", response.Code, sender.message)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/access/verify?"+parsed.RawQuery, nil)
 	request.Host = "private.example.com"
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
@@ -83,12 +126,73 @@ domains:
 		t.Fatal(err)
 	}
 	server.access = restarted
-	request = httptest.NewRequest(http.MethodGet, "/api/access/verify?token="+link, nil)
+	request = httptest.NewRequest(http.MethodGet, "/api/access/verify?"+parsed.RawQuery, nil)
 	request.Host = "private.example.com"
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("replayed verification response = %d", response.Code)
+	}
+	if err := os.WriteFile(filepath.Join(deploymentPath, "service.yml"), []byte("domains: [invalid"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/access/check", nil)
+	request.Header.Set("X-Original-Host", "private.example.com")
+	request.Header.Set("X-Original-URI", "/")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unreadable policy response = %d", response.Code)
+	}
+}
+
+func TestAccessEmailTargetsRespectDeploymentGrants(t *testing.T) {
+	base := t.TempDir()
+	cfg := &config.Config{Auth: config.AuthConfig{Enabled: true, JWTSecret: "access-test-secret"}}
+	t.Setenv("FLATRUN_ADMIN_PASSWORD", "testadminpass")
+	authManager, err := auth.NewManager(base, &cfg.Auth, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer authManager.Close()
+	notifications := notify.NewService(base)
+	if err := notifications.Save(notify.Config{Targets: []notify.Target{
+		{ID: "smtp", Name: "Mail", URL: "smtp://mail.example/?from=ops%40example.com", Enabled: true},
+		{ID: "webhook", Name: "Webhook", URL: "generic+https://example.com", Enabled: true},
+		{ID: "disabled", Name: "Disabled", URL: "smtp://mail.example/", Enabled: false},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{notify: notifications}
+	middleware := auth.NewMiddlewareWithManager(&cfg.Auth, authManager)
+	router := gin.New()
+	protected := router.Group("/api", middleware.RequireAuth())
+	protected.GET("/deployments/:name/access/email-targets", middleware.RequirePermission(auth.PermDeploymentsWrite), middleware.RequireDeploymentAccess(auth.AccessLevelWrite), server.getAccessEmailTargets)
+	shopKey := objectStoreKey(t, &Server{authManager: authManager}, "access-shop-key", []string{auth.PermDeploymentsWrite.String()}, auth.DeploymentAccess{"shop": auth.AccessLevelWrite})
+	otherKey := objectStoreKey(t, &Server{authManager: authManager}, "access-other-key", []string{auth.PermDeploymentsWrite.String()}, auth.DeploymentAccess{"other": auth.AccessLevelWrite})
+	readerKey := objectStoreKey(t, &Server{authManager: authManager}, "access-reader-key", []string{auth.PermDeploymentsRead.String()}, auth.DeploymentAccess{"shop": auth.AccessLevelWrite})
+
+	response := osReq(t, router, http.MethodGet, "/api/deployments/shop/access/email-targets", shopKey, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("shop selector = %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Targets []map[string]string `json:"targets"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Targets) != 1 || body.Targets[0]["id"] != "smtp" || body.Targets[0]["name"] != "Mail" || len(body.Targets[0]) != 2 {
+		t.Fatalf("selector exposed unexpected targets: %s", response.Body.String())
+	}
+	response = osReq(t, router, http.MethodGet, "/api/deployments/shop/access/email-targets", otherKey, nil)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("other deployment selector = %d", response.Code)
+	}
+	response = osReq(t, router, http.MethodGet, "/api/deployments/shop/access/email-targets", readerKey, nil)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("read-only selector = %d", response.Code)
 	}
 }
 

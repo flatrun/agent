@@ -4002,6 +4002,30 @@
         "x-plan-supported": true
       }
     },
+    "/api/deployments/{name}/access/email-targets": {
+      "get": {
+        "operationId": "get-deployments-by-name-access-email-targets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/actions/{actionId}": {
       "post": {
         "operationId": "post-deployments-by-name-actions-by-actionId",
