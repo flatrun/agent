@@ -70,7 +70,7 @@ func New(basePath string) (*Service, error) {
 }
 
 func Resolve(deployments []models.Deployment, host, requestPath string) (*models.DomainAccessConfig, bool) {
-	host = hostname(host)
+	host = Hostname(host)
 	bestLength := -1
 	var best *models.DomainAccessConfig
 	for i := range deployments {
@@ -97,7 +97,7 @@ func Resolve(deployments []models.Deployment, host, requestPath string) (*models
 }
 
 func (s *Service) MagicLink(email, host, returnPath string) (string, error) {
-	return s.sign(tokenPayload{Kind: "verify", Email: normalizeEmail(email), Host: hostname(host), Return: safeReturn(returnPath), Expiry: s.now().Add(15 * time.Minute).Unix()})
+	return s.sign(tokenPayload{Kind: "verify", Email: normalizeEmail(email), Host: Hostname(host), Return: SafeReturn(returnPath), Expiry: s.now().Add(15 * time.Minute).Unix()})
 }
 
 func (s *Service) VerifyMagicLink(value string) (string, string, string, error) {
@@ -144,10 +144,15 @@ func (s *Service) pruneUsedLinks() {
 }
 
 func (s *Service) AllowEmailRequest(host, email string) bool {
-	key := hostname(host) + "\x00" + normalizeEmail(email)
+	key := Hostname(host) + "\x00" + normalizeEmail(email)
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for existing, last := range s.lastRequests {
+		if now.Sub(last) >= time.Minute {
+			delete(s.lastRequests, existing)
+		}
+	}
 	if last, ok := s.lastRequests[key]; ok && now.Sub(last) < time.Minute {
 		return false
 	}
@@ -159,12 +164,12 @@ func (s *Service) Session(email, host string, hours int) (string, error) {
 	if hours <= 0 {
 		hours = 24
 	}
-	return s.sign(tokenPayload{Kind: "session", Email: normalizeEmail(email), Host: hostname(host), Expiry: s.now().Add(time.Duration(hours) * time.Hour).Unix()})
+	return s.sign(tokenPayload{Kind: "session", Email: normalizeEmail(email), Host: Hostname(host), Expiry: s.now().Add(time.Duration(hours) * time.Hour).Unix()})
 }
 
 func (s *Service) ValidateSession(value, host string, policy *models.DomainAccessConfig) bool {
 	payload, err := s.verify(value, "session")
-	return err == nil && payload.Host == hostname(host) && Allows(policy, payload.Email)
+	return err == nil && payload.Host == Hostname(host) && Allows(policy, payload.Email)
 }
 
 func Allows(policy *models.DomainAccessConfig, email string) bool {
@@ -223,26 +228,26 @@ func (s *Service) verify(value, kind string) (tokenPayload, error) {
 }
 
 func matchesHost(domain models.DomainConfig, host string) bool {
-	if hostname(domain.Domain) == host {
+	if Hostname(domain.Domain) == host {
 		return true
 	}
 	for _, alias := range domain.Aliases {
-		if hostname(alias) == host {
+		if Hostname(alias) == host {
 			return true
 		}
 	}
 	for _, alias := range domain.RouteOnlyAliases {
-		if hostname(alias) == host {
+		if Hostname(alias) == host {
 			return true
 		}
 	}
 	return false
 }
 
-func hostname(value string) string {
+func Hostname(value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))
 	if host, _, err := net.SplitHostPort(value); err == nil {
-		return host
+		return strings.TrimSuffix(host, ".")
 	}
 	return strings.TrimSuffix(value, ".")
 }
@@ -251,7 +256,7 @@ func normalizeEmail(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
-func safeReturn(value string) string {
+func SafeReturn(value string) string {
 	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\\\r\n") {
 		return "/"
 	}

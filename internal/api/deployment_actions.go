@@ -207,7 +207,7 @@ func (s *Server) validateDomainAccess(policy *models.DomainAccessConfig) error {
 		}
 	}
 	if policy.SessionHours < 0 || policy.SessionHours > 720 {
-		return apiErrf(http.StatusBadRequest, "Session hours must be between 1 and 720")
+		return apiErrf(http.StatusBadRequest, "Session hours must be between 0 and 720")
 	}
 	if s.notify == nil {
 		return apiErrf(http.StatusBadRequest, "An enabled email notification target is required")

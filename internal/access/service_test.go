@@ -91,3 +91,30 @@ func TestMatchingRouteOnlyAliasDoesNotModifyAliases(t *testing.T) {
 		t.Fatalf("alias backing array was modified: %q", backing[1])
 	}
 }
+
+func TestAllowEmailRequestEvictsExpiredEntries(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	service.now = func() time.Time { return now }
+	service.AllowEmailRequest("app.example.com", "first@example.com")
+	now = now.Add(time.Minute)
+	service.AllowEmailRequest("app.example.com", "second@example.com")
+	if len(service.lastRequests) != 1 {
+		t.Fatalf("rate limit entries = %d", len(service.lastRequests))
+	}
+}
+
+func TestCanonicalAccessValues(t *testing.T) {
+	if Hostname("APP.EXAMPLE.COM.:443") != "app.example.com" {
+		t.Fatal("host with port was not normalized")
+	}
+	if Hostname("APP.EXAMPLE.COM.") != "app.example.com" {
+		t.Fatal("trailing dot was not removed")
+	}
+	if SafeReturn("//other.example.com") != "/" {
+		t.Fatal("unsafe return path was accepted")
+	}
+}

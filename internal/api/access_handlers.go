@@ -33,7 +33,7 @@ func (s *Server) checkApplicationAccess(c *gin.Context) {
 }
 
 func (s *Server) applicationAccessLogin(c *gin.Context) {
-	returnPath := safeAccessReturn(c.Query("return"))
+	returnPath := access.SafeReturn(c.Query("return"))
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -43,7 +43,7 @@ func (s *Server) applicationAccessLogin(c *gin.Context) {
 
 func (s *Server) requestApplicationAccess(c *gin.Context) {
 	email := strings.TrimSpace(c.PostForm("email"))
-	returnPath := safeAccessReturn(c.PostForm("return"))
+	returnPath := access.SafeReturn(c.PostForm("return"))
 	policy, ok := s.applicationAccessPolicy(c.Request.Host, returnPath)
 	if ok && s.access != nil && s.accessEmailSender != nil && access.Allows(policy, email) && s.access.AllowEmailRequest(c.Request.Host, email) {
 		token, err := s.access.MagicLink(email, c.Request.Host, returnPath)
@@ -90,7 +90,7 @@ func (s *Server) verifyApplicationAccess(c *gin.Context) {
 		return
 	}
 	policy, ok := s.applicationAccessPolicy(host, returnPath)
-	if !ok || !access.Allows(policy, email) || !strings.EqualFold(hostnameOnly(c.Request.Host), hostnameOnly(host)) {
+	if !ok || !access.Allows(policy, email) || access.Hostname(c.Request.Host) != access.Hostname(host) {
 		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
 		return
 	}
@@ -106,7 +106,7 @@ func (s *Server) verifyApplicationAccess(c *gin.Context) {
 	}
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie(access.CookieName, session, hours*3600, "/", "", https, true)
-	c.Redirect(http.StatusFound, safeAccessReturn(returnPath))
+	c.Redirect(http.StatusFound, access.SafeReturn(returnPath))
 }
 
 func (s *Server) applicationAccessPolicy(host, requestPath string) (*models.DomainAccessConfig, bool) {
@@ -118,18 +118,4 @@ func (s *Server) applicationAccessPolicy(host, requestPath string) (*models.Doma
 		return nil, false
 	}
 	return access.Resolve(deployments, host, requestPath)
-}
-
-func safeAccessReturn(value string) string {
-	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\\\r\n") {
-		return "/"
-	}
-	return value
-}
-
-func hostnameOnly(value string) string {
-	if index := strings.IndexByte(value, ':'); index >= 0 {
-		return value[:index]
-	}
-	return value
 }
