@@ -323,6 +323,29 @@ func (s *Service) NotifyTargets(title, message string, ids []string) error {
 	return s.NotifyNotificationTargets(Notification{Title: title, Message: message}, ids)
 }
 
+func (s *Service) SendEmailTo(targetID, recipient string, notification Notification) error {
+	for _, target := range s.Load().Targets {
+		if target.ID != targetID {
+			continue
+		}
+		if !target.Enabled {
+			return fmt.Errorf("target is disabled")
+		}
+		parsed, err := url.Parse(target.URL)
+		if err != nil {
+			return fmt.Errorf("parse notification target: %w", err)
+		}
+		if parsed.Scheme != "smtp" {
+			return fmt.Errorf("notification target is not SMTP")
+		}
+		query := parsed.Query()
+		query.Set("to", recipient)
+		parsed.RawQuery = query.Encode()
+		return s.deliver(parsed.String(), notification)
+	}
+	return fmt.Errorf("target not found")
+}
+
 func (s *Service) TestTarget(id string) error {
 	for _, target := range s.Load().Targets {
 		if target.ID == id {

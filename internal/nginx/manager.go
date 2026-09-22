@@ -858,6 +858,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				OriginalPath:  d.PathPrefix,
 				ProxyTimeout:  timeout,
 				StaticCache:   d.StaticCache,
+				Access:        d.Access,
 			})
 
 			if d.SSL.Enabled {
@@ -878,6 +879,14 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			}
 		}
 
+		hasAccess := false
+		for _, location := range locations {
+			if location.Access != nil && location.Access.Enabled {
+				hasAccess = true
+				break
+			}
+		}
+
 		servers = append(servers, serverData{
 			Domain:         host,
 			SSLEnabled:     hasSSL,
@@ -886,6 +895,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			Locations:      locations,
 			ServerAliases:  serverAliases,
 			EnableStapling: hasSSL && m.shouldStaple(sslDomain),
+			HasAccess:      hasAccess,
 		})
 	}
 
@@ -986,6 +996,7 @@ type serverData struct {
 	SSLDomain      string
 	ServerAliases  []string
 	EnableStapling bool
+	HasAccess      bool
 }
 
 type locationData struct {
@@ -998,6 +1009,7 @@ type locationData struct {
 	OriginalPath  string
 	ProxyTimeout  int
 	StaticCache   bool
+	Access        *models.DomainAccessConfig
 	// Upstream is the value assigned to $upstream: an upstream block name when
 	// keepalive is supported, otherwise the literal service:port.
 	Upstream string
@@ -1178,7 +1190,34 @@ upstream {{.Name}} {
 {{end -}}
 `
 
-const multiRouteHTTPTemplate = upstreamBlocks + `{{- range .Servers}}
+const accessTemplates = `{{define "accessPortal"}}{{if .HasAccess}}
+
+    location = /_flatrun/access/check {
+        internal;
+        proxy_pass http://host.docker.internal:8090/api/access/check;
+        proxy_set_header X-Original-Host $host;
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header Cookie $http_cookie;
+    }
+
+    location ^~ /_flatrun/access/ {
+        proxy_pass http://host.docker.internal:8090/api/access/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location @flatrun_access_login {
+        return 302 /_flatrun/access/login?return=$request_uri;
+    }
+{{end}}{{end}}
+{{define "accessCheck"}}{{if and .Access .Access.Enabled}}
+        auth_request /_flatrun/access/check;
+        error_page 401 = @flatrun_access_login;
+{{end}}{{end}}
+`
+
+const multiRouteHTTPTemplate = upstreamBlocks + accessTemplates + `{{- range .Servers}}
 server {
     listen 80;
     server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
@@ -1187,9 +1226,11 @@ server {
 {{- range $.BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "accessPortal" .}}
 {{- range .Locations}}
 
     location {{.Path}} {
+{{template "accessCheck" .}}
         set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
@@ -1241,7 +1282,7 @@ server {
 }
 {{end}}`
 
-const multiRouteSSLTemplate = upstreamBlocks + `{{- range .Servers}}
+const multiRouteSSLTemplate = upstreamBlocks + accessTemplates + `{{- range .Servers}}
 server {
     listen 80;
     server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
@@ -1281,9 +1322,11 @@ server {
 {{- range $.BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "accessPortal" .}}
 {{- range .Locations}}
 
     location {{.Path}} {
+{{template "accessCheck" .}}
         set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
@@ -1329,7 +1372,7 @@ server {
 }
 {{end}}`
 
-const multiRouteMixedTemplate = upstreamBlocks + `{{- range .Servers}}
+const multiRouteMixedTemplate = upstreamBlocks + accessTemplates + `{{- range .Servers}}
 {{- if .HasSSL}}
 server {
     listen 80;
@@ -1370,9 +1413,11 @@ server {
 {{- range $.BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "accessPortal" .}}
 {{- range .Locations}}
 
     location {{.Path}} {
+{{template "accessCheck" .}}
         set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
@@ -1425,9 +1470,11 @@ server {
 {{- range $.BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "accessPortal" .}}
 {{- range .Locations}}
 
     location {{.Path}} {
+{{template "accessCheck" .}}
         set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;

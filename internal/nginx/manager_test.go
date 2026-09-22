@@ -2288,6 +2288,31 @@ func TestRouteOnlyAliasEmittedIntoServerName(t *testing.T) {
 	}
 }
 
+func TestDomainAccessAddsEmailGateToProtectedLocation(t *testing.T) {
+	m := NewManager(&config.NginxConfig{}, t.TempDir(), "")
+	deployment := &models.Deployment{
+		Name: "private-app",
+		Metadata: &models.ServiceMetadata{Domains: []models.DomainConfig{{
+			ID: "private", Domain: "private.example.com", Service: "web", ContainerPort: 8080,
+			Access: &models.DomainAccessConfig{Enabled: true, Mode: "allowlist", AllowedEmails: []string{"person@example.com"}, EmailTargetID: "smtp"},
+		}}},
+	}
+	config, err := m.renderMultiDomainConfig(deployment, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"location = /_flatrun/access/check",
+		"proxy_pass http://host.docker.internal:8090/api/access/check",
+		"auth_request /_flatrun/access/check",
+		"error_page 401 = @flatrun_access_login",
+	} {
+		if !strings.Contains(config, expected) {
+			t.Errorf("generated config is missing %q\n%s", expected, config)
+		}
+	}
+}
+
 // Static-asset caching is opt-in per domain: the expires directive appears only
 // when the domain enables it, so other domains keep their exact previous output.
 func TestStaticCacheEmitsExpiresOnlyWhenEnabled(t *testing.T) {

@@ -82,7 +82,16 @@ type DomainConfig struct {
 	// StaticCache opts this domain into a long browser cache for static assets
 	// (css, js, images, fonts). It applies only to responses whose path has a
 	// static extension; dynamic responses keep the app's own cache headers.
-	StaticCache bool `yaml:"static_cache,omitempty" json:"static_cache,omitempty"`
+	StaticCache bool                `yaml:"static_cache,omitempty" json:"static_cache,omitempty"`
+	Access      *DomainAccessConfig `yaml:"access,omitempty" json:"access,omitempty"`
+}
+
+type DomainAccessConfig struct {
+	Enabled       bool     `yaml:"enabled" json:"enabled"`
+	Mode          string   `yaml:"mode" json:"mode"`
+	AllowedEmails []string `yaml:"allowed_emails,omitempty" json:"allowed_emails,omitempty"`
+	EmailTargetID string   `yaml:"email_target_id" json:"email_target_id"`
+	SessionHours  int      `yaml:"session_hours,omitempty" json:"session_hours,omitempty"`
 }
 
 type DatabaseConfig struct {
