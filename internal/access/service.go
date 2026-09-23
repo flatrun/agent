@@ -195,6 +195,8 @@ func ValidEmail(value string) bool {
 	return err == nil && strings.EqualFold(address.Address, value)
 }
 
+// ValidAllowlistEntry accepts a complete email address or an exact domain prefixed with @.
+// YAML producers must quote domain entries because @ is a reserved leading indicator.
 func ValidAllowlistEntry(value string) bool {
 	value = strings.TrimSpace(value)
 	if strings.HasPrefix(value, "@") {
