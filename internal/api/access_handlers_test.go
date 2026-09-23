@@ -49,6 +49,7 @@ domains:
       mode: allowlist
       allowed_emails:
         - person@example.com
+        - "@flatrun.dev"
       email_target_id: smtp
 `
 	if err := os.WriteFile(filepath.Join(deploymentPath, "service.yml"), []byte(metadata), 0644); err != nil {
@@ -92,6 +93,17 @@ domains:
 	parsed, err := url.Parse(link)
 	if err != nil || parsed.Scheme != "https" || parsed.Host != "private.example.com" {
 		t.Fatalf("access link = %q, error = %v", link, err)
+	}
+	sender.message = ""
+	request = httptest.NewRequest(http.MethodPost, "/api/access/request", strings.NewReader(url.Values{
+		"email": {"visitor@flatrun.dev"}, "return": {"/"},
+	}.Encode()))
+	request.Host = "private.example.com"
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || sender.recipient != "visitor@flatrun.dev" || sender.message == "" {
+		t.Fatalf("domain access request = %d, recipient = %q, message = %q", response.Code, sender.recipient, sender.message)
 	}
 	sender.message = ""
 	request = httptest.NewRequest(http.MethodPost, "/api/access/request", strings.NewReader(url.Values{
