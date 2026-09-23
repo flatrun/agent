@@ -27,6 +27,7 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/loader"
 	composetypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/flatrun/agent/internal/access"
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/audit"
 	"github.com/flatrun/agent/internal/auth"
@@ -84,6 +85,8 @@ type Server struct {
 	builtinDNS         []plugins.Plugin
 	pluginHost         *pluginhost.Host
 	notify             *notify.Service
+	access             *access.Service
+	accessEmailSender  accessEmailSender
 	pluginToken        string
 	authMiddleware     *auth.Middleware
 	authManager        *auth.Manager
@@ -232,6 +235,10 @@ func New(cfg *config.Config, configPath string) *Server {
 	// raise a notification) without the full user auth flow.
 	pluginToken := randomToken()
 	notifyService := notify.NewService(cfg.DeploymentsPath)
+	accessService, accessErr := access.New(cfg.DeploymentsPath)
+	if accessErr != nil {
+		log.Printf("Warning: Failed to initialize application access: %v", accessErr)
+	}
 	pluginHost := pluginhost.New(
 		filepath.Join(cfg.DeploymentsPath, ".flatrun", "plugins"),
 		filepath.Join(cfg.DeploymentsPath, ".flatrun", "run"),
@@ -361,6 +368,8 @@ func New(cfg *config.Config, configPath string) *Server {
 		builtinDNS:         builtinDNS,
 		pluginHost:         pluginHost,
 		notify:             notifyService,
+		access:             accessService,
+		accessEmailSender:  notifyService,
 		pluginToken:        pluginToken,
 		authMiddleware:     authMiddleware,
 		authManager:        authManager,
@@ -454,6 +463,10 @@ func (s *Server) setupRoutes() {
 		api.GET("/auth/status", s.authMiddleware.GetAuthStatus)
 		api.POST("/auth/login", s.authMiddleware.Login)
 		api.GET("/auth/validate", s.authMiddleware.ValidateToken)
+		api.GET("/access/check", s.checkApplicationAccess)
+		api.GET("/access/login", s.applicationAccessLogin)
+		api.POST("/access/request", s.requestApplicationAccess)
+		api.GET("/access/verify", s.verifyApplicationAccess)
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
@@ -544,6 +557,7 @@ func (s *Server) setupRoutes() {
 
 			// Domain endpoints
 			protected.GET("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDomains)
+			protected.GET("/deployments/:name/access/email-targets", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.getAccessEmailTargets)
 			protected.POST("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDomain)
 			protected.PUT("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDomain)
 			protected.DELETE("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteDomain)
@@ -2157,6 +2171,14 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 				return
 			}
 			seenServices[healthCheck.Service] = struct{}{}
+		}
+	}
+	if _, sentDomains := sentFields["domains"]; sentDomains {
+		for i := range incoming.Domains {
+			if err := s.validateDomainAccess(incoming.Domains[i].Access); err != nil {
+				respondAPIError(c, err)
+				return
+			}
 		}
 	}
 

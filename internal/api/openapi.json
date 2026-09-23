@@ -6,6 +6,76 @@
     "version": "0.4.0-beta.7"
   },
   "paths": {
+    "/api/access/check": {
+      "get": {
+        "operationId": "get-access-check",
+        "tags": [
+          "access"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/access/login": {
+      "get": {
+        "operationId": "get-access-login",
+        "tags": [
+          "access"
+        ],
+        "parameters": [
+          {
+            "name": "return",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/access/request": {
+      "post": {
+        "operationId": "post-access-request",
+        "tags": [
+          "access"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/access/verify": {
+      "get": {
+        "operationId": "get-access-verify",
+        "tags": [
+          "access"
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
     "/api/agent/update": {
       "get": {
         "operationId": "get-agent-update",
@@ -3930,6 +4000,30 @@
         ],
         "x-permission": "deployments:write",
         "x-plan-supported": true
+      }
+    },
+    "/api/deployments/{name}/access/email-targets": {
+      "get": {
+        "operationId": "get-deployments-by-name-access-email-targets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
       }
     },
     "/api/deployments/{name}/actions/{actionId}": {
@@ -13998,9 +14092,45 @@
           "enabled"
         ]
       },
+      "models.DomainAccessConfig": {
+        "type": "object",
+        "properties": {
+          "allowed_emails": {
+            "type": "array"
+          },
+          "email_target_id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "session_hours": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "enabled",
+          "mode",
+          "allowed_emails",
+          "email_target_id",
+          "session_hours"
+        ],
+        "x-columns": [
+          "enabled",
+          "mode",
+          "email_target_id",
+          "session_hours"
+        ]
+      },
       "models.DomainConfig": {
         "type": "object",
         "properties": {
+          "access": {
+            "$ref": "#/components/schemas/models.DomainAccessConfig"
+          },
           "aliases": {
             "type": "array",
             "items": {
@@ -14052,7 +14182,8 @@
           "aliases",
           "route_only_aliases",
           "proxy_timeout",
-          "static_cache"
+          "static_cache",
+          "access"
         ],
         "x-columns": [
           "id",

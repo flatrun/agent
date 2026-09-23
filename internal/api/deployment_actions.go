@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
+	"github.com/flatrun/agent/internal/access"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -108,6 +110,9 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 // mutateDomainAdd validates the new domain and appends it to the
 // deployment metadata in memory only; persisting is the caller's job.
 func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.DomainConfig) error {
+	if err := s.validateDomainAccess(domain.Access); err != nil {
+		return err
+	}
 	if domain.Domain == "" {
 		return apiErrf(http.StatusBadRequest, "Domain is required")
 	}
@@ -158,6 +163,9 @@ func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.D
 // mutateDomainUpdate replaces the domain with the given ID in memory
 // only; persisting is the caller's job.
 func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID string, updated *models.DomainConfig) error {
+	if err := s.validateDomainAccess(updated.Access); err != nil {
+		return err
+	}
 	if deployment.Metadata == nil || len(deployment.Metadata.Domains) == 0 {
 		return apiErrf(http.StatusNotFound, "Domain not found")
 	}
@@ -181,6 +189,35 @@ func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID stri
 		}
 	}
 	return apiErrf(http.StatusNotFound, "Domain not found")
+}
+
+func (s *Server) validateDomainAccess(policy *models.DomainAccessConfig) error {
+	if policy == nil || !policy.Enabled {
+		return nil
+	}
+	if policy.Mode != "allowlist" && policy.Mode != "any_verified" {
+		return apiErrf(http.StatusBadRequest, "Access mode must be allowlist or any_verified")
+	}
+	if policy.Mode == "allowlist" && len(policy.AllowedEmails) == 0 {
+		return apiErrf(http.StatusBadRequest, "At least one allowed email is required")
+	}
+	for _, email := range policy.AllowedEmails {
+		if !access.ValidEmail(email) {
+			return apiErrf(http.StatusBadRequest, "Allowed email %q is invalid", email)
+		}
+	}
+	if policy.SessionHours < 0 || policy.SessionHours > 720 {
+		return apiErrf(http.StatusBadRequest, "Session hours must be between 0 and 720")
+	}
+	if s.notify == nil {
+		return apiErrf(http.StatusBadRequest, "An enabled email notification target is required")
+	}
+	for _, target := range s.notify.Load().Targets {
+		if target.ID == policy.EmailTargetID && target.Enabled && strings.HasPrefix(target.URL, "smtp://") {
+			return nil
+		}
+	}
+	return apiErrf(http.StatusBadRequest, "An enabled email notification target is required")
 }
 
 // mutateDomainDelete removes the domain with the given ID in memory and

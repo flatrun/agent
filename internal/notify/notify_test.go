@@ -25,6 +25,26 @@ func TestTargetJSONMasksURL(t *testing.T) {
 	}
 }
 
+func TestSendEmailToOverridesTheConfiguredRecipient(t *testing.T) {
+	service := NewService(t.TempDir())
+	if err := service.Save(Config{Targets: []Target{{
+		ID: "access", Name: "Access", URL: "smtp://mail.example/?from=ops%40example.com&to=ops%40example.com", Enabled: true,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	var delivered string
+	service.send = func(rawURL, _ string) error {
+		delivered = rawURL
+		return nil
+	}
+	if err := service.SendEmailTo("access", "visitor@example.com", Notification{Title: "Sign in"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(delivered, "to=visitor%40example.com") {
+		t.Fatalf("recipient was not replaced in %q", delivered)
+	}
+}
+
 func TestEmailMessageEmbedsImagesReferencedByContentID(t *testing.T) {
 	png := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 	message, err := buildEmailMessage(Notification{
