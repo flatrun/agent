@@ -73,6 +73,34 @@ func TestAnyVerifiedPolicyRequiresOneValidEmailAddress(t *testing.T) {
 	}
 }
 
+func TestAllowlistAcceptsExactEmailDomains(t *testing.T) {
+	policy := &models.DomainAccessConfig{
+		Enabled:       true,
+		Mode:          "allowlist",
+		AllowedEmails: []string{"@flatrun.dev", "@WhileSmart.dev"},
+	}
+	for _, email := range []string{"person@flatrun.dev", "admin@whilesmart.dev"} {
+		if !Allows(policy, email) {
+			t.Fatalf("domain member %q was rejected", email)
+		}
+	}
+	for _, email := range []string{"person@sub.flatrun.dev", "person@notflatrun.dev", "person@example.com"} {
+		if Allows(policy, email) {
+			t.Fatalf("non-member %q was accepted", email)
+		}
+	}
+	for _, entry := range []string{"@flatrun.dev", "@WhileSmart.dev", "person@example.com"} {
+		if !ValidAllowlistEntry(entry) {
+			t.Fatalf("allowlist entry %q was rejected", entry)
+		}
+	}
+	for _, entry := range []string{"@", "@flatrun.dev@example.com", "flatrun.dev"} {
+		if ValidAllowlistEntry(entry) {
+			t.Fatalf("invalid allowlist entry %q was accepted", entry)
+		}
+	}
+}
+
 func TestMatchingRouteOnlyAliasDoesNotModifyAliases(t *testing.T) {
 	aliases := make([]string, 1, 2)
 	aliases[0] = "www.example.com"

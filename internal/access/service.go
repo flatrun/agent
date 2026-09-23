@@ -181,7 +181,8 @@ func Allows(policy *models.DomainAccessConfig, email string) bool {
 	}
 	email = normalizeEmail(email)
 	for _, allowed := range policy.AllowedEmails {
-		if normalizeEmail(allowed) == email {
+		allowed = normalizeEmail(allowed)
+		if allowed == email || strings.HasPrefix(allowed, "@") && allowed == emailDomain(email) {
 			return true
 		}
 	}
@@ -192,6 +193,23 @@ func ValidEmail(value string) bool {
 	value = strings.TrimSpace(value)
 	address, err := mail.ParseAddress(value)
 	return err == nil && strings.EqualFold(address.Address, value)
+}
+
+// ValidAllowlistEntry accepts a complete email address or an exact domain prefixed with @.
+// YAML producers must quote domain entries because @ is a reserved leading indicator.
+func ValidAllowlistEntry(value string) bool {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "@") {
+		return len(value) > 1 && ValidEmail("access"+value)
+	}
+	return ValidEmail(value)
+}
+
+func emailDomain(value string) string {
+	if index := strings.LastIndexByte(value, '@'); index >= 0 {
+		return value[index:]
+	}
+	return ""
 }
 
 func (s *Service) sign(payload tokenPayload) (string, error) {

@@ -202,8 +202,8 @@ func (s *Server) validateDomainAccess(policy *models.DomainAccessConfig) error {
 		return apiErrf(http.StatusBadRequest, "At least one allowed email is required")
 	}
 	for _, email := range policy.AllowedEmails {
-		if !access.ValidEmail(email) {
-			return apiErrf(http.StatusBadRequest, "Allowed email %q is invalid", email)
+		if !access.ValidAllowlistEntry(email) {
+			return apiErrf(http.StatusBadRequest, "Allowed email or domain %q is invalid", email)
 		}
 	}
 	if policy.SessionHours < 0 || policy.SessionHours > 720 {
