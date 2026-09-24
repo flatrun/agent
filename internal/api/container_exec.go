@@ -88,7 +88,7 @@ func (s *Server) containerExec(c *gin.Context) {
 		sendError(conn, "No access to this container")
 		return
 	}
-	if deploymentName, err := containerDeploymentName(containerID); err == nil && deploymentName != "" {
+	if deploymentName, err := s.containerDeploymentName(containerID); err == nil && deploymentName != "" {
 		if blocked, reason, err := s.protectedDeploymentActionBlocked(deploymentName, protectedActionTerminal); err != nil {
 			sendError(conn, "Failed to check protected mode: "+err.Error())
 			return
@@ -324,7 +324,7 @@ func (s *Server) containerExecHTTP(c *gin.Context) {
 	}
 
 	commandLine := strings.Join(append([]string{req.Command}, req.Args...), " ")
-	if deploymentName, err := containerDeploymentName(containerID); err == nil && deploymentName != "" {
+	if deploymentName, err := s.containerDeploymentName(containerID); err == nil && deploymentName != "" {
 		if blocked, reason, err := s.protectedDeploymentActionBlocked(deploymentName, protectedActionExec); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check protected mode: " + err.Error()})
 			return

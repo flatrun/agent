@@ -20,6 +20,7 @@ type fakeStore struct {
 	objects  map[string][]byte
 	modtimes map[string]time.Time
 	failList bool
+	failPut  bool
 }
 
 func newFakeStore(name string) *fakeStore {
@@ -29,6 +30,9 @@ func newFakeStore(name string) *fakeStore {
 func (f *fakeStore) Name() string { return f.name }
 
 func (f *fakeStore) Put(_ context.Context, key string, r io.Reader, _ int64) error {
+	if f.failPut {
+		return fmt.Errorf("put failed")
+	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -38,6 +42,61 @@ func (f *fakeStore) Put(_ context.Context, key string, r io.Reader, _ int64) err
 	f.objects[key] = data
 	f.modtimes[key] = time.Now()
 	return nil
+}
+
+func TestCreateBackup_ReportsPartialAndLocalOnlyPublication(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+	seedDeployment(t, tmpDir, "app")
+
+	working := newFakeStore("working")
+	failing := newFakeStore("failing")
+	failing.failPut = true
+	m.SetRemotes([]Store{working, failing})
+
+	partial, err := m.CreateBackup(context.Background(), "app", nil)
+	if err != nil {
+		t.Fatalf("create partial backup: %v", err)
+	}
+	if partial.Status != BackupStatusPartial {
+		t.Fatalf("status = %s, want partial", partial.Status)
+	}
+
+	working.failPut = true
+	localOnly, err := m.CreateBackup(context.Background(), "app", nil)
+	if err != nil {
+		t.Fatalf("create local backup: %v", err)
+	}
+	if localOnly.Status != BackupStatusLocalOnly {
+		t.Fatalf("status = %s, want local_only", localOnly.Status)
+	}
+	if !containsStr(localOnly.Locations, locationLocal) {
+		t.Fatalf("local archive was not retained: %v", localOnly.Locations)
+	}
+}
+
+func TestRetryRemotePublication_ReusesLocalArchive(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+	seedDeployment(t, tmpDir, "app")
+
+	remote := newFakeStore("remote")
+	remote.failPut = true
+	m.SetRemotes([]Store{remote})
+	created, err := m.CreateBackup(context.Background(), "app", nil)
+	if err != nil {
+		t.Fatalf("create backup: %v", err)
+	}
+	archivePath := created.Path
+
+	remote.failPut = false
+	retried, err := m.RetryRemotePublication(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("retry publication: %v", err)
+	}
+	if retried.Status != BackupStatusCompleted || retried.Path != archivePath {
+		t.Fatalf("retry result = %#v", retried)
+	}
 }
 
 func (f *fakeStore) Open(_ context.Context, key string) (io.ReadCloser, error) {
