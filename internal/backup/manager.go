@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -47,7 +48,7 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		return nil, fmt.Errorf("deployment not found: %s", deploymentName)
 	}
 
-	backupID := fmt.Sprintf("%s_%s", deploymentName, time.Now().Format("20060102_150405"))
+	backupID := fmt.Sprintf("%s_%s", deploymentName, time.Now().Format("20060102_150405.000000000"))
 	backupDir := filepath.Join(m.backupsPath, deploymentName)
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create backup directory: %w", err)
@@ -59,6 +60,14 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		Status:         BackupStatusInProgress,
 		CreatedAt:      time.Now(),
 		Components:     []string{},
+	}
+	record := func(kind, name string, required bool, err error) {
+		result := ComponentResult{Name: name, Kind: kind, Required: required, Status: ResultStatusCompleted}
+		if err != nil {
+			result.Status = ResultStatusFailed
+			result.Error = err.Error()
+		}
+		backup.ComponentResults = append(backup.ComponentResults, result)
 	}
 
 	tempDir, err := os.MkdirTemp("", "flatrun-backup-*")
@@ -76,28 +85,41 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		Components:     BackupComponents{},
 	}
 
-	if spec != nil {
-		if err := m.executeHooks(ctx, deploymentName, spec.PreHooks); err != nil {
-			log.Printf("Backup: pre-hook warning: %v", err)
+	var captureErrors []error
+	if spec != nil && len(spec.PreHooks) > 0 {
+		err := m.executeHooks(ctx, deploymentName, spec.PreHooks)
+		record("preparation", "pre_hooks", true, err)
+		if err != nil {
+			captureErrors = append(captureErrors, err)
 		}
 	}
 
 	if err := m.backupComposeFile(deploymentPath, tempDir, &metadata); err != nil {
-		log.Printf("Backup: compose file warning: %v", err)
+		record("configuration", "compose", true, err)
+		captureErrors = append(captureErrors, err)
 	} else {
+		record("configuration", "compose", true, nil)
 		backup.Components = append(backup.Components, "compose")
 	}
 
 	if err := m.backupEnvFile(deploymentPath, tempDir, &metadata); err != nil {
-		log.Printf("Backup: env file warning: %v", err)
+		record("configuration", "environment", true, err)
+		captureErrors = append(captureErrors, err)
 	} else {
-		backup.Components = append(backup.Components, "env")
+		record("configuration", "environment", true, nil)
+		if metadata.Components.EnvFile {
+			backup.Components = append(backup.Components, "env")
+		}
 	}
 
 	if err := m.backupMetadataFile(deploymentPath, tempDir, &metadata); err != nil {
-		log.Printf("Backup: metadata file warning: %v", err)
+		record("configuration", "metadata", true, err)
+		captureErrors = append(captureErrors, err)
 	} else {
-		backup.Components = append(backup.Components, "metadata")
+		record("configuration", "metadata", true, nil)
+		if metadata.Components.Metadata {
+			backup.Components = append(backup.Components, "metadata")
+		}
 	}
 
 	var excludes []string
@@ -105,15 +127,20 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		excludes = spec.ExcludePatterns
 	}
 	if err := m.backupMountedData(deploymentPath, tempDir, &metadata, excludes); err != nil {
-		log.Printf("Backup: mounted data warning: %v", err)
+		record("files", "mounted_data", true, err)
+		captureErrors = append(captureErrors, err)
+	} else {
+		record("files", "mounted_data", true, nil)
 	}
 	if len(metadata.Components.MountedData) > 0 {
 		backup.Components = append(backup.Components, "mounted_data")
 	}
 
 	if spec != nil && len(spec.ContainerPaths) > 0 {
-		if err := m.backupContainerData(ctx, deploymentName, spec.ContainerPaths, tempDir, &metadata); err != nil {
-			log.Printf("Backup: container data warning: %v", err)
+		results, err := m.backupContainerData(ctx, deploymentName, spec.ContainerPaths, tempDir, &metadata)
+		backup.ComponentResults = append(backup.ComponentResults, results...)
+		if err != nil {
+			captureErrors = append(captureErrors, err)
 		}
 		if len(metadata.Components.ContainerData) > 0 {
 			backup.Components = append(backup.Components, "container_data")
@@ -121,46 +148,76 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 	}
 
 	if spec != nil && len(spec.Databases) > 0 {
-		if err := m.backupDatabases(ctx, deploymentName, spec.Databases, tempDir, &metadata); err != nil {
-			log.Printf("Backup: database warning: %v", err)
+		results, err := m.backupDatabases(ctx, deploymentName, spec.Databases, tempDir, &metadata)
+		backup.ComponentResults = append(backup.ComponentResults, results...)
+		if err != nil {
+			captureErrors = append(captureErrors, err)
 		}
 		if len(metadata.Components.Databases) > 0 {
 			backup.Components = append(backup.Components, "databases")
 		}
 	}
 
-	metadataJSON, _ := json.MarshalIndent(metadata, "", "  ")
-	if err := os.WriteFile(filepath.Join(tempDir, "backup.json"), metadataJSON, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write backup metadata: %w", err)
-	}
-
 	archivePath := filepath.Join(backupDir, backupID+".tar.gz")
-	if err := m.createArchive(tempDir, archivePath); err != nil {
-		backup.Status = BackupStatusFailed
-		backup.Error = err.Error()
-		return backup, fmt.Errorf("failed to create backup archive: %w", err)
-	}
-
-	if spec != nil {
-		if err := m.executeHooks(ctx, deploymentName, spec.PostHooks); err != nil {
-			log.Printf("Backup: post-hook warning: %v", err)
+	metadata.ComponentResults = backup.ComponentResults
+	if len(captureErrors) == 0 {
+		metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+		if err != nil {
+			captureErrors = append(captureErrors, err)
+		} else if err := os.WriteFile(filepath.Join(tempDir, "backup.json"), metadataJSON, 0600); err != nil {
+			captureErrors = append(captureErrors, fmt.Errorf("failed to write backup metadata: %w", err))
+		} else if err := m.createArchive(tempDir, archivePath); err != nil {
+			captureErrors = append(captureErrors, fmt.Errorf("failed to create backup archive: %w", err))
+		} else {
+			backup.Path = archivePath
+			backup.Locations = []string{locationLocal}
+			if info, statErr := os.Stat(archivePath); statErr == nil {
+				backup.Size = info.Size()
+			}
 		}
 	}
 
-	info, _ := os.Stat(archivePath)
-	if info != nil {
-		backup.Size = info.Size()
+	var cleanupErr error
+	if spec != nil && len(spec.PostHooks) > 0 {
+		cleanupErr = m.executeHooks(ctx, deploymentName, spec.PostHooks)
+		result := ComponentResult{Name: "post_hooks", Kind: "cleanup", Required: true, Status: ResultStatusCompleted}
+		if cleanupErr != nil {
+			result.Status = ResultStatusFailed
+			result.Error = cleanupErr.Error()
+		}
+		backup.CleanupResults = append(backup.CleanupResults, result)
 	}
 
-	backup.Path = archivePath
-	backup.Status = BackupStatusCompleted
 	now := time.Now()
 	backup.CompletedAt = &now
+	if len(captureErrors) > 0 {
+		backup.Status = BackupStatusFailed
+		backup.Error = errors.Join(captureErrors...).Error()
+		_ = m.saveBackupRecord(backup)
+		return backup, errors.Join(captureErrors...)
+	}
 
-	backup.Locations = []string{locationLocal}
-	backup.Locations = append(backup.Locations, m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size)...)
+	backup.DestinationResults = m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size)
+	succeeded := 0
+	for _, result := range backup.DestinationResults {
+		if result.Status == ResultStatusCompleted {
+			succeeded++
+			backup.Locations = append(backup.Locations, result.Name)
+		}
+	}
+	switch {
+	case len(backup.DestinationResults) > 0 && succeeded == 0:
+		backup.Status = BackupStatusLocalOnly
+	case cleanupErr != nil || succeeded < len(backup.DestinationResults):
+		backup.Status = BackupStatusPartial
+	default:
+		backup.Status = BackupStatusCompleted
+	}
+	if err := m.saveBackupRecord(backup); err != nil {
+		return backup, fmt.Errorf("failed to persist backup result: %w", err)
+	}
 
-	log.Printf("Backup completed: %s (%d bytes)", backupID, backup.Size)
+	log.Printf("Backup finished with status %s: %s (%d bytes)", backup.Status, backupID, backup.Size)
 	return backup, nil
 }
 
@@ -194,9 +251,10 @@ func (m *Manager) backupEnvFile(deploymentPath, tempDir string, metadata *Backup
 		envPath := filepath.Join(deploymentPath, envFile)
 		if _, err := os.Stat(envPath); err == nil {
 			destPath := filepath.Join(envDir, envFile)
-			if err := copyFile(envPath, destPath); err == nil {
-				found = true
+			if err := copyFile(envPath, destPath); err != nil {
+				return fmt.Errorf("failed to copy %s: %w", envFile, err)
 			}
+			found = true
 		}
 	}
 
@@ -237,8 +295,7 @@ func (m *Manager) backupMountedData(deploymentPath, tempDir string, metadata *Ba
 		if info, err := os.Stat(srcPath); err == nil && info.IsDir() {
 			destPath := filepath.Join(dataDir, dir)
 			if err := copyDir(srcPath, destPath); err != nil {
-				log.Printf("Backup: failed to copy %s: %v", dir, err)
-				continue
+				return fmt.Errorf("failed to copy %s: %w", dir, err)
 			}
 			metadata.Components.MountedData = append(metadata.Components.MountedData, dir)
 		}
@@ -261,13 +318,17 @@ func matchesExclude(name string, patterns []string) bool {
 	return false
 }
 
-func (m *Manager) backupContainerData(ctx context.Context, deploymentName string, paths []ContainerPath, tempDir string, metadata *BackupMetadata) error {
+func (m *Manager) backupContainerData(ctx context.Context, deploymentName string, paths []ContainerPath, tempDir string, metadata *BackupMetadata) ([]ComponentResult, error) {
 	containerDir := filepath.Join(tempDir, "container_data")
 	if err := os.MkdirAll(containerDir, 0755); err != nil {
-		return fmt.Errorf("failed to create container data backup directory: %w", err)
+		return nil, fmt.Errorf("failed to create container data backup directory: %w", err)
 	}
 
+	var results []ComponentResult
+	var requiredErrors []error
 	for _, path := range paths {
+		name := fmt.Sprintf("%s:%s", path.Service, path.ContainerPath)
+		result := ComponentResult{Name: name, Kind: "files", Required: path.Required, Status: ResultStatusCompleted}
 		containerName := fmt.Sprintf("%s-%s", deploymentName, path.Service)
 		if path.Service == deploymentName || path.Service == "" {
 			containerName = deploymentName
@@ -275,31 +336,50 @@ func (m *Manager) backupContainerData(ctx context.Context, deploymentName string
 
 		destPath := filepath.Join(containerDir, path.Service, filepath.Base(path.ContainerPath))
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory for %s: %w", path.ContainerPath, err)
+			result.Status = ResultStatusFailed
+			result.Error = fmt.Sprintf("failed to prepare destination: %v", err)
+			results = append(results, result)
+			if path.Required {
+				requiredErrors = append(requiredErrors, fmt.Errorf("failed to create directory for %s: %w", path.ContainerPath, err))
+			}
+			continue
 		}
 
 		cmd := exec.CommandContext(ctx, "docker", "cp", fmt.Sprintf("%s:%s", containerName, path.ContainerPath), destPath)
 		if err := cmd.Run(); err != nil {
+			result.Status = ResultStatusFailed
+			result.Error = "copy failed"
+			results = append(results, result)
 			if path.Required {
-				return fmt.Errorf("failed to copy %s from container %s: %w", path.ContainerPath, containerName, err)
+				requiredErrors = append(requiredErrors, fmt.Errorf("failed to copy %s from container %s: %w", path.ContainerPath, containerName, err))
 			}
-			log.Printf("Backup: optional container path %s not available: %v", path.ContainerPath, err)
+			if !path.Required {
+				log.Printf("Backup: optional container path %s not available: %v", path.ContainerPath, err)
+			}
 			continue
 		}
 
-		metadata.Components.ContainerData = append(metadata.Components.ContainerData, fmt.Sprintf("%s:%s", path.Service, path.ContainerPath))
+		results = append(results, result)
+		metadata.Components.ContainerData = append(metadata.Components.ContainerData, name)
 	}
 
-	return nil
+	return results, errors.Join(requiredErrors...)
 }
 
-func (m *Manager) backupDatabases(ctx context.Context, deploymentName string, databases []DatabaseSpec, tempDir string, metadata *BackupMetadata) error {
+func (m *Manager) backupDatabases(ctx context.Context, deploymentName string, databases []DatabaseSpec, tempDir string, metadata *BackupMetadata) ([]ComponentResult, error) {
 	dbDir := filepath.Join(tempDir, "databases")
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		return fmt.Errorf("failed to create databases backup directory: %w", err)
+		return nil, fmt.Errorf("failed to create databases backup directory: %w", err)
 	}
 
+	var results []ComponentResult
+	var databaseErrors []error
 	for _, db := range databases {
+		name := db.Service
+		if name == "" {
+			name = deploymentName
+		}
+		result := ComponentResult{Name: name, Kind: "database", Required: true, Status: ResultStatusCompleted}
 		var dumpPath string
 		var err error
 
@@ -309,19 +389,46 @@ func (m *Manager) backupDatabases(ctx context.Context, deploymentName string, da
 		case "postgresql", "postgres":
 			dumpPath, err = m.dumpPostgres(ctx, deploymentName, &db, dbDir)
 		default:
-			log.Printf("Backup: unsupported database type: %s", db.Type)
-			continue
+			err = fmt.Errorf("unsupported database type: %s", db.Type)
 		}
 
 		if err != nil {
-			log.Printf("Backup: failed to dump database %s: %v", db.Service, err)
+			result.Status = ResultStatusFailed
+			result.Error = "dump failed"
+			results = append(results, result)
+			databaseErrors = append(databaseErrors, fmt.Errorf("failed to dump database %s: %w", name, err))
 			continue
 		}
 
+		results = append(results, result)
 		metadata.Components.Databases = append(metadata.Components.Databases, filepath.Base(dumpPath))
 	}
 
-	return nil
+	return results, errors.Join(databaseErrors...)
+}
+
+func (m *Manager) backupRecordPath(deploymentName, backupID string) string {
+	return filepath.Join(m.backupsPath, deploymentName, backupID+".json")
+}
+
+func (m *Manager) saveBackupRecord(backup *Backup) error {
+	data, err := json.MarshalIndent(backup, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(m.backupRecordPath(backup.DeploymentName, backup.ID), data, 0600)
+}
+
+func (m *Manager) readBackupRecord(deploymentName, backupID string) (*Backup, error) {
+	data, err := os.ReadFile(m.backupRecordPath(deploymentName, backupID))
+	if err != nil {
+		return nil, err
+	}
+	var backup Backup
+	if err := json.Unmarshal(data, &backup); err != nil {
+		return nil, err
+	}
+	return &backup, nil
 }
 
 func (m *Manager) dumpMySQL(ctx context.Context, deploymentName string, db *DatabaseSpec, dbDir string) (string, error) {
@@ -530,6 +637,30 @@ func (m *Manager) listLocalBackups(filter *BackupListFilter) ([]Backup, error) {
 			continue
 		}
 
+		seen := make(map[string]bool)
+		for _, file := range files {
+			if !strings.HasSuffix(file.Name(), ".json") {
+				continue
+			}
+			backupID := strings.TrimSuffix(file.Name(), ".json")
+			backup, err := m.readBackupRecord(deploymentDir.Name(), backupID)
+			if err != nil {
+				continue
+			}
+			if backup.Path != "" {
+				if info, statErr := os.Stat(backup.Path); statErr == nil {
+					backup.Size = info.Size()
+				} else {
+					backup.Path = ""
+					backup.Locations = removeLocation(backup.Locations, locationLocal)
+				}
+			}
+			if filter.Status == "" || backup.Status == filter.Status {
+				backups = append(backups, *backup)
+			}
+			seen[backupID] = true
+		}
+
 		for _, file := range files {
 			if !strings.HasSuffix(file.Name(), ".tar.gz") {
 				continue
@@ -541,6 +672,9 @@ func (m *Manager) listLocalBackups(filter *BackupListFilter) ([]Backup, error) {
 			}
 
 			backupID := strings.TrimSuffix(file.Name(), ".tar.gz")
+			if seen[backupID] {
+				continue
+			}
 			backup := Backup{
 				ID:             backupID,
 				DeploymentName: deploymentDir.Name(),
@@ -551,7 +685,9 @@ func (m *Manager) listLocalBackups(filter *BackupListFilter) ([]Backup, error) {
 				Locations:      []string{locationLocal},
 			}
 
-			backups = append(backups, backup)
+			if filter.Status == "" || backup.Status == filter.Status {
+				backups = append(backups, backup)
+			}
 		}
 	}
 
@@ -574,6 +710,19 @@ func (m *Manager) getLocalBackup(backupID string) (*Backup, error) {
 
 	deploymentName := parts[0]
 	backupPath := filepath.Join(m.backupsPath, deploymentName, backupID+".tar.gz")
+	if backup, recordErr := m.readBackupRecord(deploymentName, backupID); recordErr == nil {
+		if info, statErr := os.Stat(backupPath); statErr == nil {
+			backup.Path = backupPath
+			backup.Size = info.Size()
+			if !containsLocation(backup.Locations, locationLocal) {
+				backup.Locations = append([]string{locationLocal}, backup.Locations...)
+			}
+			return backup, nil
+		}
+		backup.Path = ""
+		backup.Locations = removeLocation(backup.Locations, locationLocal)
+		return backup, nil
+	}
 
 	info, err := os.Stat(backupPath)
 	if err != nil {
@@ -597,13 +746,41 @@ func (m *Manager) deleteLocalBackup(backupID string) error {
 		return err
 	}
 
-	return os.Remove(backup.Path)
+	if backup.Path != "" {
+		if err := os.Remove(backup.Path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	_ = os.Remove(m.backupRecordPath(backup.DeploymentName, backup.ID))
+	return nil
+}
+
+func containsLocation(locations []string, target string) bool {
+	for _, location := range locations {
+		if location == target {
+			return true
+		}
+	}
+	return false
+}
+
+func removeLocation(locations []string, target string) []string {
+	filtered := locations[:0]
+	for _, location := range locations {
+		if location != target {
+			filtered = append(filtered, location)
+		}
+	}
+	return filtered
 }
 
 func (m *Manager) GetBackupPath(backupID string) (string, error) {
 	backup, err := m.getLocalBackup(backupID)
 	if err != nil {
 		return "", err
+	}
+	if backup.Path == "" {
+		return "", fmt.Errorf("backup archive is unavailable: %s", backupID)
 	}
 	return backup.Path, nil
 }
@@ -617,12 +794,18 @@ func (m *Manager) CleanupOldBackups(deploymentName string, keepCount int) (int, 
 		return 0, err
 	}
 
-	if len(backups) <= keepCount {
+	usable := backups[:0]
+	for _, backup := range backups {
+		if backup.Path != "" && backup.Status != BackupStatusFailed {
+			usable = append(usable, backup)
+		}
+	}
+	if len(usable) <= keepCount {
 		return 0, nil
 	}
 
 	deleted := 0
-	for _, backup := range backups[keepCount:] {
+	for _, backup := range usable[keepCount:] {
 		if err := m.deleteLocalBackup(backup.ID); err != nil {
 			log.Printf("Failed to delete old backup %s: %v", backup.ID, err)
 			continue

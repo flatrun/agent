@@ -109,3 +109,38 @@ networks:
 		t.Errorf("validateComposeContent with relative env_file in deployment dir = %v, want nil", err)
 	}
 }
+
+func TestValidateNewComposeContent_UsesSuppliedRequiredVariable(t *testing.T) {
+	s := &Server{config: &config.Config{Infrastructure: config.InfrastructureConfig{DefaultProxyNetwork: "proxy"}}}
+	compose := `name: required-env
+services:
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE is required}
+`
+	if err := s.validateNewComposeContent(compose, "required-env", []EnvVar{{Key: "APP_IMAGE", Value: "nginx:alpine"}}, t.TempDir()); err != nil {
+		t.Fatalf("validation with supplied required variable: %v", err)
+	}
+}
+
+func TestValidateComposeContent_PrefersManagedEnvironment(t *testing.T) {
+	base := t.TempDir()
+	name := "managed-env"
+	deploymentDir := filepath.Join(base, name)
+	if err := os.MkdirAll(deploymentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deploymentDir, ".env"), []byte("OTHER=value\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deploymentDir, ".env.flatrun"), []byte("APP_IMAGE=nginx:alpine\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		config:  &config.Config{Infrastructure: config.InfrastructureConfig{DefaultProxyNetwork: "proxy"}},
+		manager: docker.NewManager(base),
+	}
+	compose := "services:\n  app:\n    image: ${APP_IMAGE:?APP_IMAGE is required}\n"
+	if err := s.validateComposeContent(compose, name); err != nil {
+		t.Fatalf("validation with managed environment: %v", err)
+	}
+}

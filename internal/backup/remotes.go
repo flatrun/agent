@@ -47,34 +47,77 @@ func deploymentFromID(backupID string) string {
 	return parts[0]
 }
 
-// mirrorToRemotes uploads a freshly written local archive to every configured
-// remote, returning the names of the destinations that accepted it. A failed
-// upload is logged and skipped so a remote outage never fails the backup, whose
-// local copy already succeeded.
-func (m *Manager) mirrorToRemotes(ctx context.Context, deploymentName, backupID, archivePath string, size int64) []string {
+func (m *Manager) mirrorToRemotes(ctx context.Context, deploymentName, backupID, archivePath string, size int64) []DestinationResult {
 	remotes := m.getRemotes()
 	if len(remotes) == 0 {
 		return nil
 	}
 
 	key := backupKey(deploymentName, backupID)
-	var locations []string
+	var results []DestinationResult
 	for _, r := range remotes {
+		result := DestinationResult{Name: r.Name(), Status: ResultStatusCompleted}
 		f, err := os.Open(archivePath)
 		if err != nil {
 			log.Printf("Backup: mirror to %s failed to open archive: %v", r.Name(), err)
+			result.Status = ResultStatusFailed
+			result.Error = err.Error()
+			results = append(results, result)
 			continue
 		}
 		err = r.Put(ctx, key, f, size)
 		f.Close()
 		if err != nil {
 			log.Printf("Backup: mirror to %s failed: %v", r.Name(), err)
+			result.Status = ResultStatusFailed
+			result.Error = "upload failed"
+			results = append(results, result)
 			continue
 		}
-		locations = append(locations, r.Name())
+		results = append(results, result)
 		log.Printf("Backup mirrored: %s -> %s", backupID, r.Name())
 	}
-	return locations
+	return results
+}
+
+func (m *Manager) RetryRemotePublication(ctx context.Context, backupID string) (*Backup, error) {
+	backup, err := m.GetBackup(backupID)
+	if err != nil {
+		return nil, err
+	}
+	if backup.Path == "" {
+		return nil, fmt.Errorf("local backup archive is unavailable")
+	}
+	backup.DestinationResults = m.mirrorToRemotes(ctx, backup.DeploymentName, backup.ID, backup.Path, backup.Size)
+	backup.Locations = []string{locationLocal}
+	succeeded := 0
+	for _, result := range backup.DestinationResults {
+		if result.Status == ResultStatusCompleted {
+			succeeded++
+			backup.Locations = append(backup.Locations, result.Name)
+		}
+	}
+	switch {
+	case len(backup.DestinationResults) > 0 && succeeded == 0:
+		backup.Status = BackupStatusLocalOnly
+	case succeeded < len(backup.DestinationResults) || hasFailedResult(backup.CleanupResults):
+		backup.Status = BackupStatusPartial
+	default:
+		backup.Status = BackupStatusCompleted
+	}
+	if err := m.saveBackupRecord(backup); err != nil {
+		return nil, err
+	}
+	return backup, nil
+}
+
+func hasFailedResult(results []ComponentResult) bool {
+	for _, result := range results {
+		if result.Status == ResultStatusFailed {
+			return true
+		}
+	}
+	return false
 }
 
 // ListBackups returns backups from the local disk merged with those in every

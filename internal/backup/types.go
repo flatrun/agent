@@ -12,8 +12,32 @@ const (
 	BackupStatusPending    BackupStatus = "pending"
 	BackupStatusInProgress BackupStatus = "in_progress"
 	BackupStatusCompleted  BackupStatus = "completed"
+	BackupStatusPartial    BackupStatus = "partial"
+	BackupStatusLocalOnly  BackupStatus = "local_only"
 	BackupStatusFailed     BackupStatus = "failed"
 )
+
+type ResultStatus string
+
+const (
+	ResultStatusCompleted ResultStatus = "completed"
+	ResultStatusSkipped   ResultStatus = "skipped"
+	ResultStatusFailed    ResultStatus = "failed"
+)
+
+type ComponentResult struct {
+	Name     string       `json:"name"`
+	Kind     string       `json:"kind"`
+	Required bool         `json:"required"`
+	Status   ResultStatus `json:"status"`
+	Error    string       `json:"error,omitempty"`
+}
+
+type DestinationResult struct {
+	Name   string       `json:"name"`
+	Status ResultStatus `json:"status"`
+	Error  string       `json:"error,omitempty"`
+}
 
 type BackupSpec = models.BackupSpec
 type ContainerPath = models.ContainerBackupPath
@@ -34,17 +58,21 @@ type Backup struct {
 	// Locations lists where this backup exists: "local" and/or remote
 	// destination names. A backup may live remotely only if local retention
 	// has pruned the on-disk copy.
-	Locations []string `json:"locations,omitempty"`
+	Locations          []string            `json:"locations,omitempty"`
+	ComponentResults   []ComponentResult   `json:"component_results,omitempty"`
+	CleanupResults     []ComponentResult   `json:"cleanup_results,omitempty"`
+	DestinationResults []DestinationResult `json:"destination_results,omitempty"`
 }
 
 type BackupMetadata struct {
-	ID              string            `json:"id"`
-	DeploymentName  string            `json:"deployment_name"`
-	DeploymentPath  string            `json:"deployment_path"`
-	CreatedAt       time.Time         `json:"created_at"`
-	AgentVersion    string            `json:"agent_version"`
-	Components      BackupComponents  `json:"components"`
-	ContainerStates map[string]string `json:"container_states,omitempty"`
+	ID               string            `json:"id"`
+	DeploymentName   string            `json:"deployment_name"`
+	DeploymentPath   string            `json:"deployment_path"`
+	CreatedAt        time.Time         `json:"created_at"`
+	AgentVersion     string            `json:"agent_version"`
+	Components       BackupComponents  `json:"components"`
+	ContainerStates  map[string]string `json:"container_states,omitempty"`
+	ComponentResults []ComponentResult `json:"component_results,omitempty"`
 }
 
 type BackupComponents struct {

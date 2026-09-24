@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compose-spec/compose-go/v2/dotenv"
 	"github.com/compose-spec/compose-go/v2/loader"
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/flatrun/agent/internal/access"
@@ -831,6 +832,7 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/deployments/:name/backups/:id", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.requireBackupDeployment, s.deleteBackup)
 			protected.GET("/deployments/:name/backups/:id/download", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.requireBackupDeployment, s.downloadBackup)
 			protected.POST("/deployments/:name/backups/:id/restore", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.requireBackupDeployment, s.restoreBackup)
+			protected.POST("/deployments/:name/backups/:id/retry-publication", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.requireBackupDeployment, s.retryBackupPublication)
 			protected.GET("/deployments/:name/backups/jobs/:id", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.requireBackupJobDeployment, s.getBackupJob)
 			protected.GET("/deployments/:name/backup-config", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentBackupConfig)
 			protected.PUT("/deployments/:name/backup-config", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentBackupConfig)
@@ -5007,13 +5009,33 @@ func (s *Server) composeValidationDir(name string) string {
 }
 
 func validateComposeWithComposeGo(content, workingDir string) error {
+	environment := make(map[string]string)
+	dotEnvPath := filepath.Join(workingDir, ".env.flatrun")
+	if _, err := os.Stat(dotEnvPath); os.IsNotExist(err) {
+		dotEnvPath = filepath.Join(workingDir, ".env")
+	}
+	if _, err := os.Stat(dotEnvPath); err == nil {
+		values, loadErr := dotenv.GetEnvFromFile(environment, []string{dotEnvPath})
+		if loadErr != nil {
+			return fmt.Errorf("invalid compose environment: %w", loadErr)
+		}
+		for key, value := range values {
+			environment[key] = value
+		}
+	}
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			environment[key] = value
+		}
+	}
 	configDetails := composetypes.ConfigDetails{
 		ConfigFiles: []composetypes.ConfigFile{{
 			Filename: "compose.yml",
 			Content:  []byte(content),
 		}},
 		WorkingDir:  workingDir,
-		Environment: map[string]string{},
+		Environment: environment,
 	}
 	_, err := loader.LoadWithContext(context.Background(), configDetails, func(o *loader.Options) {
 		o.SetProjectName("flatrun-validation", true)
