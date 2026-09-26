@@ -39,6 +39,17 @@ func actorMiddleware(actor *auth.ActorContext) gin.HandlerFunc {
 	}
 }
 
+func TestDeploymentContainsContainerRejectsShortPrefixes(t *testing.T) {
+	deployment := &models.Deployment{Services: []models.Service{{ContainerID: "abcdef123456"}}}
+
+	if deploymentContainsContainer(deployment, "abcdef") {
+		t.Fatal("short container ID matched a deployment container")
+	}
+	if !deploymentContainsContainer(deployment, "abcdef1234567890") {
+		t.Fatal("canonical container ID did not match its Docker short ID")
+	}
+}
+
 func TestClusterServiceCredentialsRejectUnscopedSensitiveResources(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	actor := &auth.ActorContext{

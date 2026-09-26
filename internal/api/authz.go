@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"os/exec"
 	"strings"
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/contextkeys"
+	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -108,14 +110,14 @@ func (s *Server) requireContainerAccess(c *gin.Context, containerID, level strin
 	}
 	if actor.Role == auth.RoleAdmin {
 		// Admins can see missing-container errors; non-admins below get a non-enumerating 403.
-		if _, err := containerDeploymentName(containerID); err != nil {
+		if _, err := s.containerDeploymentName(containerID); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Container not found"})
 			return false
 		}
 		return true
 	}
 
-	deploymentName, err := containerDeploymentName(containerID)
+	deploymentName, err := s.containerDeploymentName(containerID)
 	if err != nil || deploymentName == "" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "No access to this container"})
 		return false
@@ -135,7 +137,7 @@ func (s *Server) actorCanAccessContainer(c *gin.Context, containerID, level stri
 		return true
 	}
 
-	deploymentName, err := containerDeploymentName(containerID)
+	deploymentName, err := s.containerDeploymentName(containerID)
 	if err != nil || deploymentName == "" {
 		return false
 	}
@@ -143,17 +145,60 @@ func (s *Server) actorCanAccessContainer(c *gin.Context, containerID, level stri
 	return actor.CanAccessDeployment(deploymentName, level)
 }
 
-func containerDeploymentName(containerID string) (string, error) {
-	cmd := exec.Command("docker", "inspect", "--format", "{{ index .Config.Labels \""+composeProjectLabel+"\" }}", containerID)
+func inspectContainerIdentity(containerID string) (string, string, string, error) {
+	format := "{{.Id}}\n{{.Name}}\n{{ index .Config.Labels \"" + composeProjectLabel + "\" }}"
+	cmd := exec.Command("docker", "inspect", "--format", format, containerID)
 	output, err := cmd.Output()
+	if err != nil {
+		return "", "", "", err
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(output)), "\n", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("unexpected container inspection result")
+	}
+	canonicalID := strings.TrimSpace(parts[0])
+	containerName := strings.TrimPrefix(strings.TrimSpace(parts[1]), "/")
+	deploymentName := strings.TrimSpace(parts[2])
+	if deploymentName == "<no value>" {
+		deploymentName = ""
+	}
+	return canonicalID, containerName, deploymentName, nil
+}
+
+func (s *Server) containerDeploymentName(containerID string) (string, error) {
+	canonicalID, _, label, inspectErr := inspectContainerIdentity(containerID)
+	if s.manager == nil {
+		return label, inspectErr
+	}
+	if label != "" {
+		if deployment, err := s.manager.GetDeployment(label); err == nil && deploymentContainsContainer(deployment, canonicalID) {
+			return deployment.Name, nil
+		}
+	}
+	deployments, err := s.manager.FindDeployments()
 	if err != nil {
 		return "", err
 	}
-
-	deploymentName := strings.TrimSpace(string(output))
-	if deploymentName == "<no value>" {
-		return "", nil
+	for _, candidate := range deployments {
+		deployment, getErr := s.manager.GetDeployment(candidate.Name)
+		if getErr == nil && deploymentContainsContainer(deployment, canonicalID) {
+			return deployment.Name, nil
+		}
 	}
+	if inspectErr != nil {
+		return "", inspectErr
+	}
+	return "", fmt.Errorf("container does not belong to a deployment")
+}
 
-	return deploymentName, nil
+func deploymentContainsContainer(deployment *models.Deployment, containerID string) bool {
+	for _, service := range deployment.Services {
+		if len(service.ContainerID) < 12 || len(containerID) < 12 {
+			continue
+		}
+		if service.ContainerID == containerID || strings.HasPrefix(service.ContainerID, containerID) || strings.HasPrefix(containerID, service.ContainerID) {
+			return true
+		}
+	}
+	return false
 }

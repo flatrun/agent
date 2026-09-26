@@ -16,19 +16,24 @@ const (
 	JobStatusPending   JobStatus = "pending"
 	JobStatusRunning   JobStatus = "running"
 	JobStatusCompleted JobStatus = "completed"
+	JobStatusPartial   JobStatus = "partial"
+	JobStatusLocalOnly JobStatus = "local_only"
 	JobStatusFailed    JobStatus = "failed"
 )
 
 type Job struct {
-	ID             string     `json:"id"`
-	Type           JobType    `json:"type"`
-	Status         JobStatus  `json:"status"`
-	DeploymentName string     `json:"deployment_name"`
-	BackupID       string     `json:"backup_id,omitempty"`
-	Progress       string     `json:"progress,omitempty"`
-	Error          string     `json:"error,omitempty"`
-	StartedAt      time.Time  `json:"started_at"`
-	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	ID                 string              `json:"id"`
+	Type               JobType             `json:"type"`
+	Status             JobStatus           `json:"status"`
+	DeploymentName     string              `json:"deployment_name"`
+	BackupID           string              `json:"backup_id,omitempty"`
+	Progress           string              `json:"progress,omitempty"`
+	Error              string              `json:"error,omitempty"`
+	StartedAt          time.Time           `json:"started_at"`
+	CompletedAt        *time.Time          `json:"completed_at,omitempty"`
+	ComponentResults   []ComponentResult   `json:"component_results,omitempty"`
+	CleanupResults     []ComponentResult   `json:"cleanup_results,omitempty"`
+	DestinationResults []DestinationResult `json:"destination_results,omitempty"`
 }
 
 type JobTracker struct {
@@ -70,10 +75,21 @@ func (t *JobTracker) UpdateStatus(id string, status JobStatus, progress string) 
 	if job, ok := t.jobs[id]; ok {
 		job.Status = status
 		job.Progress = progress
-		if status == JobStatusCompleted || status == JobStatusFailed {
+		if status == JobStatusCompleted || status == JobStatusPartial || status == JobStatusLocalOnly || status == JobStatusFailed {
 			now := time.Now()
 			job.CompletedAt = &now
 		}
+	}
+}
+
+func (t *JobTracker) SetBackup(id string, backup *Backup) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if job, ok := t.jobs[id]; ok {
+		job.BackupID = backup.ID
+		job.ComponentResults = backup.ComponentResults
+		job.CleanupResults = backup.CleanupResults
+		job.DestinationResults = backup.DestinationResults
 	}
 }
 
@@ -136,13 +152,22 @@ func (m *Manager) StartBackupJob(deploymentName string, spec *BackupSpec) string
 		m.jobs.UpdateStatus(jobID, JobStatusRunning, "Starting backup")
 
 		backup, err := m.CreateBackup(context.Background(), deploymentName, spec)
+		if backup != nil {
+			m.jobs.SetBackup(jobID, backup)
+		}
 		if err != nil {
 			m.jobs.SetError(jobID, err)
 			return
 		}
 
-		m.jobs.SetBackupID(jobID, backup.ID)
-		m.jobs.UpdateStatus(jobID, JobStatusCompleted, "Backup completed")
+		switch backup.Status {
+		case BackupStatusPartial:
+			m.jobs.UpdateStatus(jobID, JobStatusPartial, "Backup captured with incomplete protection")
+		case BackupStatusLocalOnly:
+			m.jobs.UpdateStatus(jobID, JobStatusLocalOnly, "Backup retained locally")
+		default:
+			m.jobs.UpdateStatus(jobID, JobStatusCompleted, "Backup completed")
+		}
 	}()
 
 	return jobID

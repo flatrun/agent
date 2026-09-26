@@ -184,19 +184,18 @@ func (m *Manager) DisconnectContainer(networkName, containerName string) error {
 }
 
 func (m *Manager) IsContainerOnNetwork(networkName, containerName string) bool {
-	cmd := exec.Command("docker", "network", "inspect", networkName,
-		"--format", "{{range .Containers}}{{.Name}} {{end}}")
+	cmd := exec.Command("docker", "inspect", containerName,
+		"--format", "{{json .NetworkSettings.Networks}}")
 	output, err := cmd.Output()
 	if err != nil {
 		return false
 	}
-	containers := strings.Fields(string(output))
-	for _, c := range containers {
-		if c == containerName {
-			return true
-		}
+	var attached map[string]json.RawMessage
+	if err := json.Unmarshal(output, &attached); err != nil {
+		return false
 	}
-	return false
+	_, ok := attached[networkName]
+	return ok
 }
 
 func (m *Manager) EnsureContainerOnNetwork(networkName, containerName string) error {

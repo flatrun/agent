@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -9,6 +10,19 @@ import (
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
+
+func (s *Server) retryBackupPublication(c *gin.Context) {
+	if s.backupManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Backup manager not enabled"})
+		return
+	}
+	result, err := s.backupManager.RetryRemotePublication(context.Background(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"backup": result})
+}
 
 func (s *Server) listBackups(c *gin.Context) {
 	if s.backupManager == nil {
