@@ -2,8 +2,24 @@
 
 ## [Unreleased]
 
+## [0.4.0-beta.8] - 2026-09-26
+
+Eighth beta of the Albacore release, adding visitor access controls and more reliable migrations.
+
 ### Added
 - Container memory utilization metrics for percentage-based alerts and dashboards
+- Email verification policies for deployment domains, with private domain allowlists and agent access
+- Per-stage backup outcomes and retryable publication to configured remote destinations
+
+### Changed
+- Backup creation retains usable local archives when cleanup or remote publication fails
+- Container access resolves the deployment that owns the runtime container
+
+### Fixed
+- Migration cleanup runs after preparation and required source failures
+- Compose validation reads the managed deployment environment
+- Network migration updates preserve ownership across renamed Compose projects
+- Peer requests remain bound to the deployment selected by the caller
 
 ## [0.4.0-beta.7] - 2026-08-23
 
