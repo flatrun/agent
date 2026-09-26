@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func setupTestManager(t *testing.T) (*Manager, string) {
@@ -122,6 +123,38 @@ services:
 	}
 	if !hasEnv {
 		t.Error("Expected 'env' component")
+	}
+}
+
+func TestCreateBackup_CleanupFailureIsPartial(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+	seedDeployment(t, tmpDir, "app")
+
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	created, err := m.CreateBackup(context.Background(), "app", &BackupSpec{
+		PostHooks: []HookSpec{{Service: "web", Command: "resume"}},
+	})
+	if err != nil {
+		t.Fatalf("create backup: %v", err)
+	}
+	if created.Status != BackupStatusPartial {
+		t.Fatalf("status = %s, want partial", created.Status)
+	}
+	if len(created.CleanupResults) != 1 || created.CleanupResults[0].Status != ResultStatusFailed {
+		t.Fatalf("cleanup results = %#v", created.CleanupResults)
+	}
+	persisted, err := m.GetBackup(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != BackupStatusPartial {
+		t.Fatalf("persisted status = %s, want partial", persisted.Status)
 	}
 }
 
@@ -326,6 +359,75 @@ func TestCleanupOldBackups(t *testing.T) {
 	backups, _ = m.ListBackups(&BackupListFilter{DeploymentName: "test-deployment"})
 	if len(backups) != 2 {
 		t.Errorf("Expected 2 backups remaining, got: %d", len(backups))
+	}
+}
+
+func TestCleanupOldBackups_DoesNotCountFailedAttempts(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+	seedDeployment(t, tmpDir, "app")
+
+	usable, err := m.CreateBackup(context.Background(), "app", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := &Backup{
+		ID:             "app_99991231_235959.000000000",
+		DeploymentName: "app",
+		Status:         BackupStatusFailed,
+		CreatedAt:      time.Now().Add(time.Hour),
+	}
+	if err := m.saveBackupRecord(failed); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := m.CleanupOldBackups("app", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted = %d, want 0", deleted)
+	}
+	if _, err := os.Stat(usable.Path); err != nil {
+		t.Fatalf("usable recovery point was removed: %v", err)
+	}
+}
+
+func TestCreateBackup_RecordsEachConfiguredSource(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+	seedDeployment(t, tmpDir, "app")
+
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	created, err := m.CreateBackup(context.Background(), "app", &BackupSpec{
+		ContainerPaths: []ContainerPath{
+			{Service: "web", ContainerPath: "/optional", Required: false},
+			{Service: "web", ContainerPath: "/required", Required: true},
+		},
+		Databases: []DatabaseSpec{
+			{Service: "primary", Type: "unsupported"},
+			{Service: "analytics", Type: "unsupported"},
+		},
+	})
+	if err == nil {
+		t.Fatal("required source failures were accepted")
+	}
+	if len(created.ComponentResults) != 8 {
+		t.Fatalf("component results = %#v", created.ComponentResults)
+	}
+	if created.ComponentResults[4].Required || created.ComponentResults[4].Status != ResultStatusFailed {
+		t.Fatalf("optional result = %#v", created.ComponentResults[4])
+	}
+	if !created.ComponentResults[5].Required || created.ComponentResults[5].Status != ResultStatusFailed {
+		t.Fatalf("required result = %#v", created.ComponentResults[5])
+	}
+	if created.ComponentResults[6].Name != "primary" || created.ComponentResults[7].Name != "analytics" {
+		t.Fatalf("database results = %#v", created.ComponentResults[6:])
 	}
 }
 

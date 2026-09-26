@@ -225,7 +225,7 @@ func protectedCommandRuleMatchesCommand(rule models.ProtectedCommandRule, comman
 }
 
 func (s *Server) protectedContainerCommandBlocked(containerID, command string) (bool, *models.ProtectedCommandRule, error) {
-	deploymentName, err := containerDeploymentName(containerID)
+	deploymentName, err := s.containerDeploymentName(containerID)
 	if err != nil || deploymentName == "" {
 		return false, nil, err
 	}
