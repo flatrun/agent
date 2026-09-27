@@ -234,6 +234,13 @@ func TestGenerateConfig_ContainerWebrootPath(t *testing.T) {
 			if strings.Contains(configContent, hostWebrootLine) {
 				t.Errorf("config should not contain host webroot path %q", hostWebrootLine)
 			}
+			if tt.sslEnabled {
+				challengeLocations := strings.Count(configContent, "location /.well-known/acme-challenge/")
+				serverBlocks := strings.Count(configContent, "server {")
+				if challengeLocations != serverBlocks {
+					t.Errorf("challenge locations = %d, server blocks = %d\nConfig:\n%s", challengeLocations, serverBlocks, configContent)
+				}
+			}
 		})
 	}
 }
@@ -1922,6 +1929,11 @@ func TestGenerateMultiDomainConfig_SSLToggle(t *testing.T) {
 		}
 		if !strings.Contains(config, "ssl_certificate") {
 			t.Error("all-SSL multi-domain config must contain ssl_certificate directive")
+		}
+		challengeLocations := strings.Count(config, "location /.well-known/acme-challenge/")
+		serverBlocks := strings.Count(config, "server {")
+		if challengeLocations != serverBlocks {
+			t.Errorf("challenge locations = %d, server blocks = %d\nConfig:\n%s", challengeLocations, serverBlocks, config)
 		}
 	})
 
