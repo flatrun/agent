@@ -5021,6 +5021,40 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/deployments/{name}/databases/attach": {
+      "post": {
+        "operationId": "post-deployments-by-name-databases-attach",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.DatabaseConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/deploy": {
       "post": {
         "operationId": "post-deployments-by-name-deploy",
