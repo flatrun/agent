@@ -843,7 +843,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/backup-cleanup", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.cleanupDeploymentBackups)
 			protected.GET("/deployments/:name/migration", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentMigration)
 			protected.PUT("/deployments/:name/migration", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentMigration)
-			protected.POST("/deployments/:name/migration/check-dns", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.checkDeploymentMigrationDNS)
+			protected.POST("/deployments/:name/migration/check-dns", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.checkDeploymentMigrationDNS)
 			protected.POST("/backups/:id/restore", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.restoreBackup)
 			protected.GET("/backups/jobs", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackupJobs)
 			protected.GET("/backups/jobs/:id", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.getBackupJob)

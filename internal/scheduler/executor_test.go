@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flatrun/agent/internal/backup"
 	"github.com/flatrun/agent/internal/docker"
 )
 
@@ -185,5 +186,16 @@ func TestExecuteBackup_NilBackupManager(t *testing.T) {
 	}
 	if err.Error() != "backup manager not available" {
 		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestBackupRetentionCountPrefersDeploymentPolicy(t *testing.T) {
+	config := &BackupTaskConfig{RetentionCount: 3}
+	spec := &backup.BackupSpec{RetentionCount: 10}
+	if got := backupRetentionCount(config, spec); got != 10 {
+		t.Fatalf("retention count = %d, want 10", got)
+	}
+	if got := backupRetentionCount(config, nil); got != 3 {
+		t.Fatalf("fallback retention count = %d, want 3", got)
 	}
 }

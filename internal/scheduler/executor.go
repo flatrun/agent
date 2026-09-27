@@ -57,8 +57,9 @@ func (e *Executor) ExecuteBackup(ctx context.Context, deploymentName string, con
 		return "", err
 	}
 
-	if config.RetentionCount > 0 {
-		deleted, err := e.backupManager.CleanupOldBackups(deploymentName, config.RetentionCount)
+	retentionCount := backupRetentionCount(config, spec)
+	if retentionCount > 0 {
+		deleted, err := e.backupManager.CleanupOldBackups(deploymentName, retentionCount)
 		if err != nil {
 			log.Printf("Scheduler: failed to cleanup old backups: %v", err)
 		} else if deleted > 0 {
@@ -67,6 +68,13 @@ func (e *Executor) ExecuteBackup(ctx context.Context, deploymentName string, con
 	}
 
 	return fmt.Sprintf("Backup created: %s (%d bytes)", b.ID, b.Size), nil
+}
+
+func backupRetentionCount(config *BackupTaskConfig, spec *backup.BackupSpec) int {
+	if spec != nil && spec.RetentionCount > 0 {
+		return spec.RetentionCount
+	}
+	return config.RetentionCount
 }
 
 func (e *Executor) ExecuteCommand(ctx context.Context, deploymentName string, config *CommandTaskConfig) (string, error) {

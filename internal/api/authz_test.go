@@ -414,6 +414,32 @@ func TestIsolatedRestoreRequiresNewDeploymentName(t *testing.T) {
 	}
 }
 
+func TestIsolatedRestoreRejectsExistingTargetBeforeStarting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmpDir := t.TempDir()
+	createTestDeployment(t, tmpDir, "source-app", &models.ServiceMetadata{Name: "source-app"})
+	createTestDeployment(t, tmpDir, "target-app", &models.ServiceMetadata{Name: "target-app"})
+	backupManager, err := backup.NewManager(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := backupManager.CreateBackup(context.Background(), "source-app", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{backupManager: backupManager, manager: docker.NewManager(tmpDir)}
+	router := gin.New()
+	router.POST("/backups/:id/restore", server.restoreBackup)
+	body := bytes.NewBufferString(`{"isolated":true,"deployment_name":"target-app"}`)
+	req := httptest.NewRequest(http.MethodPost, "/backups/"+created.ID+"/restore", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateScheduledTaskRequiresWriteDeploymentAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -6053,7 +6053,7 @@
         "tags": [
           "deployments"
         ],
-        "x-permission": "deployments:read"
+        "x-permission": "deployments:write"
       }
     },
     "/api/deployments/{name}/mkdir/{path}": {

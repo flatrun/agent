@@ -32,9 +32,10 @@ func (s *Server) attachDeploymentDatabase(c *gin.Context) {
 		return
 	}
 	deployDir := filepath.Join(s.config.DeploymentsPath, name)
-	var merged []EnvVar
-	if current, readErr := os.ReadFile(filepath.Join(deployDir, ".env.flatrun")); readErr == nil {
-		merged = parseEnvContent(string(current))
+	merged, err := readDeploymentEnv(deployDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 	merged = mergeEnvVars(merged, envVars)
 	if err := s.writeEnvFile(name, merged); err != nil {
@@ -68,6 +69,21 @@ func (s *Server) attachDeploymentDatabase(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"databases": configs, "message": "Database attached. Restart the deployment to apply."})
+}
+
+func readDeploymentEnv(deployDir string) ([]EnvVar, error) {
+	var merged []EnvVar
+	for _, filename := range []string{".env", ".env.flatrun"} {
+		current, err := os.ReadFile(filepath.Join(deployDir, filename))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		merged = mergeEnvVars(merged, parseEnvContent(string(current)))
+	}
+	return merged, nil
 }
 
 func mergeEnvVars(current, additions []EnvVar) []EnvVar {

@@ -435,17 +435,21 @@ func (s *Server) restoreBackup(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Deployment write permission required"})
 			return
 		}
-		if s.authManager != nil && actor != nil && actor.User != nil && actor.Role != auth.RoleAdmin {
-			if err := s.authManager.AssignDeployment(actor.User.ID, targetDeployment, auth.AccessLevelAdmin, actor.User.ID); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to grant access to restored deployment"})
-				return
-			}
+		if _, lookupErr := s.manager.GetDeployment(targetDeployment); lookupErr == nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Deployment already exists"})
+			return
 		}
 	} else if !s.requireDeploymentAccess(c, targetDeployment, auth.AccessLevelWrite) {
 		return
 	}
 
-	jobID := s.backupManager.StartRestoreJob(&req)
+	actor := auth.GetActorFromContext(c)
+	jobID := s.backupManager.StartRestoreJob(&req, func() error {
+		if !req.Isolated || s.authManager == nil || actor == nil || actor.User == nil || actor.Role == auth.RoleAdmin {
+			return nil
+		}
+		return s.authManager.AssignDeployment(actor.User.ID, targetDeployment, auth.AccessLevelAdmin, actor.User.ID)
+	})
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Restore job started"})
 }
 

@@ -995,6 +995,7 @@ func isolateRestoredDeployment(deploymentPath string) error {
 	if err := yaml.Unmarshal(content, &document); err != nil {
 		return err
 	}
+	delete(document, "name")
 	services, ok := document["services"].(map[string]interface{})
 	if !ok || len(services) == 0 {
 		return errors.New("compose file has no services")
@@ -1010,8 +1011,29 @@ func isolateRestoredDeployment(deploymentPath string) error {
 		delete(service, "dns")
 		delete(service, "dns_search")
 		delete(service, "extra_hosts")
+		if volumes, exists := service["volumes"].([]interface{}); exists {
+			for i, rawVolume := range volumes {
+				isolated, err := isolateComposeVolume(deploymentPath, name, i, rawVolume)
+				if err != nil {
+					return err
+				}
+				volumes[i] = isolated
+			}
+			service["volumes"] = volumes
+		}
 		service["networks"] = []string{"flatrun_isolated"}
 		services[name] = service
+	}
+	if volumes, exists := document["volumes"].(map[string]interface{}); exists {
+		for name, raw := range volumes {
+			definition, ok := raw.(map[string]interface{})
+			if !ok {
+				definition = map[string]interface{}{}
+			}
+			delete(definition, "external")
+			delete(definition, "name")
+			volumes[name] = definition
+		}
 	}
 	document["networks"] = map[string]interface{}{
 		"flatrun_isolated": map[string]interface{}{"internal": true},
@@ -1020,7 +1042,63 @@ func isolateRestoredDeployment(deploymentPath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(composePath, isolated, 0644)
+	if err := os.WriteFile(composePath, isolated, 0644); err != nil {
+		return err
+	}
+	for _, filename := range []string{".env", ".env.flatrun"} {
+		path := filepath.Join(deploymentPath, filename)
+		content, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(content), "\n")
+		filtered := lines[:0]
+		for _, line := range lines {
+			if !strings.HasPrefix(strings.TrimSpace(line), "COMPOSE_PROJECT_NAME=") {
+				filtered = append(filtered, line)
+			}
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(filtered, "\n")), 0600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isolateComposeVolume(deploymentPath, service string, index int, raw interface{}) (interface{}, error) {
+	isolatedSource := filepath.ToSlash(filepath.Join(".", "isolated-mounts", fmt.Sprintf("%s-%d", service, index)))
+	createSource := func() error {
+		return os.MkdirAll(filepath.Join(deploymentPath, "isolated-mounts", fmt.Sprintf("%s-%d", service, index)), 0755)
+	}
+	switch volume := raw.(type) {
+	case string:
+		parts := strings.SplitN(volume, ":", 3)
+		if len(parts) < 2 || !filepath.IsAbs(parts[0]) {
+			return raw, nil
+		}
+		if err := createSource(); err != nil {
+			return nil, err
+		}
+		parts[0] = isolatedSource
+		return strings.Join(parts, ":"), nil
+	case map[string]interface{}:
+		source, _ := volume["source"].(string)
+		typeName, _ := volume["type"].(string)
+		if typeName != "bind" && !filepath.IsAbs(source) {
+			return raw, nil
+		}
+		if err := createSource(); err != nil {
+			return nil, err
+		}
+		volume["type"] = "bind"
+		volume["source"] = isolatedSource
+		return volume, nil
+	default:
+		return nil, fmt.Errorf("service %s has an invalid volume entry", service)
+	}
 }
 
 func (m *Manager) extractArchive(archivePath, destDir string) error {
