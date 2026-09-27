@@ -554,3 +554,52 @@ func TestAddDomain(t *testing.T) {
 		}
 	})
 }
+
+func TestDomainListChangesPersistThroughHTTP(t *testing.T) {
+	server, tmpDir, cleanup := setupDomainsTestServer(t)
+	defer cleanup()
+
+	createTestDeployment(t, tmpDir, "domain-list", &models.ServiceMetadata{
+		Name: "domain-list",
+		Type: "web",
+		Domains: []models.DomainConfig{{
+			ID:            "primary",
+			Service:       "web",
+			ContainerPort: 80,
+			Domain:        "app.example.com",
+		}},
+	})
+
+	router := gin.New()
+	router.POST("/deployments/:name/domains", server.addDomain)
+	router.PUT("/deployments/:name/domains/:domainId", server.updateDomain)
+
+	addBody := `{"service":"web","container_port":80,"domain":"alias.example.com"}`
+	add := httptest.NewRecorder()
+	router.ServeHTTP(add, httptest.NewRequest(http.MethodPost, "/deployments/domain-list/domains", strings.NewReader(addBody)))
+	if add.Code != http.StatusCreated {
+		t.Fatalf("add status = %d: %s", add.Code, add.Body.String())
+	}
+
+	updateBody := `{"service":"web","container_port":80,"domain":"new.example.com"}`
+	update := httptest.NewRecorder()
+	router.ServeHTTP(update, httptest.NewRequest(http.MethodPut, "/deployments/domain-list/domains/primary", strings.NewReader(updateBody)))
+	if update.Code != http.StatusOK {
+		t.Fatalf("update status = %d: %s", update.Code, update.Body.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "domain-list", "service.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata models.ServiceMetadata
+	if err := yaml.Unmarshal(data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata.Domains) != 2 {
+		t.Fatalf("domains = %+v, want two saved domains", metadata.Domains)
+	}
+	if metadata.Domains[0].Domain != "new.example.com" || metadata.Domains[1].Domain != "alias.example.com" {
+		t.Fatalf("domains = %+v", metadata.Domains)
+	}
+}

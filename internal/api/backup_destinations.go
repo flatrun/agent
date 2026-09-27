@@ -157,6 +157,20 @@ func (s *Server) listBackupDestinations(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"destinations": dests})
 }
 
+func (s *Server) listDeploymentBackupDestinationOptions(c *gin.Context) {
+	type option struct {
+		Name string `json:"name"`
+		Kind string `json:"kind"`
+	}
+	options := make([]option, 0)
+	for _, destination := range s.config.Backup.Destinations {
+		if destination.IsEnabled() {
+			options = append(options, option{Name: destination.Name, Kind: destination.StoreKind()})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"destinations": options})
+}
+
 func (s *Server) findDestinationByName(name string) (config.BackupDestination, bool) {
 	for _, d := range s.config.Backup.Destinations {
 		if d.Name == name {

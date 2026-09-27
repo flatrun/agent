@@ -173,7 +173,7 @@ func (m *Manager) StartBackupJob(deploymentName string, spec *BackupSpec) string
 	return jobID
 }
 
-func (m *Manager) StartRestoreJob(req *RestoreBackupRequest) string {
+func (m *Manager) StartRestoreJob(req *RestoreBackupRequest, afterRestore ...func() error) string {
 	backup, err := m.GetBackup(req.BackupID)
 	if err != nil {
 		jobID := generateJobID("restore", req.BackupID)
@@ -197,6 +197,12 @@ func (m *Manager) StartRestoreJob(req *RestoreBackupRequest) string {
 		if err := m.RestoreBackup(context.Background(), req); err != nil {
 			m.jobs.SetError(jobID, err)
 			return
+		}
+		for _, callback := range afterRestore {
+			if err := callback(); err != nil {
+				m.jobs.SetError(jobID, err)
+				return
+			}
 		}
 
 		m.jobs.UpdateStatus(jobID, JobStatusCompleted, "Restore completed")

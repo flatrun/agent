@@ -40,6 +40,7 @@ type ServiceMetadata struct {
 	QuickActions       []QuickAction             `yaml:"quick_actions,omitempty" json:"quick_actions,omitempty"`
 	Security           *DeploymentSecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
 	Backup             *BackupSpec               `yaml:"backup,omitempty" json:"backup,omitempty"`
+	Migration          *MigrationSpec            `yaml:"migration,omitempty" json:"migration,omitempty"`
 	Scaling            *ScalingConfig            `yaml:"scaling,omitempty" json:"scaling,omitempty"`
 	ProtectedMode      *ProtectedModeConfig      `yaml:"protected_mode,omitempty" json:"protected_mode,omitempty"`
 	RequirePlan        bool                      `yaml:"require_plan,omitempty" json:"require_plan,omitempty"`
@@ -47,6 +48,27 @@ type ServiceMetadata struct {
 	ServiceCredentials map[string]string         `yaml:"service_credentials,omitempty" json:"service_credentials,omitempty"`
 	Domains            []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
 	Databases          []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
+}
+
+type MigrationSpec struct {
+	Source            string          `yaml:"source" json:"source"`
+	Sites             []MigrationSite `yaml:"sites,omitempty" json:"sites,omitempty"`
+	InventoryComplete bool            `yaml:"inventory_complete" json:"inventory_complete"`
+	InitialTransferAt *time.Time      `yaml:"initial_transfer_at,omitempty" json:"initial_transfer_at,omitempty"`
+	LastSyncAt        *time.Time      `yaml:"last_sync_at,omitempty" json:"last_sync_at,omitempty"`
+	CutoverAt         *time.Time      `yaml:"cutover_at,omitempty" json:"cutover_at,omitempty"`
+	ExpectedAddress   string          `yaml:"expected_address,omitempty" json:"expected_address,omitempty"`
+	Notes             string          `yaml:"notes,omitempty" json:"notes,omitempty"`
+}
+
+type MigrationSite struct {
+	Hostname      string     `yaml:"hostname" json:"hostname"`
+	SourcePath    string     `yaml:"source_path,omitempty" json:"source_path,omitempty"`
+	Bytes         int64      `yaml:"bytes,omitempty" json:"bytes,omitempty"`
+	Transferred   bool       `yaml:"transferred" json:"transferred"`
+	LastSyncedAt  *time.Time `yaml:"last_synced_at,omitempty" json:"last_synced_at,omitempty"`
+	Resolved      []string   `yaml:"resolved,omitempty" json:"resolved,omitempty"`
+	DNSPropagated bool       `yaml:"dns_propagated,omitempty" json:"dns_propagated"`
 }
 
 type ScalingConfig struct {
@@ -265,6 +287,9 @@ type BackupSpec struct {
 	PreHooks        []BackupHookSpec      `yaml:"pre_hooks,omitempty" json:"pre_hooks,omitempty"`
 	PostHooks       []BackupHookSpec      `yaml:"post_hooks,omitempty" json:"post_hooks,omitempty"`
 	ExcludePatterns []string              `yaml:"exclude_patterns,omitempty" json:"exclude_patterns,omitempty"`
+	Destinations    []string              `yaml:"destinations,omitempty" json:"destinations,omitempty"`
+	RetentionCount  int                   `yaml:"retention_count,omitempty" json:"retention_count,omitempty"`
+	SizeAlertBytes  int64                 `yaml:"size_alert_bytes,omitempty" json:"size_alert_bytes,omitempty"`
 }
 
 type ContainerBackupPath struct {

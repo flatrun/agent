@@ -2,14 +2,106 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/backup"
+	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
+
+type deploymentBackupPolicy struct {
+	Config         *backup.BackupSpec        `json:"config"`
+	Schedules      []scheduler.ScheduledTask `json:"schedules"`
+	BackupCount    int                       `json:"backup_count"`
+	LocalBytes     int64                     `json:"local_bytes"`
+	FailedCount    int                       `json:"failed_count"`
+	SizeAlert      bool                      `json:"size_alert"`
+	CleanupPreview *backup.CleanupPreview    `json:"cleanup_preview"`
+}
+
+func (s *Server) getDeploymentBackupPolicy(c *gin.Context) {
+	name := c.Param("name")
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+	spec := s.effectiveBackupSpec(deployment)
+	backups, err := s.backupManager.ListBackups(&backup.BackupListFilter{DeploymentName: name})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	policy := deploymentBackupPolicy{Config: spec, Schedules: []scheduler.ScheduledTask{}, BackupCount: len(backups)}
+	for _, item := range backups {
+		if containsLocation(item.Locations, "local") {
+			policy.LocalBytes += item.Size
+		}
+		if item.Status == backup.BackupStatusFailed || item.Status == backup.BackupStatusPartial || item.Status == backup.BackupStatusLocalOnly {
+			policy.FailedCount++
+		}
+	}
+	if s.schedulerManager != nil {
+		tasks, taskErr := s.schedulerManager.GetTasksByDeployment(name)
+		if taskErr == nil {
+			for _, task := range tasks {
+				if task.Type == scheduler.TaskTypeBackup {
+					policy.Schedules = append(policy.Schedules, task)
+				}
+			}
+		}
+	}
+	keep := spec.RetentionCount
+	if keep < 1 {
+		keep = 7
+	}
+	policy.CleanupPreview, _ = s.backupManager.PreviewCleanup(name, keep)
+	policy.SizeAlert = spec.SizeAlertBytes > 0 && policy.LocalBytes >= spec.SizeAlertBytes
+	c.JSON(http.StatusOK, gin.H{"policy": policy})
+}
+
+func containsLocation(locations []string, wanted string) bool {
+	for _, location := range locations {
+		if location == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) previewDeploymentBackupCleanup(c *gin.Context) {
+	keep, err := strconv.Atoi(c.DefaultQuery("keep", "7"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid retention count"})
+		return
+	}
+	preview, err := s.backupManager.PreviewCleanup(c.Param("name"), keep)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"preview": preview})
+}
+
+func (s *Server) cleanupDeploymentBackups(c *gin.Context) {
+	var req struct {
+		Keep int `json:"keep" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	deleted, err := s.backupManager.CleanupOldBackups(c.Param("name"), req.Keep)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
+}
 
 func (s *Server) retryBackupPublication(c *gin.Context) {
 	if s.backupManager == nil {
@@ -265,6 +357,14 @@ func (s *Server) updateDeploymentBackupConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := s.validateBackupDestinations(spec.Destinations); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if spec.RetentionCount < 0 || spec.SizeAlertBytes < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Retention and size alert values cannot be negative"})
+		return
+	}
 
 	if deployment.Metadata == nil {
 		deployment.Metadata = &models.ServiceMetadata{}
@@ -277,6 +377,26 @@ func (s *Server) updateDeploymentBackupConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"backup_config": spec})
+}
+
+func (s *Server) validateBackupDestinations(names []string) error {
+	enabled := make(map[string]bool)
+	for _, destination := range s.config.Backup.Destinations {
+		if destination.IsEnabled() {
+			enabled[destination.Name] = true
+		}
+	}
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if name == "" || !enabled[name] {
+			return fmt.Errorf("backup destination %q is unavailable", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("backup destination %q is selected more than once", name)
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 func (s *Server) restoreBackup(c *gin.Context) {
@@ -305,11 +425,31 @@ func (s *Server) restoreBackup(c *gin.Context) {
 	if !s.requireDeploymentAccess(c, b.DeploymentName, auth.AccessLevelRead) {
 		return
 	}
-	if !s.requireDeploymentAccess(c, targetDeployment, auth.AccessLevelWrite) {
+	if req.Isolated {
+		if req.DeploymentName == "" || req.DeploymentName == b.DeploymentName {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Isolated restore requires a new deployment name"})
+			return
+		}
+		actor := auth.GetActorFromContext(c)
+		if actor != nil && !actor.HasPermission(auth.PermDeploymentsWrite) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Deployment write permission required"})
+			return
+		}
+		if _, lookupErr := s.manager.GetDeployment(targetDeployment); lookupErr == nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Deployment already exists"})
+			return
+		}
+	} else if !s.requireDeploymentAccess(c, targetDeployment, auth.AccessLevelWrite) {
 		return
 	}
 
-	jobID := s.backupManager.StartRestoreJob(&req)
+	actor := auth.GetActorFromContext(c)
+	jobID := s.backupManager.StartRestoreJob(&req, func() error {
+		if !req.Isolated || s.authManager == nil || actor == nil || actor.User == nil || actor.Role == auth.RoleAdmin {
+			return nil
+		}
+		return s.authManager.AssignDeployment(actor.User.ID, targetDeployment, auth.AccessLevelAdmin, actor.User.ID)
+	})
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "message": "Restore job started"})
 }
 

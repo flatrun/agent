@@ -34,9 +34,11 @@ type ComponentResult struct {
 }
 
 type DestinationResult struct {
-	Name   string       `json:"name"`
-	Status ResultStatus `json:"status"`
-	Error  string       `json:"error,omitempty"`
+	Name     string       `json:"name"`
+	Status   ResultStatus `json:"status"`
+	Error    string       `json:"error,omitempty"`
+	Checksum string       `json:"checksum,omitempty"`
+	Verified bool         `json:"verified"`
 }
 
 type BackupSpec = models.BackupSpec
@@ -49,6 +51,7 @@ type Backup struct {
 	DeploymentName string       `json:"deployment_name"`
 	Status         BackupStatus `json:"status"`
 	Size           int64        `json:"size"`
+	Checksum       string       `json:"checksum,omitempty"`
 	Path           string       `json:"path" cli:"-"`
 	Components     []string     `json:"components"`
 	Error          string       `json:"error,omitempty"`
@@ -62,6 +65,7 @@ type Backup struct {
 	ComponentResults   []ComponentResult   `json:"component_results,omitempty"`
 	CleanupResults     []ComponentResult   `json:"cleanup_results,omitempty"`
 	DestinationResults []DestinationResult `json:"destination_results,omitempty"`
+	Destinations       []string            `json:"destinations,omitempty"`
 }
 
 type BackupMetadata struct {
@@ -90,8 +94,9 @@ type CreateBackupRequest struct {
 }
 
 type RestoreBackupRequest struct {
-	BackupID       string `json:"backup_id" binding:"required"`
+	BackupID       string `json:"backup_id,omitempty"`
 	DeploymentName string `json:"deployment_name,omitempty"`
+	Isolated       bool   `json:"isolated"`
 	RestoreData    bool   `json:"restore_data"`
 	RestoreDB      bool   `json:"restore_db"`
 	StopFirst      bool   `json:"stop_first"`
@@ -102,4 +107,10 @@ type BackupListFilter struct {
 	Status         BackupStatus
 	Limit          int
 	Offset         int
+}
+
+type CleanupPreview struct {
+	KeepCount      int      `json:"keep_count"`
+	DeleteIDs      []string `json:"delete_ids"`
+	ReclaimedBytes int64    `json:"reclaimed_bytes"`
 }

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/pkg/version"
+	"gopkg.in/yaml.v3"
 )
 
 type Manager struct {
@@ -60,6 +62,9 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		Status:         BackupStatusInProgress,
 		CreatedAt:      time.Now(),
 		Components:     []string{},
+	}
+	if spec != nil {
+		backup.Destinations = append([]string(nil), spec.Destinations...)
 	}
 	record := func(kind, name string, required bool, err error) {
 		result := ComponentResult{Name: name, Kind: kind, Required: required, Status: ResultStatusCompleted}
@@ -174,6 +179,10 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 			if info, statErr := os.Stat(archivePath); statErr == nil {
 				backup.Size = info.Size()
 			}
+			backup.Checksum, err = checksumFile(archivePath)
+			if err != nil {
+				captureErrors = append(captureErrors, fmt.Errorf("failed to checksum backup archive: %w", err))
+			}
 		}
 	}
 
@@ -197,7 +206,7 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		return backup, errors.Join(captureErrors...)
 	}
 
-	backup.DestinationResults = m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size)
+	backup.DestinationResults = m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size, backup.Checksum, backup.Destinations)
 	succeeded := 0
 	for _, result := range backup.DestinationResults {
 		if result.Status == ResultStatusCompleted {
@@ -219,6 +228,19 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 
 	log.Printf("Backup finished with status %s: %s (%d bytes)", backup.Status, backupID, backup.Size)
 	return backup, nil
+}
+
+func checksumFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
 
 func (m *Manager) backupComposeFile(deploymentPath, tempDir string, metadata *BackupMetadata) error {
@@ -789,9 +811,28 @@ func (m *Manager) GetBackupPath(backupID string) (string, error) {
 // applies to local disk only; remote copies are governed by the destination's
 // own lifecycle policy and are never deleted here.
 func (m *Manager) CleanupOldBackups(deploymentName string, keepCount int) (int, error) {
-	backups, err := m.listLocalBackups(&BackupListFilter{DeploymentName: deploymentName})
+	preview, err := m.PreviewCleanup(deploymentName, keepCount)
 	if err != nil {
 		return 0, err
+	}
+	deleted := 0
+	for _, backupID := range preview.DeleteIDs {
+		if err := m.deleteLocalBackup(backupID); err != nil {
+			log.Printf("Failed to delete old backup %s: %v", backupID, err)
+			continue
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
+func (m *Manager) PreviewCleanup(deploymentName string, keepCount int) (*CleanupPreview, error) {
+	if keepCount < 1 {
+		return nil, errors.New("retention count must be at least 1")
+	}
+	backups, err := m.listLocalBackups(&BackupListFilter{DeploymentName: deploymentName})
+	if err != nil {
+		return nil, err
 	}
 
 	usable := backups[:0]
@@ -801,19 +842,14 @@ func (m *Manager) CleanupOldBackups(deploymentName string, keepCount int) (int, 
 		}
 	}
 	if len(usable) <= keepCount {
-		return 0, nil
+		return &CleanupPreview{KeepCount: keepCount, DeleteIDs: []string{}}, nil
 	}
-
-	deleted := 0
+	preview := &CleanupPreview{KeepCount: keepCount, DeleteIDs: make([]string, 0, len(usable)-keepCount)}
 	for _, backup := range usable[keepCount:] {
-		if err := m.deleteLocalBackup(backup.ID); err != nil {
-			log.Printf("Failed to delete old backup %s: %v", backup.ID, err)
-			continue
-		}
-		deleted++
+		preview.DeleteIDs = append(preview.DeleteIDs, backup.ID)
+		preview.ReclaimedBytes += backup.Size
 	}
-
-	return deleted, nil
+	return preview, nil
 }
 
 func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) error {
@@ -825,6 +861,16 @@ func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) 
 	deploymentName := backup.DeploymentName
 	if req.DeploymentName != "" {
 		deploymentName = req.DeploymentName
+	}
+	if req.Isolated {
+		if req.DeploymentName == "" || deploymentName == backup.DeploymentName {
+			return errors.New("isolated restore requires a new deployment name")
+		}
+		if _, statErr := os.Stat(filepath.Join(m.deploymentsPath, deploymentName)); statErr == nil {
+			return fmt.Errorf("deployment already exists: %s", deploymentName)
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("failed to inspect restore destination: %w", statErr)
+		}
 	}
 
 	deploymentPath := filepath.Join(m.deploymentsPath, deploymentName)
@@ -893,6 +939,12 @@ func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) 
 		}
 	}
 
+	if req.Isolated {
+		if err := isolateRestoredDeployment(deploymentPath); err != nil {
+			return fmt.Errorf("failed to isolate restored deployment: %w", err)
+		}
+	}
+
 	if req.RestoreData && len(metadata.Components.MountedData) > 0 {
 		if err := m.restoreMountedData(tempDir, deploymentPath, metadata.Components.MountedData); err != nil {
 			log.Printf("Restore: warning - failed to restore mounted data: %v", err)
@@ -931,6 +983,122 @@ func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) 
 
 	log.Printf("Restore completed for %s from backup %s", deploymentName, req.BackupID)
 	return nil
+}
+
+func isolateRestoredDeployment(deploymentPath string) error {
+	composePath := filepath.Join(deploymentPath, "docker-compose.yml")
+	content, err := os.ReadFile(composePath)
+	if err != nil {
+		return err
+	}
+	var document map[string]interface{}
+	if err := yaml.Unmarshal(content, &document); err != nil {
+		return err
+	}
+	delete(document, "name")
+	services, ok := document["services"].(map[string]interface{})
+	if !ok || len(services) == 0 {
+		return errors.New("compose file has no services")
+	}
+	for name, raw := range services {
+		service, ok := raw.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("service %s is invalid", name)
+		}
+		delete(service, "container_name")
+		delete(service, "network_mode")
+		delete(service, "ports")
+		delete(service, "dns")
+		delete(service, "dns_search")
+		delete(service, "extra_hosts")
+		if volumes, exists := service["volumes"].([]interface{}); exists {
+			for i, rawVolume := range volumes {
+				isolated, err := isolateComposeVolume(deploymentPath, name, i, rawVolume)
+				if err != nil {
+					return err
+				}
+				volumes[i] = isolated
+			}
+			service["volumes"] = volumes
+		}
+		service["networks"] = []string{"flatrun_isolated"}
+		services[name] = service
+	}
+	if volumes, exists := document["volumes"].(map[string]interface{}); exists {
+		for name, raw := range volumes {
+			definition, ok := raw.(map[string]interface{})
+			if !ok {
+				definition = map[string]interface{}{}
+			}
+			delete(definition, "external")
+			delete(definition, "name")
+			volumes[name] = definition
+		}
+	}
+	document["networks"] = map[string]interface{}{
+		"flatrun_isolated": map[string]interface{}{"internal": true},
+	}
+	isolated, err := yaml.Marshal(document)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(composePath, isolated, 0644); err != nil {
+		return err
+	}
+	for _, filename := range []string{".env", ".env.flatrun"} {
+		path := filepath.Join(deploymentPath, filename)
+		content, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(content), "\n")
+		filtered := lines[:0]
+		for _, line := range lines {
+			if !strings.HasPrefix(strings.TrimSpace(line), "COMPOSE_PROJECT_NAME=") {
+				filtered = append(filtered, line)
+			}
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(filtered, "\n")), 0600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isolateComposeVolume(deploymentPath, service string, index int, raw interface{}) (interface{}, error) {
+	isolatedSource := filepath.ToSlash(filepath.Join(".", "isolated-mounts", fmt.Sprintf("%s-%d", service, index)))
+	createSource := func() error {
+		return os.MkdirAll(filepath.Join(deploymentPath, "isolated-mounts", fmt.Sprintf("%s-%d", service, index)), 0755)
+	}
+	switch volume := raw.(type) {
+	case string:
+		parts := strings.SplitN(volume, ":", 3)
+		if len(parts) < 2 || !filepath.IsAbs(parts[0]) {
+			return raw, nil
+		}
+		if err := createSource(); err != nil {
+			return nil, err
+		}
+		parts[0] = isolatedSource
+		return strings.Join(parts, ":"), nil
+	case map[string]interface{}:
+		source, _ := volume["source"].(string)
+		typeName, _ := volume["type"].(string)
+		if typeName != "bind" && !filepath.IsAbs(source) {
+			return raw, nil
+		}
+		if err := createSource(); err != nil {
+			return nil, err
+		}
+		volume["type"] = "bind"
+		volume["source"] = isolatedSource
+		return volume, nil
+	default:
+		return nil, fmt.Errorf("service %s has an invalid volume entry", service)
+	}
 }
 
 func (m *Manager) extractArchive(archivePath, destDir string) error {

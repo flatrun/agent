@@ -4289,6 +4289,85 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/deployments/{name}/backup-cleanup": {
+      "post": {
+        "operationId": "post-deployments-by-name-backup-cleanup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "keep": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "keep"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "keep"
+                ],
+                "x-property-order": [
+                  "keep"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:delete"
+      }
+    },
+    "/api/deployments/{name}/backup-cleanup-preview": {
+      "get": {
+        "operationId": "get-deployments-by-name-backup-cleanup-preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "keep",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
     "/api/deployments/{name}/backup-config": {
       "get": {
         "operationId": "get-deployments-by-name-backup-config",
@@ -4343,6 +4422,54 @@
           "deployments"
         ],
         "x-permission": "backups:write"
+      }
+    },
+    "/api/deployments/{name}/backup-destinations": {
+      "get": {
+        "operationId": "get-deployments-by-name-backup-destinations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/deployments/{name}/backup-policy": {
+      "get": {
+        "operationId": "get-deployments-by-name-backup-policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:read"
       }
     },
     "/api/deployments/{name}/backups": {
@@ -4885,6 +5012,40 @@
                 }
               }
             },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/deployments/{name}/databases/attach": {
+      "post": {
+        "operationId": "post-deployments-by-name-databases-attach",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.DatabaseConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
             "description": "Success"
           }
         },
@@ -5794,6 +5955,86 @@
     "/api/deployments/{name}/metadata": {
       "put": {
         "operationId": "put-deployments-by-name-metadata",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/deployments/{name}/migration": {
+      "get": {
+        "operationId": "get-deployments-by-name-migration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-deployments-by-name-migration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.MigrationSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/deployments/{name}/migration/check-dns": {
+      "post": {
+        "operationId": "post-deployments-by-name-migration-check-dns",
         "parameters": [
           {
             "in": "path",
@@ -12820,6 +13061,9 @@
       "backup.Backup": {
         "type": "object",
         "properties": {
+          "checksum": {
+            "type": "string"
+          },
           "cleanup_results": {
             "type": "array",
             "items": {
@@ -12855,6 +13099,12 @@
               "$ref": "#/components/schemas/backup.DestinationResult"
             }
           },
+          "destinations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "error": {
             "type": "string"
           },
@@ -12886,6 +13136,7 @@
           "deployment_name",
           "status",
           "size",
+          "checksum",
           "path",
           "components",
           "error",
@@ -12895,13 +13146,15 @@
           "locations",
           "component_results",
           "cleanup_results",
-          "destination_results"
+          "destination_results",
+          "destinations"
         ],
         "x-columns": [
           "id",
           "deployment_name",
           "status",
           "size",
+          "checksum",
           "error",
           "created_at",
           "completed_at",
@@ -12967,6 +13220,9 @@
       "backup.DestinationResult": {
         "type": "object",
         "properties": {
+          "checksum": {
+            "type": "string"
+          },
           "error": {
             "type": "string"
           },
@@ -12975,17 +13231,24 @@
           },
           "status": {
             "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
           }
         },
         "x-property-order": [
           "name",
           "status",
-          "error"
+          "error",
+          "checksum",
+          "verified"
         ],
         "x-columns": [
           "name",
           "status",
-          "error"
+          "error",
+          "checksum",
+          "verified"
         ]
       },
       "backup.RestoreBackupRequest": {
@@ -12996,6 +13259,9 @@
           },
           "deployment_name": {
             "type": "string"
+          },
+          "isolated": {
+            "type": "boolean"
           },
           "restore_data": {
             "type": "boolean"
@@ -13010,6 +13276,7 @@
         "x-property-order": [
           "backup_id",
           "deployment_name",
+          "isolated",
           "restore_data",
           "restore_db",
           "stop_first"
@@ -13017,12 +13284,10 @@
         "x-columns": [
           "backup_id",
           "deployment_name",
+          "isolated",
           "restore_data",
           "restore_db",
           "stop_first"
-        ],
-        "required": [
-          "backup_id"
         ]
       },
       "cluster.AggregatedResponse": {
@@ -13834,6 +14099,12 @@
               "$ref": "#/components/schemas/models.DatabaseBackupSpec"
             }
           },
+          "destinations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "exclude_patterns": {
             "type": "array",
             "items": {
@@ -13851,6 +14122,12 @@
             "items": {
               "$ref": "#/components/schemas/models.BackupHookSpec"
             }
+          },
+          "retention_count": {
+            "type": "integer"
+          },
+          "size_alert_bytes": {
+            "type": "integer"
           }
         },
         "x-property-order": [
@@ -13858,7 +14135,14 @@
           "databases",
           "pre_hooks",
           "post_hooks",
-          "exclude_patterns"
+          "exclude_patterns",
+          "destinations",
+          "retention_count",
+          "size_alert_bytes"
+        ],
+        "x-columns": [
+          "retention_count",
+          "size_alert_bytes"
         ]
       },
       "models.Certificate": {
@@ -14402,6 +14686,104 @@
           "builtin"
         ]
       },
+      "models.MigrationSite": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer"
+          },
+          "dns_propagated": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "last_synced_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolved": {
+            "type": "array"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "transferred": {
+            "type": "boolean"
+          }
+        },
+        "x-property-order": [
+          "hostname",
+          "source_path",
+          "bytes",
+          "transferred",
+          "last_synced_at",
+          "resolved",
+          "dns_propagated"
+        ],
+        "x-columns": [
+          "hostname",
+          "source_path",
+          "bytes",
+          "transferred",
+          "last_synced_at",
+          "dns_propagated"
+        ]
+      },
+      "models.MigrationSpec": {
+        "type": "object",
+        "properties": {
+          "cutover_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expected_address": {
+            "type": "string"
+          },
+          "initial_transfer_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "inventory_complete": {
+            "type": "boolean"
+          },
+          "last_sync_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/models.MigrationSite"
+            }
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "source",
+          "sites",
+          "inventory_complete",
+          "initial_transfer_at",
+          "last_sync_at",
+          "cutover_at",
+          "expected_address",
+          "notes"
+        ],
+        "x-columns": [
+          "source",
+          "inventory_complete",
+          "initial_transfer_at",
+          "last_sync_at",
+          "cutover_at",
+          "expected_address",
+          "notes"
+        ]
+      },
       "models.NetworkingConfig": {
         "type": "object",
         "properties": {
@@ -14730,6 +15112,9 @@
               "$ref": "#/components/schemas/models.LogSource"
             }
           },
+          "migration": {
+            "$ref": "#/components/schemas/models.MigrationSpec"
+          },
           "name": {
             "type": "string"
           },
@@ -14783,6 +15168,7 @@
           "quick_actions",
           "security",
           "backup",
+          "migration",
           "scaling",
           "protected_mode",
           "require_plan",

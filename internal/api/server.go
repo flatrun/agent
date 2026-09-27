@@ -524,6 +524,7 @@ func (s *Server) setupRoutes() {
 			protected.DELETE("/deployments/:name/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteDeploymentLogs)
 			protected.GET("/deployments/:name/log-sources", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentLogSources)
 			protected.PUT("/deployments/:name/log-sources", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentLogSources)
+			protected.POST("/deployments/:name/databases/attach", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.attachDeploymentDatabase)
 			protected.GET("/deployments/:name/compose", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentCompose)
 			protected.POST("/deployments/:name/compose/mount", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDeploymentComposeMount)
 			protected.POST("/deployments/:name/compose/unmount", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.removeDeploymentComposeMount)
@@ -836,6 +837,13 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/backups/jobs/:id", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.requireBackupJobDeployment, s.getBackupJob)
 			protected.GET("/deployments/:name/backup-config", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentBackupConfig)
 			protected.PUT("/deployments/:name/backup-config", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentBackupConfig)
+			protected.GET("/deployments/:name/backup-destinations", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentBackupDestinationOptions)
+			protected.GET("/deployments/:name/backup-policy", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentBackupPolicy)
+			protected.GET("/deployments/:name/backup-cleanup-preview", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.previewDeploymentBackupCleanup)
+			protected.POST("/deployments/:name/backup-cleanup", s.authMiddleware.RequirePermission(auth.PermBackupsDelete), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelAdmin), s.cleanupDeploymentBackups)
+			protected.GET("/deployments/:name/migration", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentMigration)
+			protected.PUT("/deployments/:name/migration", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentMigration)
+			protected.POST("/deployments/:name/migration/check-dns", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.checkDeploymentMigrationDNS)
 			protected.POST("/backups/:id/restore", s.authMiddleware.RequirePermission(auth.PermBackupsWrite), s.restoreBackup)
 			protected.GET("/backups/jobs", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.listBackupJobs)
 			protected.GET("/backups/jobs/:id", s.authMiddleware.RequirePermission(auth.PermBackupsRead), s.getBackupJob)
@@ -6365,12 +6373,15 @@ func (s *Server) updateDomain(c *gin.Context) {
 		return
 	}
 
-	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
-	if err != nil {
-		_ = s.manager.SaveMetadata(name, originalMetadata)
-		_ = s.manager.UpdateDeployment(name, originalCompose)
-		c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
-		return
+	var result *proxy.SetupResult
+	if s.proxyOrchestrator != nil {
+		result, err = s.proxyOrchestrator.SetupDeployment(deployment)
+		if err != nil {
+			_ = s.manager.SaveMetadata(name, originalMetadata)
+			_ = s.manager.UpdateDeployment(name, originalCompose)
+			c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
