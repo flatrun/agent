@@ -811,9 +811,28 @@ func (m *Manager) GetBackupPath(backupID string) (string, error) {
 // applies to local disk only; remote copies are governed by the destination's
 // own lifecycle policy and are never deleted here.
 func (m *Manager) CleanupOldBackups(deploymentName string, keepCount int) (int, error) {
-	backups, err := m.listLocalBackups(&BackupListFilter{DeploymentName: deploymentName})
+	preview, err := m.PreviewCleanup(deploymentName, keepCount)
 	if err != nil {
 		return 0, err
+	}
+	deleted := 0
+	for _, backupID := range preview.DeleteIDs {
+		if err := m.deleteLocalBackup(backupID); err != nil {
+			log.Printf("Failed to delete old backup %s: %v", backupID, err)
+			continue
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
+func (m *Manager) PreviewCleanup(deploymentName string, keepCount int) (*CleanupPreview, error) {
+	if keepCount < 1 {
+		return nil, errors.New("retention count must be at least 1")
+	}
+	backups, err := m.listLocalBackups(&BackupListFilter{DeploymentName: deploymentName})
+	if err != nil {
+		return nil, err
 	}
 
 	usable := backups[:0]
@@ -823,19 +842,14 @@ func (m *Manager) CleanupOldBackups(deploymentName string, keepCount int) (int, 
 		}
 	}
 	if len(usable) <= keepCount {
-		return 0, nil
+		return &CleanupPreview{KeepCount: keepCount, DeleteIDs: []string{}}, nil
 	}
-
-	deleted := 0
+	preview := &CleanupPreview{KeepCount: keepCount, DeleteIDs: make([]string, 0, len(usable)-keepCount)}
 	for _, backup := range usable[keepCount:] {
-		if err := m.deleteLocalBackup(backup.ID); err != nil {
-			log.Printf("Failed to delete old backup %s: %v", backup.ID, err)
-			continue
-		}
-		deleted++
+		preview.DeleteIDs = append(preview.DeleteIDs, backup.ID)
+		preview.ReclaimedBytes += backup.Size
 	}
-
-	return deleted, nil
+	return preview, nil
 }
 
 func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) error {

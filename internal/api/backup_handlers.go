@@ -8,9 +8,100 @@ import (
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/backup"
+	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
+
+type deploymentBackupPolicy struct {
+	Config         *backup.BackupSpec        `json:"config"`
+	Schedules      []scheduler.ScheduledTask `json:"schedules"`
+	BackupCount    int                       `json:"backup_count"`
+	LocalBytes     int64                     `json:"local_bytes"`
+	FailedCount    int                       `json:"failed_count"`
+	SizeAlert      bool                      `json:"size_alert"`
+	CleanupPreview *backup.CleanupPreview    `json:"cleanup_preview"`
+}
+
+func (s *Server) getDeploymentBackupPolicy(c *gin.Context) {
+	name := c.Param("name")
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+	spec := s.effectiveBackupSpec(deployment)
+	backups, err := s.backupManager.ListBackups(&backup.BackupListFilter{DeploymentName: name})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	policy := deploymentBackupPolicy{Config: spec, Schedules: []scheduler.ScheduledTask{}, BackupCount: len(backups)}
+	for _, item := range backups {
+		if containsLocation(item.Locations, "local") {
+			policy.LocalBytes += item.Size
+		}
+		if item.Status == backup.BackupStatusFailed || item.Status == backup.BackupStatusPartial || item.Status == backup.BackupStatusLocalOnly {
+			policy.FailedCount++
+		}
+	}
+	if s.schedulerManager != nil {
+		tasks, taskErr := s.schedulerManager.GetTasksByDeployment(name)
+		if taskErr == nil {
+			for _, task := range tasks {
+				if task.Type == scheduler.TaskTypeBackup {
+					policy.Schedules = append(policy.Schedules, task)
+				}
+			}
+		}
+	}
+	keep := spec.RetentionCount
+	if keep < 1 {
+		keep = 7
+	}
+	policy.CleanupPreview, _ = s.backupManager.PreviewCleanup(name, keep)
+	policy.SizeAlert = spec.SizeAlertBytes > 0 && policy.LocalBytes >= spec.SizeAlertBytes
+	c.JSON(http.StatusOK, gin.H{"policy": policy})
+}
+
+func containsLocation(locations []string, wanted string) bool {
+	for _, location := range locations {
+		if location == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) previewDeploymentBackupCleanup(c *gin.Context) {
+	keep, err := strconv.Atoi(c.DefaultQuery("keep", "7"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid retention count"})
+		return
+	}
+	preview, err := s.backupManager.PreviewCleanup(c.Param("name"), keep)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"preview": preview})
+}
+
+func (s *Server) cleanupDeploymentBackups(c *gin.Context) {
+	var req struct {
+		Keep int `json:"keep" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	deleted, err := s.backupManager.CleanupOldBackups(c.Param("name"), req.Keep)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
+}
 
 func (s *Server) retryBackupPublication(c *gin.Context) {
 	if s.backupManager == nil {
@@ -268,6 +359,10 @@ func (s *Server) updateDeploymentBackupConfig(c *gin.Context) {
 	}
 	if err := s.validateBackupDestinations(spec.Destinations); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if spec.RetentionCount < 0 || spec.SizeAlertBytes < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Retention and size alert values cannot be negative"})
 		return
 	}
 

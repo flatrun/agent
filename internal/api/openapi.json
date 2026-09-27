@@ -4289,6 +4289,85 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/deployments/{name}/backup-cleanup": {
+      "post": {
+        "operationId": "post-deployments-by-name-backup-cleanup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "keep": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "keep"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "keep"
+                ],
+                "x-property-order": [
+                  "keep"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:delete"
+      }
+    },
+    "/api/deployments/{name}/backup-cleanup-preview": {
+      "get": {
+        "operationId": "get-deployments-by-name-backup-cleanup-preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "keep",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
     "/api/deployments/{name}/backup-config": {
       "get": {
         "operationId": "get-deployments-by-name-backup-config",
@@ -4348,6 +4427,30 @@
     "/api/deployments/{name}/backup-destinations": {
       "get": {
         "operationId": "get-deployments-by-name-backup-destinations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/deployments/{name}/backup-policy": {
+      "get": {
+        "operationId": "get-deployments-by-name-backup-policy",
         "parameters": [
           {
             "in": "path",
@@ -13905,6 +14008,12 @@
             "items": {
               "$ref": "#/components/schemas/models.BackupHookSpec"
             }
+          },
+          "retention_count": {
+            "type": "integer"
+          },
+          "size_alert_bytes": {
+            "type": "integer"
           }
         },
         "x-property-order": [
@@ -13913,7 +14022,13 @@
           "pre_hooks",
           "post_hooks",
           "exclude_patterns",
-          "destinations"
+          "destinations",
+          "retention_count",
+          "size_alert_bytes"
+        ],
+        "x-columns": [
+          "retention_count",
+          "size_alert_bytes"
         ]
       },
       "models.Certificate": {

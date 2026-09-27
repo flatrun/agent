@@ -108,3 +108,9 @@ type BackupListFilter struct {
 	Limit          int
 	Offset         int
 }
+
+type CleanupPreview struct {
+	KeepCount      int      `json:"keep_count"`
+	DeleteIDs      []string `json:"delete_ids"`
+	ReclaimedBytes int64    `json:"reclaimed_bytes"`
+}

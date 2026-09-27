@@ -362,6 +362,29 @@ func TestCleanupOldBackups(t *testing.T) {
 	}
 }
 
+func TestPreviewCleanupDoesNotDeleteBackups(t *testing.T) {
+	m, deploymentPath := setupTestManager(t)
+	defer os.RemoveAll(deploymentPath)
+	seedDeployment(t, deploymentPath, "test-deployment")
+	for i := 0; i < 3; i++ {
+		if _, err := m.CreateBackup(context.Background(), "test-deployment", nil); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	preview, err := m.PreviewCleanup("test-deployment", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.DeleteIDs) != 2 || preview.ReclaimedBytes == 0 {
+		t.Fatalf("unexpected preview: %#v", preview)
+	}
+	backups, err := m.ListBackups(&BackupListFilter{DeploymentName: "test-deployment"})
+	if err != nil || len(backups) != 3 {
+		t.Fatalf("preview changed backups under %s: count=%d err=%v", deploymentPath, len(backups), err)
+	}
+}
+
 func TestCleanupOldBackups_DoesNotCountFailedAttempts(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)
