@@ -34,9 +34,11 @@ type ComponentResult struct {
 }
 
 type DestinationResult struct {
-	Name   string       `json:"name"`
-	Status ResultStatus `json:"status"`
-	Error  string       `json:"error,omitempty"`
+	Name     string       `json:"name"`
+	Status   ResultStatus `json:"status"`
+	Error    string       `json:"error,omitempty"`
+	Checksum string       `json:"checksum,omitempty"`
+	Verified bool         `json:"verified"`
 }
 
 type BackupSpec = models.BackupSpec
@@ -49,6 +51,7 @@ type Backup struct {
 	DeploymentName string       `json:"deployment_name"`
 	Status         BackupStatus `json:"status"`
 	Size           int64        `json:"size"`
+	Checksum       string       `json:"checksum,omitempty"`
 	Path           string       `json:"path" cli:"-"`
 	Components     []string     `json:"components"`
 	Error          string       `json:"error,omitempty"`

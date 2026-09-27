@@ -212,6 +212,9 @@ func TestCreateBackup_MirrorsOnlyToSelectedDestinations(t *testing.T) {
 	if len(b.DestinationResults) != 1 || b.DestinationResults[0].Name != "secondary" {
 		t.Fatalf("destination results = %#v", b.DestinationResults)
 	}
+	if b.Checksum == "" || !b.DestinationResults[0].Verified || b.DestinationResults[0].Checksum != b.Checksum {
+		t.Fatalf("backup verification = %#v", b)
+	}
 
 	secondary.failPut = true
 	retried, err := m.RetryRemotePublication(context.Background(), b.ID)

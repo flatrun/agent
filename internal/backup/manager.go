@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,6 +178,10 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 			if info, statErr := os.Stat(archivePath); statErr == nil {
 				backup.Size = info.Size()
 			}
+			backup.Checksum, err = checksumFile(archivePath)
+			if err != nil {
+				captureErrors = append(captureErrors, fmt.Errorf("failed to checksum backup archive: %w", err))
+			}
 		}
 	}
 
@@ -200,7 +205,7 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		return backup, errors.Join(captureErrors...)
 	}
 
-	backup.DestinationResults = m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size, backup.Destinations)
+	backup.DestinationResults = m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size, backup.Checksum, backup.Destinations)
 	succeeded := 0
 	for _, result := range backup.DestinationResults {
 		if result.Status == ResultStatusCompleted {
@@ -222,6 +227,19 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 
 	log.Printf("Backup finished with status %s: %s (%d bytes)", backup.Status, backupID, backup.Size)
 	return backup, nil
+}
+
+func checksumFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
 
 func (m *Manager) backupComposeFile(deploymentPath, tempDir string, metadata *BackupMetadata) error {

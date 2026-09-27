@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -47,7 +48,7 @@ func deploymentFromID(backupID string) string {
 	return parts[0]
 }
 
-func (m *Manager) mirrorToRemotes(ctx context.Context, deploymentName, backupID, archivePath string, size int64, destinationNames []string) []DestinationResult {
+func (m *Manager) mirrorToRemotes(ctx context.Context, deploymentName, backupID, archivePath string, size int64, checksum string, destinationNames []string) []DestinationResult {
 	remotes := m.getRemotes()
 	if len(remotes) == 0 && len(destinationNames) == 0 {
 		return nil
@@ -93,6 +94,24 @@ func (m *Manager) mirrorToRemotes(ctx context.Context, deploymentName, backupID,
 			results = append(results, result)
 			continue
 		}
+		remote, err := r.Open(ctx, key)
+		if err != nil {
+			result.Status = ResultStatusFailed
+			result.Error = "verification failed"
+			results = append(results, result)
+			continue
+		}
+		hash := sha256.New()
+		_, hashErr := io.Copy(hash, remote)
+		closeErr := remote.Close()
+		result.Checksum = fmt.Sprintf("sha256:%x", hash.Sum(nil))
+		if hashErr != nil || closeErr != nil || result.Checksum != checksum {
+			result.Status = ResultStatusFailed
+			result.Error = "verification failed"
+			results = append(results, result)
+			continue
+		}
+		result.Verified = true
 		results = append(results, result)
 		log.Printf("Backup mirrored: %s -> %s", backupID, r.Name())
 	}
@@ -107,7 +126,13 @@ func (m *Manager) RetryRemotePublication(ctx context.Context, backupID string) (
 	if backup.Path == "" {
 		return nil, fmt.Errorf("local backup archive is unavailable")
 	}
-	backup.DestinationResults = m.mirrorToRemotes(ctx, backup.DeploymentName, backup.ID, backup.Path, backup.Size, backup.Destinations)
+	if backup.Checksum == "" {
+		backup.Checksum, err = checksumFile(backup.Path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	backup.DestinationResults = m.mirrorToRemotes(ctx, backup.DeploymentName, backup.ID, backup.Path, backup.Size, backup.Checksum, backup.Destinations)
 	backup.Locations = []string{locationLocal}
 	succeeded := 0
 	for _, result := range backup.DestinationResults {

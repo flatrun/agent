@@ -12844,6 +12844,9 @@
       "backup.Backup": {
         "type": "object",
         "properties": {
+          "checksum": {
+            "type": "string"
+          },
           "cleanup_results": {
             "type": "array",
             "items": {
@@ -12916,6 +12919,7 @@
           "deployment_name",
           "status",
           "size",
+          "checksum",
           "path",
           "components",
           "error",
@@ -12933,6 +12937,7 @@
           "deployment_name",
           "status",
           "size",
+          "checksum",
           "error",
           "created_at",
           "completed_at",
@@ -12998,6 +13003,9 @@
       "backup.DestinationResult": {
         "type": "object",
         "properties": {
+          "checksum": {
+            "type": "string"
+          },
           "error": {
             "type": "string"
           },
@@ -13006,17 +13014,24 @@
           },
           "status": {
             "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
           }
         },
         "x-property-order": [
           "name",
           "status",
-          "error"
+          "error",
+          "checksum",
+          "verified"
         ],
         "x-columns": [
           "name",
           "status",
-          "error"
+          "error",
+          "checksum",
+          "verified"
         ]
       },
       "backup.RestoreBackupRequest": {
