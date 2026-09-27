@@ -166,6 +166,9 @@ func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID stri
 	if err := s.validateDomainAccess(updated.Access); err != nil {
 		return err
 	}
+	if updated.Domain == "" {
+		return apiErrf(http.StatusBadRequest, "Domain is required")
+	}
 	if deployment.Metadata == nil || len(deployment.Metadata.Domains) == 0 {
 		return apiErrf(http.StatusNotFound, "Domain not found")
 	}
@@ -180,6 +183,11 @@ func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID stri
 
 	for i, d := range deployment.Metadata.Domains {
 		if d.ID == domainID {
+			for _, existing := range deployment.Metadata.Domains {
+				if existing.ID != domainID && existing.Domain == updated.Domain && existing.PathPrefix == updated.PathPrefix {
+					return apiErrf(http.StatusConflict, "Domain %s%s already exists", updated.Domain, updated.PathPrefix)
+				}
+			}
 			updated.ID = domainID
 			if updated.Service == "" {
 				updated.Service = d.Service

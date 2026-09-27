@@ -6365,12 +6365,15 @@ func (s *Server) updateDomain(c *gin.Context) {
 		return
 	}
 
-	result, err := s.proxyOrchestrator.SetupDeployment(deployment)
-	if err != nil {
-		_ = s.manager.SaveMetadata(name, originalMetadata)
-		_ = s.manager.UpdateDeployment(name, originalCompose)
-		c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
-		return
+	var result *proxy.SetupResult
+	if s.proxyOrchestrator != nil {
+		result, err = s.proxyOrchestrator.SetupDeployment(deployment)
+		if err != nil {
+			_ = s.manager.SaveMetadata(name, originalMetadata)
+			_ = s.manager.UpdateDeployment(name, originalCompose)
+			c.JSON(http.StatusConflict, gin.H{"error": "Failed to configure proxy: " + err.Error()})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
