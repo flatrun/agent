@@ -330,7 +330,23 @@ func (s *Server) restoreBackup(c *gin.Context) {
 	if !s.requireDeploymentAccess(c, b.DeploymentName, auth.AccessLevelRead) {
 		return
 	}
-	if !s.requireDeploymentAccess(c, targetDeployment, auth.AccessLevelWrite) {
+	if req.Isolated {
+		if req.DeploymentName == "" || req.DeploymentName == b.DeploymentName {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Isolated restore requires a new deployment name"})
+			return
+		}
+		actor := auth.GetActorFromContext(c)
+		if actor != nil && !actor.HasPermission(auth.PermDeploymentsWrite) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Deployment write permission required"})
+			return
+		}
+		if s.authManager != nil && actor != nil && actor.User != nil && actor.Role != auth.RoleAdmin {
+			if err := s.authManager.AssignDeployment(actor.User.ID, targetDeployment, auth.AccessLevelAdmin, actor.User.ID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to grant access to restored deployment"})
+				return
+			}
+		}
+	} else if !s.requireDeploymentAccess(c, targetDeployment, auth.AccessLevelWrite) {
 		return
 	}
 

@@ -94,8 +94,9 @@ type CreateBackupRequest struct {
 }
 
 type RestoreBackupRequest struct {
-	BackupID       string `json:"backup_id" binding:"required"`
+	BackupID       string `json:"backup_id,omitempty"`
 	DeploymentName string `json:"deployment_name,omitempty"`
+	Isolated       bool   `json:"isolated"`
 	RestoreData    bool   `json:"restore_data"`
 	RestoreDB      bool   `json:"restore_db"`
 	StopFirst      bool   `json:"stop_first"`

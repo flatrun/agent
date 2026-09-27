@@ -13043,6 +13043,9 @@
           "deployment_name": {
             "type": "string"
           },
+          "isolated": {
+            "type": "boolean"
+          },
           "restore_data": {
             "type": "boolean"
           },
@@ -13056,6 +13059,7 @@
         "x-property-order": [
           "backup_id",
           "deployment_name",
+          "isolated",
           "restore_data",
           "restore_db",
           "stop_first"
@@ -13063,12 +13067,10 @@
         "x-columns": [
           "backup_id",
           "deployment_name",
+          "isolated",
           "restore_data",
           "restore_db",
           "stop_first"
-        ],
-        "required": [
-          "backup_id"
         ]
       },
       "cluster.AggregatedResponse": {

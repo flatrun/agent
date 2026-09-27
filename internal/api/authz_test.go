@@ -390,6 +390,30 @@ func TestRestoreBackupRequiresWriteOnTargetDeployment(t *testing.T) {
 	}
 }
 
+func TestIsolatedRestoreRequiresNewDeploymentName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmpDir := t.TempDir()
+	createTestDeployment(t, tmpDir, "source-app", &models.ServiceMetadata{Name: "source-app"})
+	backupManager, err := backup.NewManager(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := backupManager.CreateBackup(context.Background(), "source-app", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{backupManager: backupManager}
+	router := gin.New()
+	router.POST("/backups/:id/restore", server.restoreBackup)
+	req := httptest.NewRequest(http.MethodPost, "/backups/"+created.ID+"/restore", bytes.NewBufferString("{\"isolated\":true}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateScheduledTaskRequiresWriteDeploymentAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

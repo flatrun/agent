@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/pkg/version"
+	"gopkg.in/yaml.v3"
 )
 
 type Manager struct {
@@ -847,6 +848,16 @@ func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) 
 	if req.DeploymentName != "" {
 		deploymentName = req.DeploymentName
 	}
+	if req.Isolated {
+		if req.DeploymentName == "" || deploymentName == backup.DeploymentName {
+			return errors.New("isolated restore requires a new deployment name")
+		}
+		if _, statErr := os.Stat(filepath.Join(m.deploymentsPath, deploymentName)); statErr == nil {
+			return fmt.Errorf("deployment already exists: %s", deploymentName)
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("failed to inspect restore destination: %w", statErr)
+		}
+	}
 
 	deploymentPath := filepath.Join(m.deploymentsPath, deploymentName)
 
@@ -914,6 +925,12 @@ func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) 
 		}
 	}
 
+	if req.Isolated {
+		if err := isolateRestoredDeployment(deploymentPath); err != nil {
+			return fmt.Errorf("failed to isolate restored deployment: %w", err)
+		}
+	}
+
 	if req.RestoreData && len(metadata.Components.MountedData) > 0 {
 		if err := m.restoreMountedData(tempDir, deploymentPath, metadata.Components.MountedData); err != nil {
 			log.Printf("Restore: warning - failed to restore mounted data: %v", err)
@@ -952,6 +969,44 @@ func (m *Manager) RestoreBackup(ctx context.Context, req *RestoreBackupRequest) 
 
 	log.Printf("Restore completed for %s from backup %s", deploymentName, req.BackupID)
 	return nil
+}
+
+func isolateRestoredDeployment(deploymentPath string) error {
+	composePath := filepath.Join(deploymentPath, "docker-compose.yml")
+	content, err := os.ReadFile(composePath)
+	if err != nil {
+		return err
+	}
+	var document map[string]interface{}
+	if err := yaml.Unmarshal(content, &document); err != nil {
+		return err
+	}
+	services, ok := document["services"].(map[string]interface{})
+	if !ok || len(services) == 0 {
+		return errors.New("compose file has no services")
+	}
+	for name, raw := range services {
+		service, ok := raw.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("service %s is invalid", name)
+		}
+		delete(service, "container_name")
+		delete(service, "network_mode")
+		delete(service, "ports")
+		delete(service, "dns")
+		delete(service, "dns_search")
+		delete(service, "extra_hosts")
+		service["networks"] = []string{"flatrun_isolated"}
+		services[name] = service
+	}
+	document["networks"] = map[string]interface{}{
+		"flatrun_isolated": map[string]interface{}{"internal": true},
+	}
+	isolated, err := yaml.Marshal(document)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(composePath, isolated, 0644)
 }
 
 func (m *Manager) extractArchive(archivePath, destDir string) error {
