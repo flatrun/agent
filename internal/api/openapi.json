@@ -4345,6 +4345,30 @@
         "x-permission": "backups:write"
       }
     },
+    "/api/deployments/{name}/backup-destinations": {
+      "get": {
+        "operationId": "get-deployments-by-name-backup-destinations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
     "/api/deployments/{name}/backups": {
       "get": {
         "operationId": "get-deployments-by-name-backups",
@@ -12855,6 +12879,12 @@
               "$ref": "#/components/schemas/backup.DestinationResult"
             }
           },
+          "destinations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "error": {
             "type": "string"
           },
@@ -12895,7 +12925,8 @@
           "locations",
           "component_results",
           "cleanup_results",
-          "destination_results"
+          "destination_results",
+          "destinations"
         ],
         "x-columns": [
           "id",
@@ -13834,6 +13865,12 @@
               "$ref": "#/components/schemas/models.DatabaseBackupSpec"
             }
           },
+          "destinations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "exclude_patterns": {
             "type": "array",
             "items": {
@@ -13858,7 +13895,8 @@
           "databases",
           "pre_hooks",
           "post_hooks",
-          "exclude_patterns"
+          "exclude_patterns",
+          "destinations"
         ]
       },
       "models.Certificate": {

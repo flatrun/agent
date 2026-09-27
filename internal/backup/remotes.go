@@ -47,14 +47,33 @@ func deploymentFromID(backupID string) string {
 	return parts[0]
 }
 
-func (m *Manager) mirrorToRemotes(ctx context.Context, deploymentName, backupID, archivePath string, size int64) []DestinationResult {
+func (m *Manager) mirrorToRemotes(ctx context.Context, deploymentName, backupID, archivePath string, size int64, destinationNames []string) []DestinationResult {
 	remotes := m.getRemotes()
-	if len(remotes) == 0 {
+	if len(remotes) == 0 && len(destinationNames) == 0 {
 		return nil
+	}
+	var results []DestinationResult
+	if len(destinationNames) > 0 {
+		byName := make(map[string]Store, len(remotes))
+		for _, remote := range remotes {
+			byName[remote.Name()] = remote
+		}
+		selected := make([]Store, 0, len(destinationNames))
+		for _, name := range destinationNames {
+			remote, ok := byName[name]
+			if !ok {
+				results = append(results, DestinationResult{Name: name, Status: ResultStatusFailed, Error: "destination unavailable"})
+				continue
+			}
+			selected = append(selected, remote)
+		}
+		remotes = selected
+		if len(remotes) == 0 {
+			return results
+		}
 	}
 
 	key := backupKey(deploymentName, backupID)
-	var results []DestinationResult
 	for _, r := range remotes {
 		result := DestinationResult{Name: r.Name(), Status: ResultStatusCompleted}
 		f, err := os.Open(archivePath)
@@ -88,7 +107,7 @@ func (m *Manager) RetryRemotePublication(ctx context.Context, backupID string) (
 	if backup.Path == "" {
 		return nil, fmt.Errorf("local backup archive is unavailable")
 	}
-	backup.DestinationResults = m.mirrorToRemotes(ctx, backup.DeploymentName, backup.ID, backup.Path, backup.Size)
+	backup.DestinationResults = m.mirrorToRemotes(ctx, backup.DeploymentName, backup.ID, backup.Path, backup.Size, backup.Destinations)
 	backup.Locations = []string{locationLocal}
 	succeeded := 0
 	for _, result := range backup.DestinationResults {

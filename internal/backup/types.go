@@ -62,6 +62,7 @@ type Backup struct {
 	ComponentResults   []ComponentResult   `json:"component_results,omitempty"`
 	CleanupResults     []ComponentResult   `json:"cleanup_results,omitempty"`
 	DestinationResults []DestinationResult `json:"destination_results,omitempty"`
+	Destinations       []string            `json:"destinations,omitempty"`
 }
 
 type BackupMetadata struct {

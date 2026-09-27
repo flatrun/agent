@@ -265,6 +265,7 @@ type BackupSpec struct {
 	PreHooks        []BackupHookSpec      `yaml:"pre_hooks,omitempty" json:"pre_hooks,omitempty"`
 	PostHooks       []BackupHookSpec      `yaml:"post_hooks,omitempty" json:"post_hooks,omitempty"`
 	ExcludePatterns []string              `yaml:"exclude_patterns,omitempty" json:"exclude_patterns,omitempty"`
+	Destinations    []string              `yaml:"destinations,omitempty" json:"destinations,omitempty"`
 }
 
 type ContainerBackupPath struct {

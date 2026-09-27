@@ -192,6 +192,37 @@ func TestCreateBackup_MirrorsToRemote(t *testing.T) {
 	}
 }
 
+func TestCreateBackup_MirrorsOnlyToSelectedDestinations(t *testing.T) {
+	m, tmpDir := setupTestManager(t)
+	defer os.RemoveAll(tmpDir)
+
+	primary := newFakeStore("primary")
+	secondary := newFakeStore("secondary")
+	m.SetRemotes([]Store{primary, secondary})
+	seedDeployment(t, tmpDir, "app")
+
+	b, err := m.CreateBackup(context.Background(), "app", &BackupSpec{Destinations: []string{"secondary"}})
+	if err != nil {
+		t.Fatalf("create backup: %v", err)
+	}
+	key := backupKey("app", b.ID)
+	if primary.has(key) || !secondary.has(key) {
+		t.Fatalf("primary has backup = %v, secondary has backup = %v", primary.has(key), secondary.has(key))
+	}
+	if len(b.DestinationResults) != 1 || b.DestinationResults[0].Name != "secondary" {
+		t.Fatalf("destination results = %#v", b.DestinationResults)
+	}
+
+	secondary.failPut = true
+	retried, err := m.RetryRemotePublication(context.Background(), b.ID)
+	if err != nil {
+		t.Fatalf("retry publication: %v", err)
+	}
+	if len(retried.DestinationResults) != 1 || retried.DestinationResults[0].Name != "secondary" {
+		t.Fatalf("retry destination results = %#v", retried.DestinationResults)
+	}
+}
+
 func TestListAndGetBackup_RemoteOnlyAfterLocalPruned(t *testing.T) {
 	m, tmpDir := setupTestManager(t)
 	defer os.RemoveAll(tmpDir)

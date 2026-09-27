@@ -61,6 +61,9 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		CreatedAt:      time.Now(),
 		Components:     []string{},
 	}
+	if spec != nil {
+		backup.Destinations = append([]string(nil), spec.Destinations...)
+	}
 	record := func(kind, name string, required bool, err error) {
 		result := ComponentResult{Name: name, Kind: kind, Required: required, Status: ResultStatusCompleted}
 		if err != nil {
@@ -197,7 +200,7 @@ func (m *Manager) CreateBackup(ctx context.Context, deploymentName string, spec 
 		return backup, errors.Join(captureErrors...)
 	}
 
-	backup.DestinationResults = m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size)
+	backup.DestinationResults = m.mirrorToRemotes(ctx, deploymentName, backupID, archivePath, backup.Size, backup.Destinations)
 	succeeded := 0
 	for _, result := range backup.DestinationResults {
 		if result.Status == ResultStatusCompleted {

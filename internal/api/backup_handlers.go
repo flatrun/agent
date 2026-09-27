@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -265,6 +266,10 @@ func (s *Server) updateDeploymentBackupConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := s.validateBackupDestinations(spec.Destinations); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	if deployment.Metadata == nil {
 		deployment.Metadata = &models.ServiceMetadata{}
@@ -277,6 +282,26 @@ func (s *Server) updateDeploymentBackupConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"backup_config": spec})
+}
+
+func (s *Server) validateBackupDestinations(names []string) error {
+	enabled := make(map[string]bool)
+	for _, destination := range s.config.Backup.Destinations {
+		if destination.IsEnabled() {
+			enabled[destination.Name] = true
+		}
+	}
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if name == "" || !enabled[name] {
+			return fmt.Errorf("backup destination %q is unavailable", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("backup destination %q is selected more than once", name)
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 func (s *Server) restoreBackup(c *gin.Context) {
