@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.4.0-beta.9] - 2026-09-28
+
+Ninth beta of the Albacore release, adding managed migration and recovery workflows.
+
+### Added
+- Per-deployment backup destinations with verified remote copies
+- Backup retention, exclusions, storage alerts, cleanup previews, and isolated recovery
+- Migration inventory, transfer progress, DNS checks, cutover state, and retirement readiness
+- Database attachment for existing deployments
+
+### Fixed
+- Domain changes persist through the API without server file edits
+- Certificate challenges remain available over HTTPS
+- Isolated recovery cannot reuse production storage, project identity, or access grants
+- Scheduled cleanup follows the saved deployment retention policy
+- Database attachment preserves imported environment values
+
 ## [0.4.0-beta.8] - 2026-09-26
 
 Eighth beta of the Albacore release, adding visitor access controls and more reliable migrations.
