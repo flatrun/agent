@@ -230,4 +230,29 @@ func TestApplicationAccessLoginRejectsUnsafeReturnPath(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `name="return" value="/"`) {
 		t.Fatalf("unsafe return path was accepted: %d %s", response.Code, response.Body.String())
 	}
+	for _, expected := range []string{"FlatRun", "Protected by FlatRun", "brand-mark", "Verify your email"} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("access page is missing %q", expected)
+		}
+	}
+}
+
+func TestApplicationAccessConfirmationUsesFlatRunBranding(t *testing.T) {
+	server := &Server{}
+	router := gin.New()
+	router.POST("/api/access/request", server.requestApplicationAccess)
+	request := httptest.NewRequest(http.MethodPost, "/api/access/request", strings.NewReader(url.Values{
+		"email": {"person@example.com"}, "return": {"/"},
+	}.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("confirmation response = %d", response.Code)
+	}
+	for _, expected := range []string{"FlatRun", "Protected by FlatRun", "brand-mark", "Check your email"} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("confirmation page is missing %q", expected)
+		}
+	}
 }
