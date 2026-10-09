@@ -185,23 +185,23 @@ domains:
 	}
 }
 
-func TestWordPressAccessRequiresAllowlistedEmailBeforeSending(t *testing.T) {
+func TestApplicationAccessRespectsConfiguredPolicyBeforeSending(t *testing.T) {
 	for _, test := range []struct {
 		name, mode, email string
 		allowed           []string
 		status, emails    int
 	}{
 		{"unknown address", "allowlist", "unknown@example.com", []string{"person@example.com"}, http.StatusForbidden, 0},
-		{"legacy open policy", "any_verified", "unknown@example.com", nil, http.StatusForbidden, 0},
-		{"legacy policy with allowlist", "any_verified", "unknown@example.com", []string{"person@example.com"}, http.StatusForbidden, 0},
+		{"open policy", "any_verified", "unknown@example.com", nil, http.StatusAccepted, 1},
+		{"open policy with allowlist", "any_verified", "unknown@example.com", []string{"person@example.com"}, http.StatusAccepted, 1},
 		{"recognized address", "allowlist", "person@example.com", []string{"person@example.com"}, http.StatusAccepted, 1},
 		{"recognized domain", "allowlist", "person@example.com", []string{"@example.com"}, http.StatusAccepted, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base := t.TempDir()
-			createTestDeployment(t, base, "wordpress-site", &models.ServiceMetadata{
-				Name: "wordpress-site", Type: "wordpress", Domains: []models.DomainConfig{{
-					ID: "login", Service: "wordpress", ContainerPort: 80, Domain: "wordpress.example.com", PathPrefix: "/wp-login.php",
+			createTestDeployment(t, base, "protected-site", &models.ServiceMetadata{
+				Name: "protected-site", Type: "web", Domains: []models.DomainConfig{{
+					ID: "login", Service: "web", ContainerPort: 80, Domain: "protected.example.com", PathPrefix: "/private",
 					Access: &models.DomainAccessConfig{Enabled: true, Mode: test.mode, AllowedEmails: test.allowed, EmailTargetID: "smtp"},
 				}},
 			})
@@ -215,57 +215,33 @@ func TestWordPressAccessRequiresAllowlistedEmailBeforeSending(t *testing.T) {
 			router.POST("/api/access/request", server.requestApplicationAccess)
 			router.GET("/api/access/check", server.checkApplicationAccess)
 			request := httptest.NewRequest(http.MethodPost, "/api/access/request", strings.NewReader(url.Values{
-				"email": {test.email}, "return": {"/wp-login.php"},
+				"email": {test.email}, "return": {"/private"},
 			}.Encode()))
-			request.Host = "wordpress.example.com"
+			request.Host = "protected.example.com"
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
 			if response.Code != test.status || sender.calls != test.emails {
 				t.Fatalf("status = %d, email attempts = %d", response.Code, sender.calls)
 			}
-			session, err := service.Session("unknown@other.example", "wordpress.example.com", 24)
+			session, err := service.Session("unknown@other.example", "protected.example.com", 24)
 			if err != nil {
 				t.Fatal(err)
 			}
 			request = httptest.NewRequest(http.MethodGet, "/api/access/check", nil)
-			request.Header.Set("X-Original-Host", "wordpress.example.com")
-			request.Header.Set("X-Original-URI", "/wp-login.php")
+			request.Header.Set("X-Original-Host", "protected.example.com")
+			request.Header.Set("X-Original-URI", "/private")
 			request.AddCookie(&http.Cookie{Name: access.CookieName, Value: session})
 			response = httptest.NewRecorder()
 			router.ServeHTTP(response, request)
-			if response.Code != http.StatusUnauthorized {
-				t.Fatalf("unlisted existing session response = %d", response.Code)
+			expected := http.StatusUnauthorized
+			if test.mode == "any_verified" {
+				expected = http.StatusNoContent
+			}
+			if response.Code != expected {
+				t.Fatalf("existing session response = %d, expected %d", response.Code, expected)
 			}
 		})
-	}
-}
-
-func TestWordPressDomainAccessRejectsOpenPolicyThroughHTTP(t *testing.T) {
-	base := t.TempDir()
-	createTestDeployment(t, base, "wordpress-site", &models.ServiceMetadata{
-		Name: "wordpress-site", Type: "wordpress", Domains: []models.DomainConfig{{
-			ID: "login", Service: "web", ContainerPort: 80, Domain: "wordpress.example.com", PathPrefix: "/wp-login.php",
-		}},
-	})
-	server := &Server{manager: docker.NewManager(base)}
-	router := gin.New()
-	router.POST("/deployments/:name/domains", server.addDomain)
-	router.PUT("/deployments/:name/domains/:domainId", server.updateDomain)
-	router.PUT("/deployments/:name/metadata", server.updateDeploymentMetadata)
-	domain := `{"id":"login","service":"web","domain":"wordpress.example.com","path_prefix":"/wp-login.php","access":{"enabled":true,"mode":"any_verified","email_target_id":"smtp"}}`
-	for _, requestCase := range []struct{ method, path, body string }{
-		{http.MethodPost, "/deployments/wordpress-site/domains", domain},
-		{http.MethodPut, "/deployments/wordpress-site/domains/login", domain},
-		{http.MethodPut, "/deployments/wordpress-site/metadata", `{"domains":[` + domain + `]}`},
-	} {
-		request := httptest.NewRequest(requestCase.method, requestCase.path, strings.NewReader(requestCase.body))
-		request.Header.Set("Content-Type", "application/json")
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, request)
-		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "WordPress access requires an email allowlist") {
-			t.Fatalf("%s: status = %d, body = %s", requestCase.path, response.Code, response.Body.String())
-		}
 	}
 }
 

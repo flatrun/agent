@@ -2184,15 +2184,16 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 			seenServices[healthCheck.Service] = struct{}{}
 		}
 	}
-	metadata := mergeMetadata(deployment.Metadata, &incoming, sentFields)
 	if _, sentDomains := sentFields["domains"]; sentDomains {
 		for i := range incoming.Domains {
-			if err := s.validateDomainAccess(incoming.Domains[i].Access, metadata); err != nil {
+			if err := s.validateDomainAccess(incoming.Domains[i].Access); err != nil {
 				respondAPIError(c, err)
 				return
 			}
 		}
 	}
+
+	metadata := mergeMetadata(deployment.Metadata, &incoming, sentFields)
 
 	if err := s.manager.SaveMetadata(name, metadata); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

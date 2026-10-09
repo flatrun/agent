@@ -110,7 +110,7 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 // mutateDomainAdd validates the new domain and appends it to the
 // deployment metadata in memory only; persisting is the caller's job.
 func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.DomainConfig) error {
-	if err := s.validateDomainAccess(domain.Access, deployment.Metadata); err != nil {
+	if err := s.validateDomainAccess(domain.Access); err != nil {
 		return err
 	}
 	if domain.Domain == "" {
@@ -163,7 +163,7 @@ func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.D
 // mutateDomainUpdate replaces the domain with the given ID in memory
 // only; persisting is the caller's job.
 func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID string, updated *models.DomainConfig) error {
-	if err := s.validateDomainAccess(updated.Access, deployment.Metadata); err != nil {
+	if err := s.validateDomainAccess(updated.Access); err != nil {
 		return err
 	}
 	if updated.Domain == "" {
@@ -199,12 +199,9 @@ func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID stri
 	return apiErrf(http.StatusNotFound, "Domain not found")
 }
 
-func (s *Server) validateDomainAccess(policy *models.DomainAccessConfig, metadata *models.ServiceMetadata) error {
+func (s *Server) validateDomainAccess(policy *models.DomainAccessConfig) error {
 	if policy == nil || !policy.Enabled {
 		return nil
-	}
-	if metadata != nil && strings.EqualFold(metadata.Type, "wordpress") && policy.Mode != "allowlist" {
-		return apiErrf(http.StatusBadRequest, "WordPress access requires an email allowlist")
 	}
 	if policy.Mode != "allowlist" && policy.Mode != "any_verified" {
 		return apiErrf(http.StatusBadRequest, "Access mode must be allowlist or any_verified")

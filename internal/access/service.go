@@ -89,9 +89,6 @@ func Resolve(deployments []models.Deployment, host, requestPath string) (*models
 				continue
 			}
 			copy := *domain.Access
-			if strings.EqualFold(deployments[i].Metadata.Type, "wordpress") {
-				copy.Mode = "allowlist"
-			}
 			best = &copy
 			bestLength = len(prefix)
 		}

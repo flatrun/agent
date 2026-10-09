@@ -7,7 +7,6 @@
 ### Fixed
 - Deployment access pages use the existing FlatRun logo and product control styles
 - Unrecognized email addresses receive an access denial before any sign-in email is sent
-- Protected WordPress paths require the FlatRun email allowlist, including existing policies
 - Opening a sign-in link waits for confirmation before consuming it
 
 ## [0.4.0-beta.10] - 2026-10-09
