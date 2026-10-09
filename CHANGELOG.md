@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.4.0-beta.10] - 2026-10-09
+
+### Fixed
+- Deployment sign-in and email confirmation pages show FlatRun branding
+- Deployment access links go to the requested email address
+
 ## [0.4.0-beta.9] - 2026-09-28
 
 Ninth beta of the Albacore release, adding managed migration and recovery workflows.

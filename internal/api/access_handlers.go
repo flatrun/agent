@@ -18,6 +18,24 @@ type accessEmailSender interface {
 	SendEmailTo(string, string, notify.Notification) error
 }
 
+const accessPageStyles = `<style>
+:root{color-scheme:light;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8fafc;color:#1e293b}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at top,#eff6ff 0,#f8fafc 42%,#f1f5f9 100%)}
+.shell{width:min(420px,100%)}.brand{display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:24px;color:#0f172a;font-size:22px;font-weight:750;letter-spacing:-.03em}
+.brand-mark{width:38px;height:38px;display:grid;align-content:center;gap:4px;padding:8px;border-radius:10px;background:#2563eb;box-shadow:0 8px 20px rgba(37,99,235,.24);transform:rotate(-5deg)}
+.brand-mark span{display:block;height:5px;border:2px solid #fff;border-radius:2px}.card{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:32px;box-shadow:0 18px 45px rgba(15,23,42,.09)}
+h1{font-size:25px;line-height:1.25;letter-spacing:-.025em;margin:0 0 10px;color:#0f172a}p{color:#64748b;line-height:1.6;margin:0 0 26px}label{display:block;font-size:14px;font-weight:650;margin-bottom:8px;color:#334155}
+input{width:100%;padding:12px 13px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#0f172a;font:inherit;outline:0;transition:border-color .15s,box-shadow .15s}input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.16)}
+button{width:100%;margin-top:16px;padding:12px 16px;border:0;border-radius:9px;background:#2563eb;color:#fff;font:inherit;font-weight:650;cursor:pointer;transition:background .15s,transform .15s}button:hover{background:#1d4ed8}button:active{transform:translateY(1px)}
+.note{margin:22px 0 0;text-align:center;font-size:12px;color:#94a3b8}@media(max-width:480px){body{padding:16px}.card{padding:25px 22px}}
+</style>`
+
+const accessBrand = `<div class="brand" aria-label="FlatRun"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span>FlatRun</span></div>`
+
+func accessPage(title, content string) string {
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>` + title + ` | FlatRun</title>` + accessPageStyles + `</head><body><main class="shell">` + accessBrand + `<section class="card">` + content + `</section><p class="note">Protected by FlatRun</p></main></body></html>`
+}
+
 func (s *Server) checkApplicationAccess(c *gin.Context) {
 	policy, ok := s.applicationAccessPolicy(c.GetHeader("X-Original-Host"), c.GetHeader("X-Original-URI"))
 	if !ok {
@@ -35,10 +53,8 @@ func (s *Server) checkApplicationAccess(c *gin.Context) {
 func (s *Server) applicationAccessLogin(c *gin.Context) {
 	returnPath := access.SafeReturn(c.Query("return"))
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in</title><style>body{font-family:system-ui,sans-serif;background:#f6f7f9;color:#17202a;margin:0;display:grid;place-items:center;min-height:100vh}.card{background:#fff;border:1px solid #dfe3e8;border-radius:16px;padding:32px;width:min(380px,calc(100%% - 48px));box-shadow:0 12px 32px #17202a14}h1{font-size:24px;margin:0 0 8px}p{color:#59636e;margin:0 0 24px}label{display:block;font-weight:600;margin-bottom:8px}input{box-sizing:border-box;width:100%%;padding:12px;border:1px solid #b8c0c8;border-radius:8px;font:inherit}button{width:100%%;margin-top:16px;padding:12px;border:0;border-radius:8px;background:#2563eb;color:white;font:inherit;font-weight:600}</style></head>
-<body><main class="card"><h1>Verify your email</h1><p>We will email you a secure sign-in link.</p><form method="post" action="/_flatrun/access/request"><input type="hidden" name="return" value="%s"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required><button type="submit">Email me a sign-in link</button></form></main></body></html>`, html.EscapeString(returnPath))
+	content := fmt.Sprintf(`<h1>Verify your email</h1><p>Enter your email address to receive a secure sign-in link.</p><form method="post" action="/_flatrun/access/request"><input type="hidden" name="return" value="%s"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required autofocus><button type="submit">Email me a sign-in link</button></form>`, html.EscapeString(returnPath))
+	c.String(http.StatusOK, accessPage("Sign in", content))
 }
 
 func (s *Server) requestApplicationAccess(c *gin.Context) {
@@ -62,7 +78,7 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 		}
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusAccepted, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Check your email</title></head><body><main><h1>Check your email</h1><p>If this address is allowed, a sign-in link is on its way.</p></main></body></html>`)
+	c.String(http.StatusAccepted, accessPage("Check your email", `<h1>Check your email</h1><p>If this address is allowed, a secure sign-in link is on its way.</p>`))
 }
 
 func (s *Server) getAccessEmailTargets(c *gin.Context) {

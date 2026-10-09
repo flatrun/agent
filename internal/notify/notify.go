@@ -339,6 +339,11 @@ func (s *Service) SendEmailTo(targetID, recipient string, notification Notificat
 			return fmt.Errorf("notification target is not SMTP")
 		}
 		query := parsed.Query()
+		for key := range query {
+			if strings.EqualFold(key, "to") || strings.EqualFold(key, "toaddresses") {
+				query.Del(key)
+			}
+		}
 		query.Set("to", recipient)
 		parsed.RawQuery = query.Encode()
 		return s.deliver(parsed.String(), notification)
