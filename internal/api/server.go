@@ -468,6 +468,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/access/login", s.applicationAccessLogin)
 		api.POST("/access/request", s.requestApplicationAccess)
 		api.GET("/access/verify", s.verifyApplicationAccess)
+		api.POST("/access/verify", s.confirmApplicationAccess)
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
