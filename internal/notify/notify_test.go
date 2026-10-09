@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nicholas-fedor/shoutrrr/pkg/router"
 	shoutrrrsmtp "github.com/nicholas-fedor/shoutrrr/pkg/services/email/smtp"
 )
 
@@ -42,6 +43,34 @@ func TestSendEmailToOverridesTheConfiguredRecipient(t *testing.T) {
 	}
 	if !strings.Contains(delivered, "to=visitor%40example.com") {
 		t.Fatalf("recipient was not replaced in %q", delivered)
+	}
+}
+
+func TestSendEmailToOverridesSMTPGeneratedRecipients(t *testing.T) {
+	config := &shoutrrrsmtp.Config{
+		Host: "mail.example", Port: 25, FromAddress: "ops@example.com",
+		ToAddresses: []string{"ops@example.com"},
+	}
+	service := NewService(t.TempDir())
+	if err := service.Save(Config{Targets: []Target{{
+		ID: "access", Name: "Access", URL: config.GetURL().String(), Enabled: true,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	service.send = func(rawURL, _ string) error {
+		serviceRouter := &router.ServiceRouter{}
+		delivery, err := serviceRouter.Locate(rawURL)
+		if err != nil {
+			return err
+		}
+		recipients := delivery.(*shoutrrrsmtp.Service).Config.ToAddresses
+		if len(recipients) != 1 || recipients[0] != "visitor@example.com" {
+			t.Fatalf("SMTP recipients = %v", recipients)
+		}
+		return nil
+	}
+	if err := service.SendEmailTo("access", "visitor@example.com", Notification{Title: "Sign in"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
