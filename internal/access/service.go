@@ -89,6 +89,9 @@ func Resolve(deployments []models.Deployment, host, requestPath string) (*models
 				continue
 			}
 			copy := *domain.Access
+			if strings.EqualFold(deployments[i].Metadata.Type, "wordpress") {
+				copy.Mode = "allowlist"
+			}
 			best = &copy
 			bestLength = len(prefix)
 		}
@@ -100,13 +103,30 @@ func (s *Service) MagicLink(email, host, returnPath string) (string, error) {
 	return s.sign(tokenPayload{Kind: "verify", Email: normalizeEmail(email), Host: Hostname(host), Return: SafeReturn(returnPath), Expiry: s.now().Add(15 * time.Minute).Unix()})
 }
 
+func (s *Service) InspectMagicLink(value string) (string, string, string, error) {
+	payload, err := s.verify(value, "verify")
+	if err != nil {
+		return "", "", "", err
+	}
+	if _, err := os.Stat(s.usedLinkPath(value, payload.Expiry)); err == nil {
+		return "", "", "", fmt.Errorf("token is invalid or expired")
+	} else if !os.IsNotExist(err) {
+		return "", "", "", fmt.Errorf("check used access link: %w", err)
+	}
+	return payload.Email, payload.Host, payload.Return, nil
+}
+
+func (s *Service) usedLinkPath(value string, expiry int64) string {
+	digest := sha256.Sum256([]byte(value))
+	return filepath.Join(s.usedLinksDir, fmt.Sprintf("%d-%x", expiry, digest))
+}
+
 func (s *Service) VerifyMagicLink(value string) (string, string, string, error) {
 	payload, err := s.verify(value, "verify")
 	if err != nil {
 		return "", "", "", err
 	}
-	digest := sha256.Sum256([]byte(value))
-	path := filepath.Join(s.usedLinksDir, fmt.Sprintf("%d-%x", payload.Expiry, digest))
+	path := s.usedLinkPath(value, payload.Expiry)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if os.IsExist(err) {
 		return "", "", "", fmt.Errorf("token is invalid or expired")

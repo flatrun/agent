@@ -1,6 +1,7 @@
 package api
 
 import (
+	_ "embed"
 	"fmt"
 	"html"
 	"log"
@@ -19,21 +20,21 @@ type accessEmailSender interface {
 }
 
 const accessPageStyles = `<style>
-:root{color-scheme:light;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8fafc;color:#1e293b}
+:root{--radius-sm:3px;--radius-md:4px;--accent:#3b82f6;--accent-hover:#2563eb;--accent-contrast:#fff;color-scheme:light;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8fafc;color:#1e293b}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at top,#eff6ff 0,#f8fafc 42%,#f1f5f9 100%)}
-.shell{width:min(420px,100%)}.brand{display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:24px;color:#0f172a;font-size:22px;font-weight:750;letter-spacing:-.03em}
-.brand-mark{width:38px;height:38px;display:grid;align-content:center;gap:4px;padding:8px;border-radius:10px;background:#2563eb;box-shadow:0 8px 20px rgba(37,99,235,.24);transform:rotate(-5deg)}
-.brand-mark span{display:block;height:5px;border:2px solid #fff;border-radius:2px}.card{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:32px;box-shadow:0 18px 45px rgba(15,23,42,.09)}
+.shell{width:min(420px,100%)}.brand{display:flex;justify-content:center;margin-bottom:24px}.brand a{display:block;border-radius:var(--radius-sm)}.brand a:focus-visible{outline:2px solid var(--accent);outline-offset:6px}.brand svg{display:block;width:auto;height:52px;max-width:100%}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:var(--radius-md);padding:32px;box-shadow:0 18px 45px rgba(15,23,42,.09)}
 h1{font-size:25px;line-height:1.25;letter-spacing:-.025em;margin:0 0 10px;color:#0f172a}p{color:#64748b;line-height:1.6;margin:0 0 26px}label{display:block;font-size:14px;font-weight:650;margin-bottom:8px;color:#334155}
-input{width:100%;padding:12px 13px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#0f172a;font:inherit;outline:0;transition:border-color .15s,box-shadow .15s}input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.16)}
-button{width:100%;margin-top:16px;padding:12px 16px;border:0;border-radius:9px;background:#2563eb;color:#fff;font:inherit;font-weight:650;cursor:pointer;transition:background .15s,transform .15s}button:hover{background:#1d4ed8}button:active{transform:translateY(1px)}
+input{width:100%;padding:12px 13px;border:1px solid #cbd5e1;border-radius:var(--radius-sm);background:#fff;color:#0f172a;font:inherit;outline:0;transition:border-color .15s,box-shadow .15s}input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.16)}
+button{width:100%;margin-top:16px;padding:8px 16px;border:0;border-radius:var(--radius-sm);background:var(--accent);color:var(--accent-contrast);font:inherit;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s,transform .15s}button:hover{background:var(--accent-hover)}button:active{transform:translateY(1px)}
 .note{margin:22px 0 0;text-align:center;font-size:12px;color:#94a3b8}@media(max-width:480px){body{padding:16px}.card{padding:25px 22px}}
 </style>`
 
-const accessBrand = `<div class="brand" aria-label="FlatRun"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span>FlatRun</span></div>`
+//go:embed assets/flatrun-logo.svg
+var accessLogo string
 
 func accessPage(title, content string) string {
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>` + title + ` | FlatRun</title>` + accessPageStyles + `</head><body><main class="shell">` + accessBrand + `<section class="card">` + content + `</section><p class="note">Protected by FlatRun</p></main></body></html>`
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>` + title + ` | FlatRun</title>` + accessPageStyles + `</head><body><main class="shell"><div class="brand"><a href="https://flatrun.dev" aria-label="FlatRun website">` + accessLogo + `</a></div><section class="card">` + content + `</section><p class="note">Protected by FlatRun</p></main></body></html>`
 }
 
 func (s *Server) checkApplicationAccess(c *gin.Context) {
@@ -61,7 +62,12 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 	email := strings.TrimSpace(c.PostForm("email"))
 	returnPath := access.SafeReturn(c.PostForm("return"))
 	policy, ok := s.applicationAccessPolicy(c.Request.Host, returnPath)
-	if ok && s.access != nil && s.accessEmailSender != nil && access.Allows(policy, email) && s.access.AllowEmailRequest(c.Request.Host, email) {
+	if !ok || !access.Allows(policy, email) {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusForbidden, accessPage("Access denied", `<h1>Access denied</h1><p>This email address is not allowed to access this application.</p>`))
+		return
+	}
+	if s.access != nil && s.accessEmailSender != nil && s.access.AllowEmailRequest(c.Request.Host, email) {
 		token, err := s.access.MagicLink(email, c.Request.Host, returnPath)
 		if err == nil {
 			scheme := c.GetHeader("X-Forwarded-Proto")
@@ -96,17 +102,46 @@ func (s *Server) getAccessEmailTargets(c *gin.Context) {
 }
 
 func (s *Server) verifyApplicationAccess(c *gin.Context) {
+	s.handleApplicationAccessVerification(c, c.Query("token"), false)
+}
+
+type applicationAccessConfirmationRequest struct {
+	Token string `json:"token" form:"token" binding:"required"`
+}
+
+func (s *Server) confirmApplicationAccess(c *gin.Context) {
+	var request applicationAccessConfirmationRequest
+	if err := c.ShouldBind(&request); err != nil {
+		c.String(http.StatusBadRequest, "A sign-in token is required")
+		return
+	}
+	s.handleApplicationAccessVerification(c, request.Token, true)
+}
+
+func (s *Server) handleApplicationAccessVerification(c *gin.Context, token string, confirm bool) {
 	if s.access == nil {
 		c.String(http.StatusServiceUnavailable, "Access service is unavailable")
 		return
 	}
-	email, host, returnPath, err := s.access.VerifyMagicLink(c.Query("token"))
+	c.Header("Cache-Control", "no-store")
+	c.Header("Referrer-Policy", "no-referrer")
+	email, host, returnPath, err := s.access.InspectMagicLink(token)
 	if err != nil {
 		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
 		return
 	}
 	policy, ok := s.applicationAccessPolicy(host, returnPath)
 	if !ok || !access.Allows(policy, email) || access.Hostname(c.Request.Host) != access.Hostname(host) {
+		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
+		return
+	}
+	if !confirm {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		content := fmt.Sprintf(`<h1>Confirm sign-in</h1><p>Continue to the application with your verified email address.</p><form method="post" action="/_flatrun/access/verify"><input type="hidden" name="token" value="%s"><button type="submit">Continue to application</button></form>`, html.EscapeString(token))
+		c.String(http.StatusOK, accessPage("Confirm sign-in", content))
+		return
+	}
+	if _, _, _, err := s.access.VerifyMagicLink(token); err != nil {
 		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
 		return
 	}

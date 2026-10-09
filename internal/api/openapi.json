@@ -3,7 +3,7 @@
   "info": {
     "title": "FlatRun Agent API",
     "description": "Generated from the agent's routes and the types its handlers bind and return.",
-    "version": "0.4.0-beta.10"
+    "version": "0.4.0-beta.11"
   },
   "paths": {
     "/api/access/check": {
@@ -69,6 +69,27 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-access-verify",
+        "tags": [
+          "access"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/api.applicationAccessConfirmationRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Success"
@@ -12216,6 +12237,23 @@
           "channel",
           "force",
           "restart"
+        ]
+      },
+      "api.applicationAccessConfirmationRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "token"
+        ],
+        "x-columns": [
+          "token"
+        ],
+        "required": [
+          "token"
         ]
       },
       "api.assistRequest": {
