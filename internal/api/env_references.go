@@ -78,7 +78,7 @@ func (s *Server) resolveEnvVars(name string, envVars []EnvVar) ([]EnvVar, error)
 		return envVars, nil
 	}
 
-	resolved, err := envref.Resolver{Source: deploymentEnvSource{s}}.Resolve(name, raw)
+	resolved, err := envref.Resolver{Source: scopedEnvSource{deploymentEnvSource{s}, name}}.Resolve(name, raw)
 	if err != nil {
 		return nil, err
 	}

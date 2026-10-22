@@ -83,6 +83,10 @@ func (s *Server) createScheduledTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.Type == scheduler.TaskTypeRotateSecret {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "set a rotation schedule on the secret instead"})
+		return
+	}
 	if !s.requireDeploymentAccess(c, req.DeploymentName, auth.AccessLevelWrite) {
 		return
 	}

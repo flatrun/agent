@@ -23,6 +23,7 @@ type Manager struct {
 	typesFilePath    string
 	credsFilePath    string
 	genericCredsFile string
+	sealer           Sealer
 }
 
 func NewManager(deploymentsPath string) *Manager {

@@ -14,6 +14,7 @@ type TaskExecutor interface {
 	ExecuteBackup(ctx context.Context, deploymentName string, config *BackupTaskConfig) (string, error)
 	ExecuteCommand(ctx context.Context, deploymentName string, config *CommandTaskConfig) (string, error)
 	ExecuteAgent(ctx context.Context, config *AgentTaskConfig) (string, error)
+	ExecuteRotateSecret(ctx context.Context, config *RotateSecretTaskConfig) (string, error)
 }
 
 type Manager struct {
@@ -142,6 +143,12 @@ func (m *Manager) executeTask(task ScheduledTask) {
 		} else {
 			execErr = fmt.Errorf("agent config is nil")
 		}
+	case TaskTypeRotateSecret:
+		if task.Config.RotateSecretConfig != nil {
+			output, execErr = m.executor.ExecuteRotateSecret(ctx, task.Config.RotateSecretConfig)
+		} else {
+			execErr = fmt.Errorf("rotate secret config is nil")
+		}
 	default:
 		execErr = fmt.Errorf("unknown task type: %s", task.Type)
 	}
@@ -188,6 +195,9 @@ func (m *Manager) ValidateCronExpr(cronExpr string) error {
 }
 
 func (m *Manager) CreateTask(req *CreateTaskRequest) (*ScheduledTask, error) {
+	if !req.Type.Valid() {
+		return nil, fmt.Errorf("unknown task type: %s", req.Type)
+	}
 	nextRun, err := m.calculateNextRun(req.CronExpr)
 	if err != nil {
 		return nil, err
@@ -297,6 +307,59 @@ func (m *Manager) SyncAgentTask(agentName, cronExpr, deployment string) error {
 // loses its schedule or is deleted.
 func (m *Manager) RemoveAgentTask(agentName string) error {
 	existing, err := m.findAgentTask(agentName)
+	if err != nil || existing == nil {
+		return err
+	}
+	return m.db.DeleteTask(existing.ID)
+}
+
+func (m *Manager) findRotationTask(scope, name string) (*ScheduledTask, error) {
+	tasks, err := m.db.GetAllTasks()
+	if err != nil {
+		return nil, err
+	}
+	for i := range tasks {
+		t := tasks[i]
+		cfg := t.Config.RotateSecretConfig
+		if t.Type == TaskTypeRotateSecret && cfg != nil && cfg.Scope == scope && cfg.Name == name {
+			return &t, nil
+		}
+	}
+	return nil, nil
+}
+
+// SyncRotationTask makes the scheduler rotate a secret on cronExpr, creating
+// or updating the backing task.
+func (m *Manager) SyncRotationTask(scope, name, cronExpr, deployment string) error {
+	if err := m.ValidateCronExpr(cronExpr); err != nil {
+		return err
+	}
+	existing, err := m.findRotationTask(scope, name)
+	if err != nil {
+		return err
+	}
+	enabled := true
+	if existing != nil {
+		if existing.CronExpr == cronExpr && existing.Enabled {
+			return nil
+		}
+		_, err := m.UpdateTask(existing.ID, &UpdateTaskRequest{CronExpr: &cronExpr, Enabled: &enabled})
+		return err
+	}
+	_, err = m.CreateTask(&CreateTaskRequest{
+		Name:           "rotate:" + scope + "/" + name,
+		Type:           TaskTypeRotateSecret,
+		DeploymentName: deployment,
+		CronExpr:       cronExpr,
+		Enabled:        enabled,
+		Config:         TaskConfig{RotateSecretConfig: &RotateSecretTaskConfig{Scope: scope, Name: name}},
+	})
+	return err
+}
+
+// RemoveRotationTask drops a secret's rotation task, if any.
+func (m *Manager) RemoveRotationTask(scope, name string) error {
+	existing, err := m.findRotationTask(scope, name)
 	if err != nil || existing == nil {
 		return err
 	}

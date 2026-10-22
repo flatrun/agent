@@ -15,6 +15,20 @@ type Executor struct {
 	// agentRunner runs a scheduled agent headless. It is injected by the API
 	// layer, which owns the AI runtime, so this package stays free of it.
 	agentRunner func(ctx context.Context, agentName string) (string, error)
+	// secretRotator rotates a stored secret. It is injected by the API layer,
+	// which owns the secret store and restarts deployments that use it.
+	secretRotator func(ctx context.Context, scope, name string) (string, error)
+}
+
+func (e *Executor) SetSecretRotator(fn func(ctx context.Context, scope, name string) (string, error)) {
+	e.secretRotator = fn
+}
+
+func (e *Executor) ExecuteRotateSecret(ctx context.Context, config *RotateSecretTaskConfig) (string, error) {
+	if e.secretRotator == nil {
+		return "", fmt.Errorf("secret rotation not available")
+	}
+	return e.secretRotator(ctx, config.Scope, config.Name)
 }
 
 func NewExecutor(backupManager *backup.Manager, dockerManager *docker.Manager) *Executor {

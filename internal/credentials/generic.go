@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/flatrun/agent/internal/secrets"
 	"github.com/flatrun/agent/pkg/models"
 	"gopkg.in/yaml.v3"
 )
@@ -14,9 +15,36 @@ type genericCredentialsFile struct {
 }
 
 var knownCredentialKinds = map[models.CredentialKind]bool{
-	models.CredentialKindS3:      true,
-	models.CredentialKindGit:     true,
-	models.CredentialKindWebhook: true,
+	models.CredentialKindS3:          true,
+	models.CredentialKindGit:         true,
+	models.CredentialKindWebhook:     true,
+	models.CredentialKindInfisical:   true,
+	models.CredentialKindVault:       true,
+	models.CredentialKindDoppler:     true,
+	models.CredentialKindOnePassword: true,
+}
+
+// Sealer encrypts secret values before they are written to disk.
+type Sealer interface {
+	Seal(plain string) (string, error)
+	Open(sealed string) (string, error)
+}
+
+// SetSealer makes the store seal secret values on disk. Stored credentials are
+// read again and written back, so values saved before encryption existed are
+// sealed now.
+func (m *Manager) SetSealer(sealer Sealer) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sealer = sealer
+	m.genericCreds = make(map[string]*models.Credential)
+	if err := m.loadGenericCredentials(); err != nil {
+		return err
+	}
+	if len(m.genericCreds) == 0 {
+		return nil
+	}
+	return m.saveGenericCredentials()
 }
 
 func (m *Manager) loadGenericCredentials() error {
@@ -37,6 +65,19 @@ func (m *Manager) loadGenericCredentials() error {
 		if cred.Data == nil {
 			cred.Data = map[string]string{}
 		}
+		for k, v := range cred.Data {
+			if !secrets.IsSealed(v) {
+				continue
+			}
+			if m.sealer == nil {
+				return fmt.Errorf("credential %s holds sealed values but no key is loaded", cred.ID)
+			}
+			plain, err := m.sealer.Open(v)
+			if err != nil {
+				return fmt.Errorf("credential %s: %w", cred.ID, err)
+			}
+			cred.Data[k] = plain
+		}
 		m.genericCreds[cred.ID] = cred
 	}
 
@@ -50,7 +91,21 @@ func (m *Manager) saveGenericCredentials() error {
 
 	creds := make([]*models.Credential, 0, len(m.genericCreds))
 	for _, cred := range m.genericCreds {
-		creds = append(creds, cred)
+		stored := *cred
+		if m.sealer != nil {
+			stored.Data = copyData(cred.Data)
+			for k, v := range stored.Data {
+				if v == "" || !models.IsSecretKey(cred.Kind, k) {
+					continue
+				}
+				sealed, err := m.sealer.Seal(v)
+				if err != nil {
+					return err
+				}
+				stored.Data[k] = sealed
+			}
+		}
+		creds = append(creds, &stored)
 	}
 
 	if len(creds) == 0 {

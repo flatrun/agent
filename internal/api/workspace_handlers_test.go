@@ -12,12 +12,15 @@ import (
 
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/database"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/files"
 	"github.com/flatrun/agent/internal/networks"
 	"github.com/flatrun/agent/internal/plan"
 	"github.com/flatrun/agent/internal/proxy"
+	"github.com/flatrun/agent/internal/scheduler"
+	"github.com/flatrun/agent/internal/secrets"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
@@ -125,7 +128,25 @@ func setupWorkspaceTestServer(t *testing.T, existing ...string) (*Server, worksp
 		planStore:         plan.NewStore(tmpDir),
 		aiSessions:        ai.NewSessionStore(tmpDir),
 		filesManager:      files.NewManager(tmpDir),
+		jobs:              newJobRegistry(),
 	}
+	keyring, secretStore, err := openSecretStore(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.credentialsManager = credentials.NewManager(tmpDir)
+	if err := s.credentialsManager.SetSealer(keyring); err != nil {
+		t.Fatal(err)
+	}
+	s.secretStore = secretStore
+	s.secretRegistry = secrets.DefaultRegistry(nil)
+	executor := scheduler.NewExecutor(nil, s.manager)
+	executor.SetSecretRotator(s.runScheduledRotation)
+	schedulerManager, err := scheduler.NewManager(tmpDir, executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.schedulerManager = schedulerManager
 	s.setupRoutes()
 	ts := httptest.NewServer(s.router)
 	t.Cleanup(ts.Close)

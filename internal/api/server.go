@@ -53,6 +53,7 @@ import (
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/internal/scheduler"
+	"github.com/flatrun/agent/internal/secrets"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/setup"
 	"github.com/flatrun/agent/internal/sleep"
@@ -110,6 +111,8 @@ type Server struct {
 	backupManager      *backup.Manager
 	schedulerManager   *scheduler.Manager
 	auditManager       *audit.Manager
+	secretStore        *secrets.Store
+	secretRegistry     *secrets.Registry
 	auditMiddleware    *audit.Middleware
 	autoscaleStore     *autoscale.Store
 	powerDNSManager    *dns.PowerDNSManager
@@ -280,6 +283,12 @@ func New(cfg *config.Config, configPath string) *Server {
 	databaseManager := database.NewManager()
 	infraManager := infra.NewManager(cfg)
 	credentialsManager := credentials.NewManager(cfg.DeploymentsPath)
+	secretKeyring, secretStore, secretErr := openSecretStore(cfg.DeploymentsPath)
+	if secretErr != nil {
+		log.Printf("Warning: secret store unavailable, saved credentials stay unencrypted: %v", secretErr)
+	} else if err := credentialsManager.SetSealer(secretKeyring); err != nil {
+		log.Printf("Warning: failed to encrypt saved credentials: %v", err)
+	}
 
 	var securityManager *security.Manager
 	if cfg.Security.Enabled {
@@ -384,6 +393,8 @@ func New(cfg *config.Config, configPath string) *Server {
 		pluginToken:        pluginToken,
 		authMiddleware:     authMiddleware,
 		authManager:        authManager,
+		secretStore:        secretStore,
+		secretRegistry:     secrets.DefaultRegistry(nil),
 		proxyOrchestrator:  proxyOrchestrator,
 		filesManager:       filesManager,
 		systemFilesManager: systemFilesManager,
@@ -460,6 +471,7 @@ func New(cfg *config.Config, configPath string) *Server {
 
 		executor := scheduler.NewExecutor(backupManager, manager)
 		executor.SetAgentRunner(s.runAgentHeadless)
+		executor.SetSecretRotator(s.runScheduledRotation)
 		schedulerManager, err := scheduler.NewManager(cfg.DeploymentsPath, executor)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize scheduler manager: %v", err)
@@ -521,6 +533,7 @@ func (s *Server) setupRoutes() {
 		protected.Use(s.authMiddleware.RequireAuth())
 		protected.Use(restrictClusterServiceResources)
 		s.registerWorkspaceRoutes(protected)
+		s.registerSecretRoutes(protected)
 		if s.auditMiddleware != nil {
 			protected.Use(s.auditMiddleware.Capture())
 		}

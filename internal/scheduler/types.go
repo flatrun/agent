@@ -10,7 +10,18 @@ const (
 	TaskTypeBackup  TaskType = "backup"
 	TaskTypeCommand TaskType = "command"
 	TaskTypeAgent   TaskType = "agent"
+	// TaskTypeRotateSecret regenerates a stored secret. These tasks are owned
+	// by the secret they rotate and are written through the secrets API.
+	TaskTypeRotateSecret TaskType = "rotate_secret"
 )
+
+func (t TaskType) Valid() bool {
+	switch t {
+	case TaskTypeBackup, TaskTypeCommand, TaskTypeAgent, TaskTypeRotateSecret:
+		return true
+	}
+	return false
+}
 
 type TaskStatus string
 
@@ -42,6 +53,13 @@ type TaskConfig struct {
 	CommandConfig *CommandTaskConfig `json:"command_config,omitempty"`
 	// For agent tasks
 	AgentConfig *AgentTaskConfig `json:"agent_config,omitempty"`
+	// For secret rotation tasks
+	RotateSecretConfig *RotateSecretTaskConfig `json:"rotate_secret_config,omitempty"`
+}
+
+type RotateSecretTaskConfig struct {
+	Scope string `json:"scope"`
+	Name  string `json:"name"`
 }
 
 type AgentTaskConfig struct {

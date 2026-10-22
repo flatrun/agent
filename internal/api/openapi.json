@@ -9235,6 +9235,453 @@
         "x-permission": "scheduler:write"
       }
     },
+    "/api/secret-bindings": {
+      "get": {
+        "operationId": "get-secret-bindings",
+        "tags": [
+          "secret-bindings"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfBinding"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-secret-bindings",
+        "tags": [
+          "secret-bindings"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "connection_id": {
+                    "type": "string"
+                  },
+                  "options": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "x-property-order": [
+                  "connection_id",
+                  "options"
+                ],
+                "x-columns": [
+                  "connection_id"
+                ],
+                "required": [
+                  "connection_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/secret-bindings/{id}": {
+      "delete": {
+        "operationId": "delete-secret-bindings-by-id",
+        "tags": [
+          "secret-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/secret-bindings/{id}/sync": {
+      "post": {
+        "operationId": "post-secret-bindings-by-id-sync",
+        "tags": [
+          "secret-bindings"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/secret-connections": {
+      "get": {
+        "operationId": "get-secret-connections",
+        "tags": [
+          "secret-connections"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfsecretConnectionView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-secret-connections",
+        "tags": [
+          "secret-connections"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "settings": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "x-property-order": [
+                  "name",
+                  "provider",
+                  "settings"
+                ],
+                "x-columns": [
+                  "name",
+                  "provider"
+                ],
+                "required": [
+                  "name",
+                  "provider"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.secretConnectionView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secret-connections/{id}": {
+      "delete": {
+        "operationId": "delete-secret-connections-by-id",
+        "tags": [
+          "secret-connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-secret-connections-by-id",
+        "tags": [
+          "secret-connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "settings": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "x-property-order": [
+                  "name",
+                  "settings"
+                ],
+                "x-columns": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.secretConnectionView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secret-providers": {
+      "get": {
+        "operationId": "get-secret-providers",
+        "tags": [
+          "secret-providers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfsecretProviderView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secrets": {
+      "get": {
+        "operationId": "get-secrets",
+        "tags": [
+          "secrets"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfSecret"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/secrets/{secret}": {
+      "delete": {
+        "operationId": "delete-secrets-by-secret",
+        "tags": [
+          "secrets"
+        ],
+        "parameters": [
+          {
+            "name": "secret",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-secrets-by-secret",
+        "tags": [
+          "secrets"
+        ],
+        "parameters": [
+          {
+            "name": "secret",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.secretValueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/secrets/{secret}/rotate": {
+      "post": {
+        "operationId": "post-secrets-by-secret-rotate",
+        "tags": [
+          "secrets"
+        ],
+        "parameters": [
+          {
+            "name": "secret",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/secrets/{secret}/rotation": {
+      "delete": {
+        "operationId": "delete-secrets-by-secret-rotation",
+        "tags": [
+          "secrets"
+        ],
+        "parameters": [
+          {
+            "name": "secret",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/secrets.Secret"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-secrets-by-secret-rotation",
+        "tags": [
+          "secrets"
+        ],
+        "parameters": [
+          {
+            "name": "secret",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/secrets.Rotation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/secrets.Secret"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/security/blocked-ips": {
       "get": {
         "operationId": "get-security-blocked-ips",
@@ -12966,6 +13413,28 @@
         ],
         "x-render": "list"
       },
+      "api.ListOfBinding": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/secrets.Binding"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
       "api.ListOfCertificate": {
         "type": "object",
         "properties": {
@@ -13061,6 +13530,72 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/workspace.Ref"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfSecret": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/secrets.Secret"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfsecretConnectionView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/api.secretConnectionView"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfsecretProviderView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/api.secretProviderView"
             }
           },
           "total": {
@@ -13794,6 +14329,105 @@
         ],
         "required": [
           "deployment"
+        ]
+      },
+      "api.secretConnectionView": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "name",
+          "provider",
+          "settings",
+          "workspace",
+          "created_at",
+          "updated_at"
+        ],
+        "x-columns": [
+          "id",
+          "name",
+          "provider",
+          "workspace",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "api.secretProviderView": {
+        "type": "object",
+        "properties": {
+          "binding_fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/secrets.Field"
+            }
+          },
+          "connection_fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/secrets.Field"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "type",
+          "label",
+          "connection_fields",
+          "binding_fields"
+        ],
+        "x-columns": [
+          "type",
+          "label"
+        ]
+      },
+      "api.secretValueRequest": {
+        "type": "object",
+        "properties": {
+          "generate": {
+            "$ref": "#/components/schemas/secrets.Generator"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "value",
+          "generate"
+        ],
+        "x-columns": [
+          "value"
         ]
       },
       "api.updateClusterProvidersRequest": {
@@ -16812,6 +17446,25 @@
           "cron_expr"
         ]
       },
+      "scheduler.RotateSecretTaskConfig": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "scope",
+          "name"
+        ],
+        "x-columns": [
+          "scope",
+          "name"
+        ]
+      },
       "scheduler.TaskConfig": {
         "type": "object",
         "properties": {
@@ -16823,12 +17476,16 @@
           },
           "command_config": {
             "$ref": "#/components/schemas/scheduler.CommandTaskConfig"
+          },
+          "rotate_secret_config": {
+            "$ref": "#/components/schemas/scheduler.RotateSecretTaskConfig"
           }
         },
         "x-property-order": [
           "backup_config",
           "command_config",
-          "agent_config"
+          "agent_config",
+          "rotate_secret_config"
         ]
       },
       "scheduler.UpdateTaskRequest": {
@@ -16857,6 +17514,188 @@
           "name",
           "cron_expr",
           "enabled"
+        ]
+      },
+      "secrets.Binding": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "provider": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/secrets.Scope"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "scope",
+          "provider",
+          "connection_id",
+          "options",
+          "created_at"
+        ],
+        "x-columns": [
+          "id",
+          "provider",
+          "connection_id",
+          "created_at"
+        ]
+      },
+      "secrets.Field": {
+        "type": "object",
+        "properties": {
+          "default": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "secret": {
+            "type": "boolean"
+          }
+        },
+        "x-property-order": [
+          "key",
+          "label",
+          "secret",
+          "required",
+          "default"
+        ],
+        "x-columns": [
+          "key",
+          "label",
+          "secret",
+          "required",
+          "default"
+        ]
+      },
+      "secrets.Generator": {
+        "type": "object",
+        "properties": {
+          "charset": {
+            "type": "string"
+          },
+          "length": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "length",
+          "charset"
+        ],
+        "x-columns": [
+          "length",
+          "charset"
+        ]
+      },
+      "secrets.Rotation": {
+        "type": "object",
+        "properties": {
+          "charset": {
+            "type": "string"
+          },
+          "length": {
+            "type": "integer"
+          },
+          "schedule": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "schedule",
+          "length",
+          "charset"
+        ],
+        "x-columns": [
+          "schedule",
+          "length",
+          "charset"
+        ]
+      },
+      "secrets.Scope": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "type",
+          "id"
+        ],
+        "x-columns": [
+          "type",
+          "id"
+        ]
+      },
+      "secrets.Secret": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_rotated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rotation": {
+            "$ref": "#/components/schemas/secrets.Rotation"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/secrets.Scope"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "name",
+          "scope",
+          "version",
+          "rotation",
+          "last_rotated_at",
+          "created_at",
+          "updated_at"
+        ],
+        "x-columns": [
+          "name",
+          "version",
+          "last_rotated_at",
+          "created_at",
+          "updated_at"
         ]
       },
       "security.ProtectedRoute": {

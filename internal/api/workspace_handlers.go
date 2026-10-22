@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/secrets"
 	"github.com/flatrun/agent/internal/workspace"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
@@ -314,6 +315,11 @@ func (s *Server) deleteWorkspace(c *gin.Context) {
 	if err := s.workspaces().Delete(w.Slug); err != nil {
 		workspaceError(c, err)
 		return
+	}
+	if s.secretStore != nil {
+		if err := s.secretStore.DropScope(secrets.Scope{Type: secrets.ScopeWorkspace, ID: w.Slug}); err != nil {
+			log.Printf("Warning: failed to remove secrets of workspace %s: %v", w.Slug, err)
+		}
 	}
 	c.Status(http.StatusNoContent)
 }
