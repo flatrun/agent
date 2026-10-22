@@ -5136,6 +5136,62 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/deployments/{name}/deploys": {
+      "get": {
+        "operationId": "get-deployments-by-name-deploys",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/deployments/{name}/deploys/{id}/rollback": {
+      "post": {
+        "operationId": "post-deployments-by-name-deploys-by-id-rollback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/diagnostics": {
       "get": {
         "operationId": "get-deployments-by-name-diagnostics",

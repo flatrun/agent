@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/flatrun/agent/internal/deploys"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/source"
 	"github.com/flatrun/agent/pkg/models"
@@ -180,7 +181,7 @@ var errNoSource = errors.New("deployment was not created from a source")
 
 // redeployFromSource refetches a deployment's recorded source (at a pinned
 // revision when given), syncs it into the deployment directory and rebuilds.
-func (s *Server) redeployFromSource(ctx context.Context, name string, actOpts actionOptions, runOpts []docker.RunOption, emit func(string)) error {
+func (s *Server) redeployFromSource(ctx context.Context, name string, actOpts actionOptions, runOpts []docker.RunOption, emit func(string)) (err error) {
 	deployment, err := s.manager.GetDeployment(name)
 	if err != nil {
 		return err
@@ -192,12 +193,31 @@ func (s *Server) redeployFromSource(ctx context.Context, name string, actOpts ac
 
 	req := deploymentSourceFrom(meta.Source)
 	req.Revision = actOpts.Revision
+
+	fetchedRevision := ""
+	if s.deploysStore != nil {
+		rec, recErr := s.deploysStore.Start(name, deploys.Record{
+			Revision: req.Revision,
+			Branch:   req.Branch,
+			Trigger:  deploys.Trigger(actOpts.Trigger),
+		})
+		if recErr != nil {
+			emit("Warning: failed to record deploy: " + recErr.Error())
+		} else {
+			defer func() {
+				if finishErr := s.deploysStore.Finish(name, rec.ID, fetchedRevision, err); finishErr != nil {
+					log.Printf("Warning: failed to close deploy record for %s: %v", name, finishErr)
+				}
+			}()
+		}
+	}
 	emit(fmt.Sprintf("Fetching %s (%s)", req.Ref, describeRevision(req)))
 	fetched, err := s.fetchDeploymentSourceWithLog(ctx, req, emit)
 	if err != nil {
 		return err
 	}
 	defer fetched.cleanup()
+	fetchedRevision = fetched.revision
 
 	compose := fetched.composeContent
 	if content, err := docker.EnsureContainerNames(compose, name); err == nil {
@@ -264,4 +284,38 @@ func (s *Server) redeployDeployment(c *gin.Context) {
 		return
 	}
 	s.enqueueDeploymentAction(c, "redeploy")
+}
+
+func (s *Server) listDeploymentDeploys(c *gin.Context) {
+	records, err := s.deploysStore.List(c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deploys": records})
+}
+
+// rollbackDeployment redeploys the revision a past deploy fetched.
+func (s *Server) rollbackDeployment(c *gin.Context) {
+	name := c.Param("name")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionRebuild) {
+		return
+	}
+	rec, err := s.deploysStore.Get(name, c.Param("id"))
+	if errors.Is(err, deploys.ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if rec.Revision == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "this deploy has no recorded revision to roll back to"})
+		return
+	}
+	s.enqueueDeploymentActionWith(c, "redeploy", actionOptions{
+		Revision: rec.Revision,
+		Trigger:  string(deploys.TriggerRollback),
+	})
 }

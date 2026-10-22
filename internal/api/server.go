@@ -39,6 +39,7 @@ import (
 	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/dashboards"
 	"github.com/flatrun/agent/internal/database"
+	"github.com/flatrun/agent/internal/deploys"
 	"github.com/flatrun/agent/internal/dns"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/files"
@@ -117,6 +118,7 @@ type Server struct {
 	setupHandlers      *setup.Handlers
 	certRenewer        *ssl.Renewer
 	planStore          *plan.Store
+	deploysStore       *deploys.Store
 	aiProvider         ai.Provider
 	triageBudget       *triageBudget
 	aiSessions         *ai.SessionStore
@@ -395,6 +397,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		setupManager:       setupManager,
 		setupHandlers:      setup.NewHandlers(setupManager, authManager),
 		planStore:          plan.NewStore(cfg.DeploymentsPath),
+		deploysStore:       deploys.NewStore(cfg.DeploymentsPath),
 		aiSessions:         ai.NewSessionStore(cfg.DeploymentsPath),
 		aiAgents:           ai.NewAgentStore(cfg.DeploymentsPath),
 		jobs:               newJobRegistry(),
@@ -516,6 +519,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.restartDeployment)
 			protected.POST("/deployments/:name/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rebuildDeployment)
 			protected.POST("/deployments/:name/redeploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.redeployDeployment)
+			protected.GET("/deployments/:name/deploys", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentDeploys)
+			protected.POST("/deployments/:name/deploys/:id/rollback", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rollbackDeployment)
 			protected.POST("/deployments/:name/deploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deployDeployment)
 			protected.POST("/deployments/:name/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.pullDeploymentImage)
 			protected.GET("/deployments/:name/images", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentImages)
@@ -2431,11 +2436,24 @@ func (s *Server) rebuildDeployment(c *gin.Context) {
 // returns its id immediately. A second action while one is in flight for the
 // same deployment is rejected with the active job's id.
 func (s *Server) enqueueDeploymentAction(c *gin.Context, action string) {
-	name := c.Param("name")
-
 	// The options body is optional; an empty or non-JSON body simply means no flags.
 	var opts actionOptions
 	_ = c.ShouldBindJSON(&opts)
+	s.enqueueDeploymentActionWith(c, action, opts)
+}
+
+// startDeploymentJob launches an action job outside a request, for callers such
+// as webhooks. It reports false with the active job when one is already running.
+func (s *Server) startDeploymentJob(name, action string, opts actionOptions) (*ActionJob, bool) {
+	job, created := s.jobs.create(name, action, opts)
+	if created {
+		go s.runActionJob(job)
+	}
+	return job, created
+}
+
+func (s *Server) enqueueDeploymentActionWith(c *gin.Context, action string, opts actionOptions) {
+	name := c.Param("name")
 
 	job, created := s.jobs.create(name, action, opts)
 	if !created {

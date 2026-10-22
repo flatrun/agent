@@ -103,6 +103,11 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 	if err := s.manager.DeleteDeployment(name); err != nil {
 		return deletedItems, err
 	}
+	if s.deploysStore != nil {
+		if err := s.deploysStore.Delete(name); err != nil {
+			log.Printf("Warning: failed to remove deploy history for %s: %v", name, err)
+		}
+	}
 
 	return deletedItems, nil
 }
