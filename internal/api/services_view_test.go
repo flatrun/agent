@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,11 +18,15 @@ func TestServicesReportMountsReplicasAndDomains(t *testing.T) {
 	compose := `services:
   web:
     image: ghcr.io/acme/shop:1.4
+    depends_on: [worker, db]
     volumes:
       - ./uploads:/app/uploads
       - ./config.yml:/app/config.yml:ro
   worker:
     image: ghcr.io/acme/shop:1.4
+    depends_on:
+      db:
+        condition: service_healthy
     deploy:
       replicas: 3
   db:
@@ -67,6 +72,7 @@ domains:
 			IsPrimary bool     `json:"is_primary"`
 			Replicas  int      `json:"replicas"`
 			Domains   []string `json:"domains"`
+			DependsOn []string `json:"depends_on"`
 			Mounts    []struct {
 				Type     string `json:"type"`
 				Source   string `json:"source"`
@@ -89,7 +95,13 @@ domains:
 	if len(web.Mounts) != 2 || web.Mounts[0].Type != "bind" || web.Mounts[0].Target != "/app/uploads" || !web.Mounts[1].ReadOnly {
 		t.Fatalf("web mounts = %+v", web.Mounts)
 	}
+	if strings.Join(web.DependsOn, ",") != "db,worker" {
+		t.Fatalf("web depends on %v", web.DependsOn)
+	}
 	worker := body.Services[byName["worker"]]
+	if strings.Join(worker.DependsOn, ",") != "db" {
+		t.Fatalf("worker depends on %v", worker.DependsOn)
+	}
 	if worker.Replicas != 3 || len(worker.Domains) != 1 || worker.Domains[0] != "jobs.example.com" {
 		t.Fatalf("worker = %+v", worker)
 	}

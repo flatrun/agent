@@ -31,6 +31,8 @@ type Service struct {
 	RunningReplicas int `json:"running_replicas"`
 	// Domains are the hostnames routed to this service.
 	Domains []string `json:"domains,omitempty"`
+	// DependsOn names the services this one waits for.
+	DependsOn []string `json:"depends_on,omitempty"`
 }
 
 type ServiceMount struct {

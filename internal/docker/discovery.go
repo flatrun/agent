@@ -33,7 +33,10 @@ type composeService struct {
 	Networks composeNetworks `yaml:"networks"`
 	Volumes  []composeMount  `yaml:"volumes"`
 	Scale    *int            `yaml:"scale"`
-	Deploy   struct {
+	// depends_on is a list or a map keyed by service, the same two shapes
+	// networks take.
+	DependsOn composeNetworks `yaml:"depends_on"`
+	Deploy    struct {
 		Replicas *int `yaml:"replicas"`
 	} `yaml:"deploy"`
 }
@@ -288,6 +291,10 @@ func (d *Discovery) parseComposeServices(composePath string) ([]models.Service, 
 			Status:   "unknown",
 			Networks: []string(svc.Networks),
 			Replicas: svc.replicas(),
+		}
+		if len(svc.DependsOn) > 0 {
+			service.DependsOn = append([]string(nil), svc.DependsOn...)
+			sort.Strings(service.DependsOn)
 		}
 		for _, v := range svc.Volumes {
 			if v.Mount.Target != "" {

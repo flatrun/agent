@@ -16846,6 +16846,12 @@
             "type": "string",
             "format": "date-time"
           },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "domains": {
             "type": "array",
             "items": {
@@ -16905,7 +16911,8 @@
           "mounts",
           "replicas",
           "running_replicas",
-          "domains"
+          "domains",
+          "depends_on"
         ],
         "x-columns": [
           "name",
