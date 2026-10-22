@@ -123,6 +123,7 @@ type Server struct {
 	deploysStore       *deploys.Store
 	builder            *build.Builder
 	webhooks           *webhook.Registry
+	runInBackground    func(func())
 	aiProvider         ai.Provider
 	triageBudget       *triageBudget
 	aiSessions         *ai.SessionStore

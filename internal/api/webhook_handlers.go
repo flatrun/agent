@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -67,6 +69,8 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 	switch event.Kind {
 	case webhook.EventPush:
 		s.handlePushEvent(c, name, src, provider.Name(), event)
+	case webhook.EventPROpened, webhook.EventPRSynced, webhook.EventPRClosed:
+		s.handlePullRequestEvent(c, name, src, event)
 	default:
 		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "nothing to deploy for this event"})
 	}
@@ -247,4 +251,84 @@ func (s *Server) updateDeploymentSource(c *gin.Context) {
 	}
 	log.Printf("Deployment %s source updated: branch=%s auto_deploy=%v previews=%v", name, meta.Source.Branch, meta.Source.AutoDeploy, meta.Source.Previews)
 	c.JSON(http.StatusOK, gin.H{"source": meta.Source})
+}
+
+func previewEnvironmentName(pr int) string {
+	return fmt.Sprintf("pr-%d", pr)
+}
+
+// handlePullRequestEvent keeps one preview environment per open pull request:
+// created when it opens, redeployed at each new head commit, deleted when it
+// closes or merges. Work happens in the background because a first fetch and
+// build outlast a git host's delivery timeout.
+func (s *Server) handlePullRequestEvent(c *gin.Context, base string, src *models.SourceConfig, event *webhook.Event) {
+	if !src.Previews {
+		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "previews are off"})
+		return
+	}
+	if event.PR <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "event has no pull request number"})
+		return
+	}
+	envName := previewEnvironmentName(event.PR)
+	name := environmentDeploymentName(base, envName)
+	existing, err := s.manager.GetDeployment(name)
+	exists := err == nil && existing.Metadata != nil && existing.Metadata.Environment != nil &&
+		existing.Metadata.Environment.Base == base && existing.Metadata.Environment.PR == event.PR
+
+	if event.Kind == webhook.EventPRClosed {
+		if !exists {
+			c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "no preview to remove"})
+			return
+		}
+		s.background(func() {
+			hasProxy := s.proxyOrchestrator != nil
+			if _, err := s.applyDeploymentDelete(name, deploymentDeleteOptions{DeleteSSL: hasProxy, DeleteVhost: hasProxy}); err != nil {
+				log.Printf("Warning: failed to remove preview %s: %v", name, err)
+			}
+		})
+		c.JSON(http.StatusAccepted, gin.H{"status": "removing", "name": name})
+		return
+	}
+
+	if exists {
+		if existing.Metadata.Source != nil && event.Branch != "" && existing.Metadata.Source.Branch != event.Branch {
+			existing.Metadata.Source.Branch = event.Branch
+			_ = s.manager.SaveMetadata(name, existing.Metadata)
+		}
+		job, created := s.startDeploymentJob(name, "redeploy", actionOptions{
+			Revision: event.Revision,
+			Trigger:  string(deploys.TriggerPR),
+		})
+		if !created {
+			c.JSON(http.StatusConflict, gin.H{"error": "a deploy is already running", "active_job_id": job.ID()})
+			return
+		}
+		c.JSON(http.StatusAccepted, gin.H{"status": "deploying", "name": name, "job_id": job.ID()})
+		return
+	}
+
+	s.background(func() {
+		_, _, err := s.createEnvironment(context.Background(), base, environmentRequest{
+			Name:     envName,
+			Branch:   event.Branch,
+			Revision: event.Revision,
+			PR:       event.PR,
+			Trigger:  deploys.TriggerPR,
+		})
+		if err != nil {
+			log.Printf("Warning: failed to create preview %s: %v", name, err)
+		}
+	})
+	c.JSON(http.StatusAccepted, gin.H{"status": "creating", "name": name})
+}
+
+// background runs work that must outlive the request. Tests replace it to run
+// the work inline.
+func (s *Server) background(work func()) {
+	if s.runInBackground != nil {
+		s.runInBackground(work)
+		return
+	}
+	go work()
 }

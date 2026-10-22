@@ -23,6 +23,9 @@ var errEnvironmentExists = errors.New("environment already exists")
 type environmentRequest struct {
 	Name   string `json:"name" binding:"required"`
 	Branch string `json:"branch"`
+	// Revision pins the first deploy to a commit, which also reaches pull
+	// requests from forks whose branch does not exist in the base repository.
+	Revision string `json:"-"`
 	// PR marks the environment as a pull request preview.
 	PR      int             `json:"-"`
 	Trigger deploys.Trigger `json:"-"`
@@ -60,6 +63,7 @@ func (s *Server) createEnvironment(ctx context.Context, base string, req environ
 	if req.Branch != "" {
 		src.Branch = req.Branch
 	}
+	src.Revision = req.Revision
 	fetched, err := s.fetchDeploymentSource(ctx, src)
 	if err != nil {
 		return "", nil, err
