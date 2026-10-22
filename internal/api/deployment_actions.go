@@ -103,6 +103,12 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 	if err := s.manager.DeleteDeployment(name); err != nil {
 		return deletedItems, err
 	}
+	if deployment != nil && deployment.Metadata != nil && deployment.Metadata.Source != nil &&
+		deployment.Metadata.Source.WebhookCredentialID != "" && s.credentialsManager != nil {
+		if err := s.credentialsManager.DeleteGenericCredential(deployment.Metadata.Source.WebhookCredentialID); err != nil {
+			log.Printf("Warning: failed to remove webhook secret for %s: %v", name, err)
+		}
+	}
 	if s.deploysStore != nil {
 		if err := s.deploysStore.Delete(name); err != nil {
 			log.Printf("Warning: failed to remove deploy history for %s: %v", name, err)

@@ -60,6 +60,7 @@ import (
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/internal/templatesource"
 	"github.com/flatrun/agent/internal/traffic"
+	"github.com/flatrun/agent/internal/webhook"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/pluginapi"
@@ -121,6 +122,7 @@ type Server struct {
 	planStore          *plan.Store
 	deploysStore       *deploys.Store
 	builder            *build.Builder
+	webhooks           *webhook.Registry
 	aiProvider         ai.Provider
 	triageBudget       *triageBudget
 	aiSessions         *ai.SessionStore
@@ -401,6 +403,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		planStore:          plan.NewStore(cfg.DeploymentsPath),
 		deploysStore:       deploys.NewStore(cfg.DeploymentsPath),
 		builder:            build.New(),
+		webhooks:           webhook.DefaultRegistry(),
 		aiSessions:         ai.NewSessionStore(cfg.DeploymentsPath),
 		aiAgents:           ai.NewAgentStore(cfg.DeploymentsPath),
 		jobs:               newJobRegistry(),
@@ -475,6 +478,8 @@ func (s *Server) setupRoutes() {
 		api.POST("/access/request", s.requestApplicationAccess)
 		api.GET("/access/verify", s.verifyApplicationAccess)
 		api.POST("/access/verify", s.confirmApplicationAccess)
+		// Authenticated by the deployment's webhook secret, not a session.
+		api.POST("/hooks/:provider/:deployment", s.receiveWebhook)
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
@@ -522,6 +527,9 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.restartDeployment)
 			protected.POST("/deployments/:name/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rebuildDeployment)
 			protected.POST("/deployments/:name/redeploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.redeployDeployment)
+			protected.PUT("/deployments/:name/source", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentSource)
+			protected.GET("/deployments/:name/webhook", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentWebhook)
+			protected.POST("/deployments/:name/webhook/rotate", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rotateDeploymentWebhook)
 			protected.GET("/deployments/:name/deploys", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentDeploys)
 			protected.POST("/deployments/:name/deploys/:id/rollback", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rollbackDeployment)
 			protected.POST("/deployments/:name/deploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deployDeployment)

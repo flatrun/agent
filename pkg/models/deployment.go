@@ -63,6 +63,8 @@ type SourceConfig struct {
 	Previews     bool   `yaml:"previews,omitempty" json:"previews"`
 	Builder      string `yaml:"builder,omitempty" json:"builder,omitempty"`
 	LastRevision string `yaml:"last_revision,omitempty" json:"last_revision,omitempty"`
+	// WebhookCredentialID names the stored secret for incoming push webhooks.
+	WebhookCredentialID string `yaml:"webhook_credential_id,omitempty" json:"-"`
 }
 
 type MigrationSpec struct {

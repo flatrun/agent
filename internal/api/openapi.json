@@ -6837,6 +6837,61 @@
         "x-permission": "deployments:read"
       }
     },
+    "/api/deployments/{name}/source": {
+      "put": {
+        "operationId": "put-deployments-by-name-source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "auto_deploy": {
+                    "type": "boolean"
+                  },
+                  "branch": {
+                    "type": "string"
+                  },
+                  "previews": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "branch",
+                  "auto_deploy",
+                  "previews"
+                ],
+                "x-property-order": [
+                  "branch",
+                  "auto_deploy",
+                  "previews"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/ssl/disable": {
       "post": {
         "operationId": "post-deployments-by-name-ssl-disable",
@@ -7019,6 +7074,54 @@
           "deployments"
         ],
         "x-permission": "users:read"
+      }
+    },
+    "/api/deployments/{name}/webhook": {
+      "get": {
+        "operationId": "get-deployments-by-name-webhook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/deployments/{name}/webhook/rotate": {
+      "post": {
+        "operationId": "post-deployments-by-name-webhook-rotate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
       }
     },
     "/api/dns/powerdns/disable": {
@@ -7239,6 +7342,37 @@
         "operationId": "get-health",
         "tags": [
           "health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/hooks/{provider}/{deployment}": {
+      "post": {
+        "operationId": "post-hooks-by-provider-by-deployment",
+        "tags": [
+          "hooks"
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "deployment",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {

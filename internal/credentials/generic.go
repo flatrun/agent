@@ -14,8 +14,9 @@ type genericCredentialsFile struct {
 }
 
 var knownCredentialKinds = map[models.CredentialKind]bool{
-	models.CredentialKindS3:  true,
-	models.CredentialKindGit: true,
+	models.CredentialKindS3:      true,
+	models.CredentialKindGit:     true,
+	models.CredentialKindWebhook: true,
 }
 
 func (m *Manager) loadGenericCredentials() error {

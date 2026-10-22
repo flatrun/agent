@@ -10,6 +10,9 @@ type CredentialKind string
 const (
 	CredentialKindS3  CredentialKind = "s3"
 	CredentialKindGit CredentialKind = "git"
+	// CredentialKindWebhook holds the secret that authenticates a deployment's
+	// incoming push webhooks.
+	CredentialKindWebhook CredentialKind = "webhook"
 )
 
 // Credential is a generic, kind-tagged secret held by the credential manager,
@@ -33,8 +36,9 @@ const CredentialMask = "********"
 // credentialSecretKeys lists the Data keys whose values must never leave the
 // agent in a JSON response, per credential kind.
 var credentialSecretKeys = map[CredentialKind]map[string]bool{
-	CredentialKindS3:  {"secret_access_key": true},
-	CredentialKindGit: {"token": true},
+	CredentialKindS3:      {"secret_access_key": true},
+	CredentialKindGit:     {"token": true},
+	CredentialKindWebhook: {"secret": true},
 }
 
 // IsSecretKey reports whether a Data key holds a secret for the given kind.
