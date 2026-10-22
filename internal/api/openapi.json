@@ -5482,6 +5482,62 @@
         "x-plan-supported": true
       }
     },
+    "/api/deployments/{name}/environments": {
+      "get": {
+        "operationId": "get-deployments-by-name-environments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "post": {
+        "operationId": "post-deployments-by-name-environments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.environmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/extract": {
       "post": {
         "operationId": "post-deployments-by-name-extract",
@@ -12816,6 +12872,28 @@
           "previews"
         ]
       },
+      "api.environmentRequest": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "name",
+          "branch"
+        ],
+        "x-columns": [
+          "name",
+          "branch"
+        ],
+        "required": [
+          "name"
+        ]
+      },
       "api.exchangeRequest": {
         "type": "object",
         "properties": {
@@ -14858,6 +14936,30 @@
           "static_cache"
         ]
       },
+      "models.EnvironmentInfo": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pr": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "base",
+          "name",
+          "pr"
+        ],
+        "x-columns": [
+          "base",
+          "name",
+          "pr"
+        ]
+      },
       "models.HealthCheckConfig": {
         "type": "object",
         "properties": {
@@ -15361,6 +15463,9 @@
               "$ref": "#/components/schemas/models.DomainConfig"
             }
           },
+          "environment": {
+            "$ref": "#/components/schemas/models.EnvironmentInfo"
+          },
           "healthcheck": {
             "$ref": "#/components/schemas/models.HealthCheckConfig"
           },
@@ -15446,7 +15551,8 @@
           "service_credentials",
           "domains",
           "databases",
-          "source"
+          "source",
+          "environment"
         ],
         "x-columns": [
           "name",

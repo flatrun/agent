@@ -73,26 +73,63 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 }
 
 func (s *Server) handlePushEvent(c *gin.Context, name string, src *models.SourceConfig, provider string, event *webhook.Event) {
-	// The generic hook is an explicit deploy request; host pushes only deploy
-	// when the deployment opted into it.
-	if provider != "generic" && !src.AutoDeploy {
-		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "auto deploy is off"})
-		return
+	// The generic hook is an explicit deploy request for this deployment; host
+	// pushes deploy every target that follows the pushed branch and opted in.
+	explicit := provider == "generic"
+	targets := map[string]bool{}
+	if explicit || (src.AutoDeploy && branchMatches(src.Branch, event.Branch)) {
+		targets[name] = true
 	}
-	if event.Branch != "" && src.Branch != "" && event.Branch != src.Branch {
-		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "push is not to the deployed branch"})
+	if !explicit {
+		if envs, err := s.environmentsOf(name); err == nil {
+			for _, env := range envs {
+				envSrc := env.Metadata.Source
+				if env.Metadata.Environment.PR == 0 && envSrc != nil && envSrc.AutoDeploy && branchMatches(envSrc.Branch, event.Branch) {
+					targets[env.Name] = true
+				}
+			}
+		}
+	}
+	if len(targets) == 0 {
+		reason := "push is not to a deployed branch"
+		if !src.AutoDeploy {
+			reason = "auto deploy is off"
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": reason})
 		return
 	}
 
-	job, created := s.startDeploymentJob(name, "redeploy", actionOptions{
-		Revision: event.Revision,
-		Trigger:  string(deploys.TriggerPush),
-	})
-	if !created {
-		c.JSON(http.StatusConflict, gin.H{"error": "a deploy is already running", "active_job_id": job.ID()})
+	jobs := gin.H{}
+	busy := gin.H{}
+	for target := range targets {
+		job, created := s.startDeploymentJob(target, "redeploy", actionOptions{
+			Revision: event.Revision,
+			Trigger:  string(deploys.TriggerPush),
+		})
+		if created {
+			jobs[target] = job.ID()
+		} else {
+			busy[target] = job.ID()
+		}
+	}
+	if len(jobs) == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "a deploy is already running", "active_jobs": busy})
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"status": "deploying", "job_id": job.ID()})
+	resp := gin.H{"status": "deploying", "jobs": jobs}
+	if id, ok := jobs[name]; ok {
+		resp["job_id"] = id
+	}
+	if len(busy) > 0 {
+		resp["already_running"] = busy
+	}
+	c.JSON(http.StatusAccepted, resp)
+}
+
+// branchMatches treats an empty tracked branch as the repository default, which
+// the agent cannot know, so it follows any pushed branch.
+func branchMatches(tracked, pushed string) bool {
+	return tracked == "" || pushed == "" || tracked == pushed
 }
 
 func (s *Server) webhookSecret(src *models.SourceConfig) string {

@@ -49,6 +49,16 @@ type ServiceMetadata struct {
 	Domains            []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
 	Databases          []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
 	Source             *SourceConfig             `yaml:"source,omitempty" json:"source,omitempty"`
+	Environment        *EnvironmentInfo          `yaml:"environment,omitempty" json:"environment,omitempty"`
+}
+
+// EnvironmentInfo marks a deployment as another environment of a base
+// deployment: a copy that follows its own branch. A PR number marks it as a
+// preview that is removed when the pull request closes.
+type EnvironmentInfo struct {
+	Base string `yaml:"base" json:"base"`
+	Name string `yaml:"name" json:"name"`
+	PR   int    `yaml:"pr,omitempty" json:"pr,omitempty"`
 }
 
 // SourceConfig records where a deployment's files came from so it can be

@@ -65,10 +65,14 @@ func newWebhookTestServer(t *testing.T, runner *fakeRunner, autoDeploy bool) (*S
 }
 
 func deliverGitHub(r *gin.Engine, event, fixture, secret string) *httptest.ResponseRecorder {
+	return deliverGitHubTo(r, "hello", event, fixture, secret)
+}
+
+func deliverGitHubTo(r *gin.Engine, deployment, event, fixture, secret string) *httptest.ResponseRecorder {
 	payload, _ := os.ReadFile("../webhook/testdata/" + fixture)
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
-	req := httptest.NewRequest(http.MethodPost, "/api/hooks/github/hello", strings.NewReader(string(payload)))
+	req := httptest.NewRequest(http.MethodPost, "/api/hooks/github/"+deployment, strings.NewReader(string(payload)))
 	req.Header.Set("X-GitHub-Event", event)
 	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	rec := httptest.NewRecorder()
