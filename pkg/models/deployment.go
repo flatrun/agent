@@ -10,6 +10,7 @@ type Deployment struct {
 	UpdatedAt time.Time        `json:"updated_at"`
 	Services  []Service        `json:"services,omitempty"`
 	Metadata  *ServiceMetadata `json:"metadata,omitempty"`
+	Workspace string           `json:"workspace,omitempty"`
 }
 
 type Service struct {
@@ -51,6 +52,7 @@ type ServiceMetadata struct {
 	Source             *SourceConfig             `yaml:"source,omitempty" json:"source,omitempty"`
 	Environment        *EnvironmentInfo          `yaml:"environment,omitempty" json:"environment,omitempty"`
 	Sleep              *SleepConfig              `yaml:"sleep,omitempty" json:"sleep,omitempty"`
+	Workspace          string                    `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 }
 
 // SleepConfig stops a deployment after a stretch without traffic and starts

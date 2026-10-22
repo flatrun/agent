@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flatrun/agent/internal/access"
+	"github.com/flatrun/agent/internal/workspace"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -107,6 +108,11 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 		deployment.Metadata.Source.WebhookCredentialID != "" && s.credentialsManager != nil {
 		if err := s.credentialsManager.DeleteGenericCredential(deployment.Metadata.Source.WebhookCredentialID); err != nil {
 			log.Printf("Warning: failed to remove webhook secret for %s: %v", name, err)
+		}
+	}
+	if store := s.workspaces(); store != nil {
+		if err := store.Release(workspace.Ref{Type: workspace.TypeDeployment, ID: name}); err != nil {
+			log.Printf("Warning: failed to release workspace ownership of %s: %v", name, err)
 		}
 	}
 	if s.deploysStore != nil {

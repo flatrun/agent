@@ -175,7 +175,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	if cfg.API.EnableCORS {
 		corsConfig := cors.Config{
 			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-			AllowHeaders:     []string{"Content-Type", "Authorization", "Accept", "Origin", "Cache-Control", "X-Requested-With", "X-FlatRun-Deployment"},
+			AllowHeaders:     []string{"Content-Type", "Authorization", "Accept", "Origin", "Cache-Control", "X-Requested-With", "X-FlatRun-Deployment", workspaceHeader},
 			AllowCredentials: true,
 			MaxAge:           12 * time.Hour,
 		}
@@ -520,6 +520,7 @@ func (s *Server) setupRoutes() {
 		protected := api.Group("")
 		protected.Use(s.authMiddleware.RequireAuth())
 		protected.Use(restrictClusterServiceResources)
+		s.registerWorkspaceRoutes(protected)
 		if s.auditMiddleware != nil {
 			protected.Use(s.auditMiddleware.Capture())
 		}
@@ -1117,6 +1118,22 @@ func (s *Server) listDeployments(c *gin.Context) {
 		deployments = filtered
 	}
 
+	scope, ok := s.requestWorkspace(c)
+	if !ok {
+		return
+	}
+	if owners := s.deploymentOwners(deployments); owners != nil {
+		var scoped []models.Deployment
+		for _, d := range deployments {
+			if scope != nil && owners[d.Name] != scope.Slug {
+				continue
+			}
+			d.Workspace = owners[d.Name]
+			scoped = append(scoped, d)
+		}
+		deployments = scoped
+	}
+
 	c.JSON(http.StatusOK, NewList(deployments, "deployments").Also("path", s.manager.BasePath()))
 }
 
@@ -1131,6 +1148,9 @@ func (s *Server) getDeployment(c *gin.Context) {
 		return
 	}
 
+	if owners := s.deploymentOwners([]models.Deployment{*deployment}); owners != nil {
+		deployment.Workspace = owners[name]
+	}
 	composeContent, composeFilename, _ := s.manager.GetComposeFile(name)
 	proxyStatus := s.proxyOrchestrator.GetDeploymentProxyStatus(deployment)
 
@@ -1253,6 +1273,10 @@ func (s *Server) createDeployment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
+		return
+	}
+	ownerWorkspace, ok := s.creationWorkspace(c)
+	if !ok {
 		return
 	}
 
@@ -1395,6 +1419,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 			_ = s.authManager.AssignDeployment(actor.User.ID, req.Name, auth.AccessLevelAdmin, actor.User.ID)
 		}
 	}
+	s.assignDeploymentWorkspace(ownerWorkspace, req.Name)
 
 	var dbEnvVars []EnvVar
 	var databaseConfigs []models.DatabaseConfig
@@ -4165,6 +4190,10 @@ func (s *Server) createPluginDeployment(c *gin.Context) {
 		})
 		return
 	}
+	ownerWorkspace, ok := s.creationWorkspace(c)
+	if !ok {
+		return
+	}
 
 	result, err := deploymentPlugin.CreateDeployment(req.Name, req.Config)
 	if err != nil {
@@ -4180,6 +4209,7 @@ func (s *Server) createPluginDeployment(c *gin.Context) {
 			_ = s.authManager.AssignDeployment(actor.User.ID, req.Name, auth.AccessLevelAdmin, actor.User.ID)
 		}
 	}
+	s.assignDeploymentWorkspace(ownerWorkspace, req.Name)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":    "Deployment created",

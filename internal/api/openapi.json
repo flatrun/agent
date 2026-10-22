@@ -11949,6 +11949,579 @@
         ],
         "x-permission": "volumes:delete"
       }
+    },
+    "/api/workspaces": {
+      "get": {
+        "operationId": "get-workspaces",
+        "tags": [
+          "workspaces"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfMembership"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-workspaces",
+        "tags": [
+          "workspaces"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "slug": {
+                    "type": "string"
+                  }
+                },
+                "x-property-order": [
+                  "name",
+                  "slug"
+                ],
+                "x-columns": [
+                  "name",
+                  "slug"
+                ],
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/workspace.Membership"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/invitations/accept": {
+      "post": {
+        "operationId": "post-workspaces-invitations-accept",
+        "tags": [
+          "workspaces"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  }
+                },
+                "x-property-order": [
+                  "token"
+                ],
+                "x-columns": [
+                  "token"
+                ],
+                "required": [
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/workspace.Membership"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{slug}": {
+      "delete": {
+        "operationId": "delete-workspaces-by-slug",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get-workspaces-by-slug",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/workspace.Membership"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-workspaces-by-slug",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "x-property-order": [
+                  "name"
+                ],
+                "x-columns": [
+                  "name"
+                ],
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/workspace.Membership"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{slug}/invitations": {
+      "get": {
+        "operationId": "get-workspaces-by-slug-invitations",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfInvitation"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-workspaces-by-slug-invitations",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "invitee": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  }
+                },
+                "x-property-order": [
+                  "invitee",
+                  "role"
+                ],
+                "x-columns": [
+                  "invitee",
+                  "role"
+                ],
+                "required": [
+                  "invitee",
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/workspaces/{slug}/invitations/{id}": {
+      "delete": {
+        "operationId": "delete-workspaces-by-slug-invitations-by-id",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/workspaces/{slug}/members": {
+      "get": {
+        "operationId": "get-workspaces-by-slug-members",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfworkspaceMemberView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post-workspaces-by-slug-members",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string"
+                  },
+                  "username": {
+                    "type": "string"
+                  }
+                },
+                "x-property-order": [
+                  "username",
+                  "role"
+                ],
+                "x-columns": [
+                  "username",
+                  "role"
+                ],
+                "required": [
+                  "username",
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.workspaceMemberView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{slug}/members/{user_id}": {
+      "delete": {
+        "operationId": "delete-workspaces-by-slug-members-by-user_id",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-workspaces-by-slug-members-by-user_id",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string"
+                  }
+                },
+                "x-property-order": [
+                  "role"
+                ],
+                "x-columns": [
+                  "role"
+                ],
+                "required": [
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/workspace.Member"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{slug}/resources": {
+      "get": {
+        "operationId": "get-workspaces-by-slug-resources",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfRef"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-workspaces-by-slug-resources",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/workspace.Ref"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -12422,6 +12995,94 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/models.Deployment"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfInvitation": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/workspace.Invitation"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfMembership": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/workspace.Membership"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfRef": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/workspace.Ref"
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "items",
+          "total"
+        ],
+        "x-columns": [
+          "total"
+        ],
+        "x-render": "list"
+      },
+      "api.ListOfworkspaceMemberView": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/api.workspaceMemberView"
             }
           },
           "total": {
@@ -13160,6 +13821,41 @@
         "required": [
           "orchestrator",
           "routing"
+        ]
+      },
+      "api.workspaceMemberView": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "user_id",
+          "role",
+          "created_at",
+          "username",
+          "email"
+        ],
+        "x-columns": [
+          "user_id",
+          "role",
+          "created_at",
+          "username",
+          "email"
         ]
       },
       "audit.ActorStats": {
@@ -14800,6 +15496,9 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "workspace": {
+            "type": "string"
           }
         },
         "x-property-order": [
@@ -14809,13 +15508,15 @@
           "created_at",
           "updated_at",
           "services",
-          "metadata"
+          "metadata",
+          "workspace"
         ],
         "x-columns": [
           "name",
           "status",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "workspace"
         ]
       },
       "models.DeploymentRateLimit": {
@@ -15581,6 +16282,9 @@
           },
           "type": {
             "type": "string"
+          },
+          "workspace": {
+            "type": "string"
           }
         },
         "x-property-order": [
@@ -15606,7 +16310,8 @@
           "databases",
           "source",
           "environment",
-          "sleep"
+          "sleep",
+          "workspace"
         ],
         "x-columns": [
           "name",
@@ -15614,7 +16319,8 @@
           "kind",
           "primary_service",
           "require_plan",
-          "credential_id"
+          "credential_id",
+          "workspace"
         ]
       },
       "models.SleepConfig": {
@@ -16256,6 +16962,131 @@
           "prerelease",
           "published_at",
           "changelog"
+        ]
+      },
+      "workspace.Invitation": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "invited_by": {
+            "type": "integer"
+          },
+          "invitee": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "invitee",
+          "role",
+          "invited_by",
+          "expires_at",
+          "created_at"
+        ],
+        "x-columns": [
+          "id",
+          "invitee",
+          "role",
+          "invited_by",
+          "expires_at",
+          "created_at"
+        ]
+      },
+      "workspace.Member": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "role": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "user_id",
+          "role",
+          "created_at"
+        ],
+        "x-columns": [
+          "user_id",
+          "role",
+          "created_at"
+        ]
+      },
+      "workspace.Membership": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "personal": {
+            "type": "boolean"
+          },
+          "role": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "slug",
+          "name",
+          "personal",
+          "created_at",
+          "role"
+        ],
+        "x-columns": [
+          "id",
+          "slug",
+          "name",
+          "personal",
+          "created_at",
+          "role"
+        ]
+      },
+      "workspace.Ref": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "type",
+          "id"
+        ],
+        "x-columns": [
+          "type",
+          "id"
         ]
       }
     }

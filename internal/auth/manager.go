@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/flatrun/agent/internal/workspace"
 	"github.com/flatrun/agent/pkg/config"
 )
 
@@ -29,8 +30,9 @@ var (
 )
 
 type Manager struct {
-	db     *DB
-	config *config.AuthConfig
+	db         *DB
+	config     *config.AuthConfig
+	workspaces *workspace.Store
 }
 
 func NewManager(deploymentsPath string, cfg *config.AuthConfig, setupComplete bool) (*Manager, error) {
@@ -39,9 +41,16 @@ func NewManager(deploymentsPath string, cfg *config.AuthConfig, setupComplete bo
 		return nil, fmt.Errorf("failed to initialize auth database: %w", err)
 	}
 
+	workspaces, err := workspace.NewStore(db.conn)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize workspaces: %w", err)
+	}
+
 	m := &Manager{
-		db:     db,
-		config: cfg,
+		db:         db,
+		config:     cfg,
+		workspaces: workspaces,
 	}
 
 	if setupComplete {
@@ -50,7 +59,69 @@ func NewManager(deploymentsPath string, cfg *config.AuthConfig, setupComplete bo
 		}
 	}
 
+	if err := m.ensureWorkspaces(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to prepare workspaces: %w", err)
+	}
+
 	return m, nil
+}
+
+func (m *Manager) Workspaces() *workspace.Store {
+	return m.workspaces
+}
+
+// ensureWorkspaces creates the default workspace, owned by the current
+// admins, and a personal workspace for every user that lacks one.
+func (m *Manager) ensureWorkspaces() error {
+	users, err := m.db.GetUsers()
+	if err != nil {
+		return err
+	}
+	var admins []int64
+	for _, u := range users {
+		if u.Role == RoleAdmin {
+			admins = append(admins, u.ID)
+		}
+	}
+	if _, err := m.workspaces.EnsureDefault(admins); err != nil {
+		return err
+	}
+	for _, u := range users {
+		if u.Role == RoleService {
+			continue
+		}
+		if _, err := m.workspaces.EnsurePersonal(u.ID, u.Username); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) adoptUserIntoWorkspaces(user *User) error {
+	if user.Role == RoleService {
+		return nil
+	}
+	if _, err := m.workspaces.EnsurePersonal(user.ID, user.Username); err != nil {
+		return err
+	}
+	if user.Role != RoleAdmin {
+		return nil
+	}
+	def, err := m.workspaces.EnsureDefault(nil)
+	if err != nil {
+		return err
+	}
+	members, err := m.workspaces.Members(def.ID)
+	if err != nil {
+		return err
+	}
+	for _, member := range members {
+		if member.Role == workspace.RoleOwner {
+			return nil
+		}
+	}
+	return m.workspaces.SetMember(def.ID, user.ID, workspace.RoleOwner)
 }
 
 func (m *Manager) Close() error {
@@ -116,6 +187,11 @@ func (m *Manager) CreateUser(username, email, password string, role Role, permis
 	}
 
 	user.ID = id
+	if m.workspaces != nil {
+		if err := m.adoptUserIntoWorkspaces(user); err != nil {
+			return nil, fmt.Errorf("failed to create workspace for user: %w", err)
+		}
+	}
 	return user, nil
 }
 
@@ -166,7 +242,10 @@ func (m *Manager) DeleteUser(id int64, actorID int64) error {
 	if id == actorID {
 		return ErrCannotDeleteSelf
 	}
-	return m.db.DeleteUser(id)
+	if err := m.db.DeleteUser(id); err != nil {
+		return err
+	}
+	return m.workspaces.RemoveUser(id)
 }
 
 func (m *Manager) ValidateCredentials(username, password string) (*User, error) {
@@ -438,6 +517,19 @@ func (m *Manager) BuildActorContext(user *User, apiKey *APIKey) (*ActorContext, 
 		if err != nil {
 			return nil, err
 		}
+		roles, err := m.workspaces.ResourceRoles(user.ID, workspace.TypeDeployment)
+		if err != nil {
+			return nil, err
+		}
+		for name, role := range roles {
+			level := WorkspaceAccessLevel(role)
+			if deployments == nil {
+				deployments = map[string]string{}
+			}
+			if accessLevelRank(level) > accessLevelRank(deployments[name]) {
+				deployments[name] = level
+			}
+		}
 		actor.Deployments = deployments
 	}
 
@@ -478,4 +570,16 @@ func (m *Manager) GetLegacyKeyIndex(key string) int {
 		}
 	}
 	return -1
+}
+
+// WorkspaceAccessLevel is the deployment access a workspace role grants over
+// the workspace's deployments.
+func WorkspaceAccessLevel(role string) string {
+	switch role {
+	case workspace.RoleOwner, workspace.RoleAdmin:
+		return AccessLevelAdmin
+	case workspace.RoleMember:
+		return AccessLevelWrite
+	}
+	return ""
 }

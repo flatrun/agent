@@ -12,6 +12,7 @@ import (
 	"github.com/flatrun/agent/internal/build"
 	"github.com/flatrun/agent/internal/deploys"
 	"github.com/flatrun/agent/internal/docker"
+	"github.com/flatrun/agent/internal/workspace"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
@@ -128,6 +129,11 @@ func (s *Server) createEnvironment(ctx context.Context, base string, req environ
 	}
 	if err := s.manager.SaveMetadata(name, meta); err != nil {
 		return name, nil, err
+	}
+	if store := s.workspaces(); store != nil {
+		if owner, err := store.Owner(workspace.Ref{Type: workspace.TypeDeployment, ID: base}); err == nil {
+			s.assignDeploymentWorkspace(owner, name)
+		}
 	}
 
 	if meta.Networking.Expose && s.proxyOrchestrator != nil {
