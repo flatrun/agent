@@ -1,7 +1,7 @@
 package api
 
 import (
-	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/build"
+	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/deploys"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/source"
@@ -94,7 +95,7 @@ func TestRollback_RedeploysRecordedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.deploysStore.Finish("gitapp", rec.ID, "deadbeefcafe", nil); err != nil {
+	if err := s.deploysStore.Finish("gitapp", rec.ID, "deadbeefcafe", "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,9 +126,49 @@ func TestRollback_RedeploysRecordedRevision(t *testing.T) {
 	}
 }
 
-func TestRedeployFromSource_RecordsFailedDeploy(t *testing.T) {
+func waitForJob(t *testing.T, r *gin.Engine, name, id string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/deployments/"+name+"/jobs/"+id, nil))
+		var job map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &job)
+		if status := job["status"]; status == string(JobSucceeded) || status == string(JobFailed) {
+			return job
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job %s did not finish: %s", id, rec.Body.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func deployRoutes(s *Server, r *gin.Engine) {
+	r.GET("/api/deployments/:name/deploys", s.listDeploymentDeploys)
+	r.GET("/api/deployments/:name/deploys/:id/logs", s.getDeployLogs)
+	r.GET("/api/deployments/:name/jobs/:jobId", s.getDeploymentJob)
+}
+
+func listDeploys(t *testing.T, r *gin.Engine, name string) []map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/deployments/"+name+"/deploys", nil))
+	var body struct {
+		Deploys []map[string]any `json:"deploys"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("deploys = %s", rec.Body.String())
+	}
+	return body.Deploys
+}
+
+func TestRedeployRecordsAFailedFetchWithItsOutput(t *testing.T) {
 	s, r := newRedeployTestServer(t, &fakeRunner{})
+	s.runDeploymentAction = s.defaultRunDeploymentAction
+	s.credentialsManager = credentials.NewManager(t.TempDir())
 	s.deploysStore = deploys.NewStore(t.TempDir())
+	deployRoutes(s, r)
 	repo := gitRepoWithCompose(t)
 	create := httptest.NewRecorder()
 	r.ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/api/deployments",
@@ -136,19 +177,82 @@ func TestRedeployFromSource_RecordsFailedDeploy(t *testing.T) {
 		t.Fatalf("create status = %d: %s", create.Code, create.Body.String())
 	}
 
-	err := s.redeployFromSource(context.Background(), "gitapp",
-		actionOptions{Revision: "0000000000000000000000000000000000000000", Trigger: string(deploys.TriggerPush)},
-		nil, func(string) {})
-	if err == nil {
-		t.Fatal("expected fetching a missing revision to fail")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/deployments/gitapp/redeploy",
+		strings.NewReader(`{"revision":"0000000000000000000000000000000000000000"}`)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("redeploy = %d: %s", rec.Code, rec.Body.String())
+	}
+	var accepted map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &accepted)
+	job := waitForJob(t, r, "gitapp", accepted["job_id"].(string))
+	if job["status"] != string(JobFailed) || job["phase"] != string(deploys.PhaseFailed) || job["deploy_id"] == "" {
+		t.Fatalf("job = %v", job)
 	}
 
-	records, _ := s.deploysStore.List("gitapp")
+	records := listDeploys(t, r, "gitapp")
 	if len(records) != 1 {
-		t.Fatalf("records = %+v, want one", records)
+		t.Fatalf("records = %v", records)
 	}
-	if records[0].Status != deploys.StatusFailed || records[0].Trigger != deploys.TriggerPush || records[0].Error == "" {
-		t.Errorf("record = %+v", records[0])
+	got := records[0]
+	if got["action"] != "redeploy" || got["status"] != "failed" || got["phase"] != "failed" || got["error"] == "" || got["id"] != job["deploy_id"] {
+		t.Fatalf("record = %v", got)
+	}
+
+	logs := httptest.NewRecorder()
+	r.ServeHTTP(logs, httptest.NewRequest(http.MethodGet, "/api/deployments/gitapp/deploys/"+got["id"].(string)+"/logs", nil))
+	if logs.Code != http.StatusOK || !strings.Contains(logs.Body.String(), "Fetching file://") {
+		t.Fatalf("logs = %d %s", logs.Code, logs.Body.String())
+	}
+}
+
+func TestSuccessfulDeploysTakeOverAsActive(t *testing.T) {
+	runner := &fakeRunner{lines: []string{"Building image", "Started app"}}
+	s, r := newRedeployTestServer(t, runner)
+	s.deploysStore = deploys.NewStore(t.TempDir())
+	deployRoutes(s, r)
+	revisions := []string{"1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"}
+	calls := 0
+	s.runDeploymentAction = func(action, name string, opts actionOptions, emit func(string)) error {
+		opts.progress.phase(deploys.PhaseBuilding)
+		opts.progress.fetched(revisions[calls], "Add checkout page")
+		calls++
+		opts.progress.phase(deploys.PhaseDeploying)
+		return runner.run(action, name, opts, emit)
+	}
+	repo := gitRepoWithCompose(t)
+	create := httptest.NewRecorder()
+	r.ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/api/deployments",
+		strings.NewReader(`{"name":"gitapp","source":{"type":"git","ref":"file://`+repo+`","branch":"main"}}`)))
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", create.Code, create.Body.String())
+	}
+
+	for range revisions {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/deployments/gitapp/redeploy", nil))
+		var accepted map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &accepted)
+		if job := waitForJob(t, r, "gitapp", accepted["job_id"].(string)); job["phase"] != string(deploys.PhaseActive) {
+			t.Fatalf("job = %v", job)
+		}
+	}
+
+	records := listDeploys(t, r, "gitapp")
+	if len(records) != 2 {
+		t.Fatalf("records = %v", records)
+	}
+	newest, older := records[0], records[1]
+	if newest["phase"] != "active" || newest["revision"] != revisions[1] || newest["message"] != "Add checkout page" || newest["branch"] != "main" {
+		t.Fatalf("newest = %v", newest)
+	}
+	if older["phase"] != "removed" || older["revision"] != revisions[0] {
+		t.Fatalf("older = %v", older)
+	}
+	logs := httptest.NewRecorder()
+	r.ServeHTTP(logs, httptest.NewRequest(http.MethodGet, "/api/deployments/gitapp/deploys/"+newest["id"].(string)+"/logs", nil))
+	if !strings.Contains(logs.Body.String(), `Building image\nStarted app\n`) {
+		t.Fatalf("logs = %s", logs.Body.String())
 	}
 }
 

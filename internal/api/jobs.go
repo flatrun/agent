@@ -35,6 +35,8 @@ type ActionJob struct {
 
 	mu          sync.Mutex
 	status      JobStatus
+	phase       string
+	deployID    string
 	lines       []string
 	errMsg      string
 	startedAt   time.Time
@@ -51,6 +53,28 @@ func (j *ActionJob) setRunning() {
 	j.mu.Lock()
 	if j.status == JobPending {
 		j.status = JobRunning
+	}
+	j.mu.Unlock()
+}
+
+// phaseMarker prefixes phase changes on a subscriber channel, which otherwise
+// carries output lines.
+const phaseMarker = "\x00phase:"
+
+func (j *ActionJob) setDeploy(id string) {
+	j.mu.Lock()
+	j.deployID = id
+	j.mu.Unlock()
+}
+
+func (j *ActionJob) setPhase(phase string) {
+	j.mu.Lock()
+	j.phase = phase
+	for _, c := range j.subscribers {
+		select {
+		case c <- phaseMarker + phase:
+		default:
+		}
 	}
 	j.mu.Unlock()
 }
@@ -117,6 +141,8 @@ type JobSnapshot struct {
 	Service    string     `json:"service,omitempty"`
 	Action     string     `json:"action"`
 	Status     JobStatus  `json:"status"`
+	Phase      string     `json:"phase,omitempty"`
+	DeployID   string     `json:"deploy_id,omitempty"`
 	Output     string     `json:"output"`
 	Lines      []string   `json:"lines"`
 	Error      string     `json:"error,omitempty"`
@@ -134,6 +160,8 @@ func (j *ActionJob) snapshot() JobSnapshot {
 		Service:    j.service,
 		Action:     j.action,
 		Status:     j.status,
+		Phase:      j.phase,
+		DeployID:   j.deployID,
 		Output:     strings.Join(j.lines, "\n"),
 		Lines:      append([]string(nil), j.lines...),
 		Error:      j.errMsg,

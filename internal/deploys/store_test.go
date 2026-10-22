@@ -12,11 +12,11 @@ func TestStore_StartFinishList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Finish("app", first.ID, "aaa111", nil); err != nil {
+	if err := s.Finish("app", first.ID, "aaa111", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := s.Start("app", Record{Revision: "aaa111", Trigger: TriggerRollback})
-	if err := s.Finish("app", second.ID, "", errors.New("boom")); err != nil {
+	if err := s.Finish("app", second.ID, "", "", errors.New("boom")); err != nil {
 		t.Fatal(err)
 	}
 

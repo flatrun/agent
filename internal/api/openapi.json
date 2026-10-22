@@ -5160,6 +5160,38 @@
         "x-permission": "deployments:read"
       }
     },
+    "/api/deployments/{name}/deploys/{id}/logs": {
+      "get": {
+        "operationId": "get-deployments-by-name-deploys-by-id-logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
     "/api/deployments/{name}/deploys/{id}/rollback": {
       "post": {
         "operationId": "post-deployments-by-name-deploys-by-id-rollback",
@@ -13312,6 +13344,9 @@
           "action": {
             "type": "string"
           },
+          "deploy_id": {
+            "type": "string"
+          },
           "deployment": {
             "type": "string"
           },
@@ -13334,6 +13369,9 @@
           "output": {
             "type": "string"
           },
+          "phase": {
+            "type": "string"
+          },
           "service": {
             "type": "string"
           },
@@ -13351,6 +13389,8 @@
           "service",
           "action",
           "status",
+          "phase",
+          "deploy_id",
           "output",
           "lines",
           "error",
@@ -13363,6 +13403,8 @@
           "service",
           "action",
           "status",
+          "phase",
+          "deploy_id",
           "output",
           "error",
           "started_at",

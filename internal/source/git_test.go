@@ -69,6 +69,9 @@ func TestGitProvider_FetchLocalRepo(t *testing.T) {
 	if res.Revision == "" {
 		t.Error("expected a resolved revision")
 	}
+	if res.Message != "init" {
+		t.Errorf("message = %q, want the commit subject", res.Message)
+	}
 }
 
 func TestGitProvider_Subpath(t *testing.T) {

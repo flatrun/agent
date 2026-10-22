@@ -59,6 +59,7 @@ func (GitProvider) Fetch(ctx context.Context, d Descriptor, destDir string, log 
 	}
 
 	revision := gitRevision(ctx, destDir)
+	message := gitSubject(ctx, destDir)
 	_ = os.RemoveAll(filepath.Join(destDir, ".git"))
 
 	contentDir, err := resolveSubpath(destDir, d.Params["subpath"])
@@ -69,7 +70,7 @@ func (GitProvider) Fetch(ctx context.Context, d Descriptor, destDir string, log 
 		return nil, fmt.Errorf("subpath %q not found in repository", d.Params["subpath"])
 	}
 
-	return &Result{Dir: contentDir, Revision: revision}, nil
+	return &Result{Dir: contentDir, Revision: revision, Message: message}, nil
 }
 
 // authenticatedURL injects auth into an https clone URL. It leaves ssh and other
@@ -142,6 +143,14 @@ func gitVerb(args []string) string {
 
 func gitRevision(ctx context.Context, dir string) string {
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitSubject(ctx context.Context, dir string) string {
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "log", "-1", "--format=%s").Output()
 	if err != nil {
 		return ""
 	}

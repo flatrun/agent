@@ -30,6 +30,9 @@ type Auth struct {
 type Result struct {
 	Dir      string
 	Revision string
+	// Message is the subject line of the fetched commit, when the source has
+	// one.
+	Message string
 }
 
 // Provider fetches a source into destDir. log, when non-nil, receives progress

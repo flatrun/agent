@@ -559,6 +559,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/environments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listEnvironments)
 			protected.POST("/deployments/:name/environments", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createEnvironmentHandler)
 			protected.GET("/deployments/:name/deploys", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentDeploys)
+			protected.GET("/deployments/:name/deploys/:id/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeployLogs)
 			protected.POST("/deployments/:name/deploys/:id/rollback", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rollbackDeployment)
 			protected.POST("/deployments/:name/deploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deployDeployment)
 			protected.POST("/deployments/:name/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.pullDeploymentImage)
@@ -2595,7 +2596,12 @@ func (s *Server) enqueueDeploymentActionWith(c *gin.Context, action string, opts
 
 func (s *Server) runActionJob(job *ActionJob) {
 	job.setRunning()
-	err := s.runDeploymentAction(job.action, job.deployment, job.opts, job.appendLine)
+	emit, opts, finishRecord := job.appendLine, job.opts, func(error) {}
+	if recordedActions[job.action] && job.service == "" && s.deploysStore != nil {
+		emit, opts, finishRecord = s.recordDeploy(job)
+	}
+	err := s.runDeploymentAction(job.action, job.deployment, opts, emit)
+	finishRecord(err)
 	if err != nil {
 		s.jobs.finish(job, JobFailed, err.Error())
 		return
@@ -2614,6 +2620,8 @@ type actionOptions struct {
 	Revision string `json:"revision,omitempty"`
 	// Trigger records what started the action; set by the agent, never the body.
 	Trigger string `json:"-"`
+	// progress receives a recorded deploy's phase and fetched commit.
+	progress *deployProgress
 }
 
 func (o actionOptions) runOptions() []docker.RunOption {
@@ -2654,6 +2662,7 @@ func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionO
 	case "restart":
 		_, err = s.manager.RestartDeployment(name, opts...)
 	case "rebuild":
+		actOpts.progress.phase(deploys.PhaseBuilding)
 		_, err = s.manager.RebuildDeployment(name, opts...)
 	case "redeploy":
 		err = s.redeployFromSource(ctx, name, actOpts, opts, emit)

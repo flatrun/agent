@@ -75,6 +75,7 @@ type fetchedSource struct {
 	// from it, in which case composeContent is empty until the agent writes one.
 	builder  build.Kind
 	revision string
+	message  string
 	cleanup  func()
 }
 
@@ -145,6 +146,7 @@ func (s *Server) fetchDeploymentSourceWithLog(ctx context.Context, req *deployme
 			composeName: "docker-compose.yml",
 			builder:     kind,
 			revision:    result.Revision,
+			message:     result.Message,
 			cleanup:     cleanup,
 		}, nil
 	}
@@ -163,6 +165,7 @@ func (s *Server) fetchDeploymentSourceWithLog(ctx context.Context, req *deployme
 		composeContent: string(content),
 		builder:        build.KindCompose,
 		revision:       result.Revision,
+		message:        result.Message,
 		cleanup:        cleanup,
 	}, nil
 }
@@ -219,30 +222,14 @@ func (s *Server) redeployFromSource(ctx context.Context, name string, actOpts ac
 	req := deploymentSourceFrom(meta.Source)
 	req.Revision = actOpts.Revision
 
-	fetchedRevision := ""
-	if s.deploysStore != nil {
-		rec, recErr := s.deploysStore.Start(name, deploys.Record{
-			Revision: req.Revision,
-			Branch:   req.Branch,
-			Trigger:  deploys.Trigger(actOpts.Trigger),
-		})
-		if recErr != nil {
-			emit("Warning: failed to record deploy: " + recErr.Error())
-		} else {
-			defer func() {
-				if finishErr := s.deploysStore.Finish(name, rec.ID, fetchedRevision, err); finishErr != nil {
-					log.Printf("Warning: failed to close deploy record for %s: %v", name, finishErr)
-				}
-			}()
-		}
-	}
+	actOpts.progress.phase(deploys.PhaseBuilding)
 	emit(fmt.Sprintf("Fetching %s (%s)", req.Ref, describeRevision(req)))
 	fetched, err := s.fetchDeploymentSourceWithLog(ctx, req, emit)
 	if err != nil {
 		return err
 	}
 	defer fetched.cleanup()
-	fetchedRevision = fetched.revision
+	actOpts.progress.fetched(fetched.revision, fetched.message)
 
 	var compose string
 	if fetched.builder == build.KindCompose {
@@ -270,6 +257,7 @@ func (s *Server) redeployFromSource(ctx context.Context, name string, actOpts ac
 		return err
 	}
 	emit("Source " + shortRevision(fetched.revision) + " synced, rebuilding")
+	actOpts.progress.phase(deploys.PhaseDeploying)
 
 	if _, err := s.manager.RebuildDeployment(name, runOpts...); err != nil {
 		return err
@@ -326,6 +314,26 @@ func (s *Server) listDeploymentDeploys(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deploys": records})
+}
+
+// getDeployLogs returns the output stored for one deploy.
+func (s *Server) getDeployLogs(c *gin.Context) {
+	name := c.Param("name")
+	rec, err := s.deploysStore.Get(name, c.Param("id"))
+	if errors.Is(err, deploys.ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	output, err := s.deploysStore.ReadLog(name, rec.ID)
+	if err != nil && !errors.Is(err, deploys.ErrNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deploy": rec, "output": output})
 }
 
 // rollbackDeployment redeploys the revision a past deploy fetched.
