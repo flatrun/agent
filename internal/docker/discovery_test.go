@@ -897,3 +897,26 @@ func TestExtractBindMountsByService(t *testing.T) {
 		t.Fatalf("graph mounts = %v", got["graph"])
 	}
 }
+
+func TestParseComposeServicesListsServicesByName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	content := "services:\n  web:\n    image: nginx:alpine\n  api:\n    image: busybox:latest\n  worker:\n    image: busybox:latest\n  db:\n    image: postgres:16-alpine\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDiscovery(dir)
+	for i := 0; i < 50; i++ {
+		services, err := d.parseComposeServices(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, s := range services {
+			names = append(names, s.Name)
+		}
+		if got := strings.Join(names, ","); got != "api,db,web,worker" {
+			t.Fatalf("run %d listed %s", i, got)
+		}
+	}
+}

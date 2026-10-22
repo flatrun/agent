@@ -317,6 +317,7 @@ func (d *Discovery) parseComposeServices(composePath string) ([]models.Service, 
 
 		services = append(services, service)
 	}
+	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 
 	return services, nil
 }
