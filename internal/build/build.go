@@ -1,89 +1,90 @@
 // Package build turns a source tree without a compose file into a container
-// image: with its own Dockerfile when it has one, otherwise with Railpack, which
-// detects the language and builds without any configuration.
+// image. Each way of building is a Builder; a Registry tries them in order and
+// the first that recognizes the tree builds it. Adding or replacing a builder
+// is a registration, not a change to the deploy flow.
 package build
 
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/flatrun/agent/internal/docker"
 )
 
+// Kind names how a source runs: KindCompose for a tree that brings its own
+// compose file, otherwise the Name of the builder that builds it.
 type Kind string
 
-const (
-	KindCompose    Kind = "compose"
-	KindDockerfile Kind = "dockerfile"
-	KindRailpack   Kind = "railpack"
-)
+const KindCompose Kind = "compose"
 
-// RailpackFrontend is the BuildKit frontend image that executes a Railpack plan.
-const RailpackFrontend = "ghcr.io/railwayapp/railpack-frontend"
+// Request is one build: the source tree, a scratch directory outside it for
+// builder-generated files, and the image tag to produce.
+type Request struct {
+	Dir     string
+	Scratch string
+	Tag     string
+}
 
-var ErrRailpackMissing = errors.New("railpack is not installed on this server; install it with the FlatRun installer or from https://railpack.com to build repositories without a Dockerfile")
+type Builder interface {
+	Name() Kind
+	// Detect reports whether this builder can build the tree in dir.
+	Detect(dir string) bool
+	Build(ctx context.Context, req Request, sink func(string)) error
+}
 
-// Detect picks how a source tree is run: its compose file, then its Dockerfile,
-// then Railpack.
-func Detect(dir string) Kind {
+// Registry holds builders in priority order.
+type Registry struct {
+	builders []Builder
+}
+
+func NewRegistry(builders ...Builder) *Registry {
+	return &Registry{builders: builders}
+}
+
+// DefaultRegistry builds with the repository's own Dockerfile when it has one
+// and falls back to Railpack's zero-config detection.
+func DefaultRegistry() *Registry {
+	run := Runner(runCommand)
+	return NewRegistry(
+		Dockerfile{Run: run},
+		Railpack{Run: run, LookPath: exec.LookPath},
+	)
+}
+
+// Detect picks how a source tree runs: its compose file, else the first
+// builder that recognizes it. It returns "" when nothing can build it.
+func (r *Registry) Detect(dir string) Kind {
 	if docker.FindComposeFile(dir) != "" {
 		return KindCompose
 	}
-	if info, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil && !info.IsDir() {
-		return KindDockerfile
-	}
-	return KindRailpack
-}
-
-// Runner executes one command, streaming its combined output lines to sink.
-type Runner func(ctx context.Context, name string, args []string, sink func(string)) error
-
-type Builder struct {
-	Run      Runner
-	LookPath func(string) (string, error)
-}
-
-func New() *Builder {
-	return &Builder{Run: runCommand, LookPath: exec.LookPath}
-}
-
-// Build produces image tag from dir. scratch holds the Railpack plan files and
-// must not be inside dir, so the plan never becomes part of the build context.
-func (b *Builder) Build(ctx context.Context, kind Kind, dir, scratch, tag string, sink func(string)) error {
-	switch kind {
-	case KindDockerfile:
-		sink("Building " + tag + " from Dockerfile")
-		return b.Run(ctx, "docker", []string{"build", "-t", tag, dir}, sink)
-	case KindRailpack:
-		if _, err := b.LookPath("railpack"); err != nil {
-			return ErrRailpackMissing
+	for _, b := range r.builders {
+		if b.Detect(dir) {
+			return b.Name()
 		}
-		plan := filepath.Join(scratch, "railpack-plan.json")
-		info := filepath.Join(scratch, "railpack-info.json")
-		sink("Detecting build plan with Railpack")
-		if err := b.Run(ctx, "railpack", []string{"prepare", dir, "--plan-out", plan, "--info-out", info}, sink); err != nil {
-			return fmt.Errorf("railpack could not plan this build: %w", err)
-		}
-		sink("Building " + tag + " with Railpack")
-		return b.Run(ctx, "docker", []string{
-			"buildx", "build",
-			"--build-arg", "BUILDKIT_SYNTAX=" + RailpackFrontend,
-			"-f", plan,
-			"--load",
-			"-t", tag,
-			dir,
-		}, sink)
-	default:
-		return fmt.Errorf("nothing to build for %q sources", kind)
 	}
+	return ""
+}
+
+func (r *Registry) Get(kind Kind) (Builder, bool) {
+	for _, b := range r.builders {
+		if b.Name() == kind {
+			return b, true
+		}
+	}
+	return nil, false
+}
+
+func (r *Registry) Build(ctx context.Context, kind Kind, req Request, sink func(string)) error {
+	b, ok := r.Get(kind)
+	if !ok {
+		return fmt.Errorf("no builder registered for %q", kind)
+	}
+	return b.Build(ctx, req, sink)
 }
 
 // ImageTag names the image built for a deployment at a revision.
@@ -96,6 +97,9 @@ func ImageTag(deployment, revision string) string {
 	}
 	return "flatrun/" + strings.ToLower(deployment) + ":" + revision
 }
+
+// Runner executes one command, streaming its combined output lines to sink.
+type Runner func(ctx context.Context, name string, args []string, sink func(string)) error
 
 func runCommand(ctx context.Context, name string, args []string, sink func(string)) error {
 	cmd := exec.CommandContext(ctx, name, args...)

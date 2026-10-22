@@ -16,7 +16,7 @@ func write(t *testing.T, dir, name string) {
 	}
 }
 
-func TestDetect(t *testing.T) {
+func TestRegistry_Detect(t *testing.T) {
 	compose := t.TempDir()
 	write(t, compose, "compose.yaml")
 	write(t, compose, "Dockerfile")
@@ -25,11 +25,48 @@ func TestDetect(t *testing.T) {
 	plain := t.TempDir()
 	write(t, plain, "package.json")
 
+	r := DefaultRegistry()
 	cases := map[string]Kind{compose: KindCompose, dockerfile: KindDockerfile, plain: KindRailpack}
 	for dir, want := range cases {
-		if got := Detect(dir); got != want {
+		if got := r.Detect(dir); got != want {
 			t.Errorf("Detect(%s) = %s, want %s", filepath.Base(dir), got, want)
 		}
+	}
+}
+
+type fakeBuilder struct {
+	name  Kind
+	built *Request
+}
+
+func (f *fakeBuilder) Name() Kind         { return f.name }
+func (f *fakeBuilder) Detect(string) bool { return true }
+func (f *fakeBuilder) Build(_ context.Context, req Request, _ func(string)) error {
+	f.built = &req
+	return nil
+}
+
+func TestRegistry_OrderAndReplacement(t *testing.T) {
+	custom := &fakeBuilder{name: "buildpacks"}
+	r := NewRegistry(custom, Railpack{})
+	dir := t.TempDir()
+	write(t, dir, "main.go")
+
+	if got := r.Detect(dir); got != "buildpacks" {
+		t.Fatalf("Detect = %s, want the first registered builder", got)
+	}
+	req := Request{Dir: dir, Scratch: t.TempDir(), Tag: "flatrun/app:1"}
+	if err := r.Build(context.Background(), "buildpacks", req, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if custom.built == nil || *custom.built != req {
+		t.Errorf("custom builder got %+v", custom.built)
+	}
+	if err := r.Build(context.Background(), "nixpacks", req, func(string) {}); err == nil {
+		t.Error("building with an unregistered builder should fail")
+	}
+	if got := NewRegistry().Detect(dir); got != "" {
+		t.Errorf("empty registry Detect = %q, want none", got)
 	}
 }
 
@@ -38,25 +75,17 @@ type call struct {
 	args []string
 }
 
-func recordingBuilder(calls *[]call, railpack bool) *Builder {
-	return &Builder{
-		Run: func(_ context.Context, name string, args []string, _ func(string)) error {
-			*calls = append(*calls, call{name, args})
-			return nil
-		},
-		LookPath: func(string) (string, error) {
-			if railpack {
-				return "/usr/local/bin/railpack", nil
-			}
-			return "", errors.New("not found")
-		},
+func recorder(calls *[]call) Runner {
+	return func(_ context.Context, name string, args []string, _ func(string)) error {
+		*calls = append(*calls, call{name, args})
+		return nil
 	}
 }
 
-func TestBuild_Railpack(t *testing.T) {
+func TestRailpack_Build(t *testing.T) {
 	var calls []call
-	b := recordingBuilder(&calls, true)
-	if err := b.Build(context.Background(), KindRailpack, "/src", "/scratch", "flatrun/app:abc", func(string) {}); err != nil {
+	b := Railpack{Run: recorder(&calls), LookPath: func(string) (string, error) { return "/usr/local/bin/railpack", nil }}
+	if err := b.Build(context.Background(), Request{Dir: "/src", Scratch: "/scratch", Tag: "flatrun/app:abc"}, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	want := []call{
@@ -68,15 +97,23 @@ func TestBuild_Railpack(t *testing.T) {
 	}
 }
 
-func TestBuild_RailpackMissing(t *testing.T) {
+func TestRailpack_Missing(t *testing.T) {
 	var calls []call
-	b := recordingBuilder(&calls, false)
-	err := b.Build(context.Background(), KindRailpack, "/src", "/scratch", "flatrun/app:abc", func(string) {})
-	if !errors.Is(err, ErrRailpackMissing) {
-		t.Errorf("err = %v, want ErrRailpackMissing", err)
+	b := Railpack{Run: recorder(&calls), LookPath: func(string) (string, error) { return "", errors.New("not found") }}
+	err := b.Build(context.Background(), Request{Dir: "/src", Scratch: "/scratch", Tag: "t"}, func(string) {})
+	if !errors.Is(err, ErrRailpackMissing) || len(calls) != 0 {
+		t.Errorf("err = %v, calls = %+v; want ErrRailpackMissing and no commands", err, calls)
 	}
-	if len(calls) != 0 {
-		t.Errorf("no command should run without railpack, got %+v", calls)
+}
+
+func TestDockerfile_Build(t *testing.T) {
+	var calls []call
+	if err := (Dockerfile{Run: recorder(&calls)}).Build(context.Background(), Request{Dir: "/src", Tag: "flatrun/app:abc"}, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	want := []call{{"docker", []string{"build", "-t", "flatrun/app:abc", "/src"}}}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls = %+v", calls)
 	}
 }
 

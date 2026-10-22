@@ -125,7 +125,11 @@ func (s *Server) fetchDeploymentSourceWithLog(ctx context.Context, req *deployme
 		return nil, err
 	}
 
-	kind := build.Detect(result.Dir)
+	kind := s.builders.Detect(result.Dir)
+	if kind == "" {
+		cleanup()
+		return nil, fmt.Errorf("no compose file found and no builder can build this source")
+	}
 	if kind != build.KindCompose {
 		// The compose file the agent writes for a built image loads this file,
 		// so validating it against the fetched tree needs it present.
@@ -380,7 +384,7 @@ func (s *Server) buildSourceImage(ctx context.Context, name string, meta *models
 	defer func() { _ = os.RemoveAll(scratch) }()
 
 	tag := build.ImageTag(name, fetched.revision)
-	if err := s.builder.Build(ctx, fetched.builder, fetched.dir, scratch, tag, emit); err != nil {
+	if err := s.builders.Build(ctx, fetched.builder, build.Request{Dir: fetched.dir, Scratch: scratch, Tag: tag}, emit); err != nil {
 		return "", err
 	}
 

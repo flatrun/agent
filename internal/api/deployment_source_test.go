@@ -59,7 +59,7 @@ func TestResolveSourceAuth(t *testing.T) {
 }
 
 func TestFetchDeploymentSource_UnknownType(t *testing.T) {
-	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{})}
+	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{}), builders: build.DefaultRegistry()}
 
 	_, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{Type: "svn", Ref: "x"})
 	if err == nil {
@@ -69,7 +69,7 @@ func TestFetchDeploymentSource_UnknownType(t *testing.T) {
 
 func TestFetchDeploymentSource_Git(t *testing.T) {
 	repo := gitRepoWithCompose(t)
-	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{})}
+	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{}), builders: build.DefaultRegistry()}
 
 	fetched, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{
 		Type:   "git",
@@ -110,7 +110,7 @@ func TestFetchDeploymentSource_NoComposeIsBuilt(t *testing.T) {
 	run("add", "-A")
 	run("commit", "-m", "init")
 
-	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{})}
+	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{}), builders: build.DefaultRegistry()}
 	fetched, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{
 		Type: "git", Ref: "file://" + dir, Branch: "main",
 	})
@@ -130,6 +130,7 @@ func TestCreateDeploymentFromGit_RecordsSource(t *testing.T) {
 		config:         &config.Config{Infrastructure: config.InfrastructureConfig{DefaultProxyNetwork: "proxy"}},
 		manager:        docker.NewManager(base),
 		sourceRegistry: source.NewRegistry(source.GitProvider{}),
+		builders:       build.DefaultRegistry(),
 	}
 	router := gin.New()
 	router.POST("/deployments", s.createDeployment)

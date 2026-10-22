@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flatrun/agent/internal/build"
 	"github.com/flatrun/agent/internal/deploys"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/source"
@@ -25,6 +26,7 @@ func newRedeployTestServer(t *testing.T, runner *fakeRunner) (*Server, *gin.Engi
 	s.config = &config.Config{DeploymentsPath: base, Infrastructure: config.InfrastructureConfig{DefaultProxyNetwork: "proxy"}}
 	s.manager = docker.NewManager(base)
 	s.sourceRegistry = source.NewRegistry(source.GitProvider{})
+	s.builders = build.DefaultRegistry()
 	r := gin.New()
 	r.POST("/api/deployments", s.createDeployment)
 	r.POST("/api/deployments/:name/redeploy", s.redeployDeployment)

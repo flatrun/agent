@@ -121,7 +121,7 @@ type Server struct {
 	certRenewer        *ssl.Renewer
 	planStore          *plan.Store
 	deploysStore       *deploys.Store
-	builder            *build.Builder
+	builders           *build.Registry
 	webhooks           *webhook.Registry
 	runInBackground    func(func())
 	aiProvider         ai.Provider
@@ -403,7 +403,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		setupHandlers:      setup.NewHandlers(setupManager, authManager),
 		planStore:          plan.NewStore(cfg.DeploymentsPath),
 		deploysStore:       deploys.NewStore(cfg.DeploymentsPath),
-		builder:            build.New(),
+		builders:           build.DefaultRegistry(),
 		webhooks:           webhook.DefaultRegistry(),
 		aiSessions:         ai.NewSessionStore(cfg.DeploymentsPath),
 		aiAgents:           ai.NewAgentStore(cfg.DeploymentsPath),
