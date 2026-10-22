@@ -129,3 +129,7 @@ func (m *Manager) cleanupLoop() {
 		}
 	}
 }
+
+func (m *Manager) LastSeen(deploymentName string) (time.Time, error) {
+	return m.db.LastSeen(deploymentName)
+}

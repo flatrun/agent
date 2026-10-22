@@ -6893,6 +6893,56 @@
         "x-permission": "deployments:read"
       }
     },
+    "/api/deployments/{name}/sleep": {
+      "put": {
+        "operationId": "put-deployments-by-name-sleep",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "idle_minutes": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "enabled",
+                  "idle_minutes"
+                ],
+                "x-property-order": [
+                  "enabled",
+                  "idle_minutes"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/source": {
       "put": {
         "operationId": "put-deployments-by-name-source",
@@ -15520,6 +15570,9 @@
               "type": "string"
             }
           },
+          "sleep": {
+            "$ref": "#/components/schemas/models.SleepConfig"
+          },
           "source": {
             "$ref": "#/components/schemas/models.SourceConfig"
           },
@@ -15552,7 +15605,8 @@
           "domains",
           "databases",
           "source",
-          "environment"
+          "environment",
+          "sleep"
         ],
         "x-columns": [
           "name",
@@ -15561,6 +15615,30 @@
           "primary_service",
           "require_plan",
           "credential_id"
+        ]
+      },
+      "models.SleepConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "idle_minutes": {
+            "type": "integer"
+          },
+          "sleeping": {
+            "type": "boolean"
+          }
+        },
+        "x-property-order": [
+          "enabled",
+          "idle_minutes",
+          "sleeping"
+        ],
+        "x-columns": [
+          "enabled",
+          "idle_minutes",
+          "sleeping"
         ]
       },
       "models.SourceConfig": {

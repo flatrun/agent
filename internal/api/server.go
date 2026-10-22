@@ -55,6 +55,7 @@ import (
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/setup"
+	"github.com/flatrun/agent/internal/sleep"
 	"github.com/flatrun/agent/internal/source"
 	"github.com/flatrun/agent/internal/ssl"
 	"github.com/flatrun/agent/internal/system"
@@ -124,6 +125,8 @@ type Server struct {
 	builders           *build.Registry
 	webhooks           *webhook.Registry
 	runInBackground    func(func())
+	sleeper            *sleep.Controller
+	sleepCancel        context.CancelFunc
 	aiProvider         ai.Provider
 	triageBudget       *triageBudget
 	aiSessions         *ai.SessionStore
@@ -415,6 +418,11 @@ func New(cfg *config.Config, configPath string) *Server {
 	if err := s.reconcileClusterPeerPolicies(); err != nil {
 		log.Printf("Warning: Failed to reconcile Fleet peer access: %v", err)
 	}
+	s.sleeper = s.newSleepController()
+	sleepContext, cancelSleep := context.WithCancel(context.Background())
+	s.sleepCancel = cancelSleep
+	go s.runSleepLoop(sleepContext)
+
 	if s.autoscaleStore != nil {
 		autoscaleContext, cancelAutoscale := context.WithCancel(context.Background())
 		s.autoscaleCancel = cancelAutoscale
@@ -481,6 +489,8 @@ func (s *Server) setupRoutes() {
 		api.POST("/access/verify", s.confirmApplicationAccess)
 		// Authenticated by the deployment's webhook secret, not a session.
 		api.POST("/hooks/:provider/:deployment", s.receiveWebhook)
+		// Reached through nginx's fallback when a sleeping deployment is down.
+		api.Any("/hooks/wake/:deployment", s.wakeDeployment)
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
@@ -531,6 +541,7 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/deployments/:name/source", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentSource)
 			protected.GET("/deployments/:name/webhook", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentWebhook)
 			protected.POST("/deployments/:name/webhook/rotate", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rotateDeploymentWebhook)
+			protected.PUT("/deployments/:name/sleep", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentSleep)
 			protected.GET("/deployments/:name/environments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listEnvironments)
 			protected.POST("/deployments/:name/environments", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createEnvironmentHandler)
 			protected.GET("/deployments/:name/deploys", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentDeploys)
@@ -1055,6 +1066,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	if s.sleepCancel != nil {
+		s.sleepCancel()
+	}
 	if s.autoscaleCancel != nil {
 		s.autoscaleCancel()
 	}
@@ -2604,6 +2618,9 @@ func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionO
 		err = s.redeployFromSource(ctx, name, actOpts, opts, emit)
 	default:
 		err = fmt.Errorf("unsupported deployment action: %s", action)
+	}
+	if err == nil && action != "stop" {
+		s.markAwake(name)
 	}
 	return err
 }

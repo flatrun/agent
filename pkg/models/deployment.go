@@ -50,6 +50,15 @@ type ServiceMetadata struct {
 	Databases          []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
 	Source             *SourceConfig             `yaml:"source,omitempty" json:"source,omitempty"`
 	Environment        *EnvironmentInfo          `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Sleep              *SleepConfig              `yaml:"sleep,omitempty" json:"sleep,omitempty"`
+}
+
+// SleepConfig stops a deployment after a stretch without traffic and starts
+// it again on the next request. Sleeping is set by the agent.
+type SleepConfig struct {
+	Enabled     bool `yaml:"enabled" json:"enabled"`
+	IdleMinutes int  `yaml:"idle_minutes" json:"idle_minutes"`
+	Sleeping    bool `yaml:"sleeping,omitempty" json:"sleeping"`
 }
 
 // EnvironmentInfo marks a deployment as another environment of a base
