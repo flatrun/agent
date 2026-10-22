@@ -912,3 +912,64 @@ func (d *Discovery) extractContainerPort(portStr string) int {
 	}
 	return port
 }
+
+// SyncSourceTree copies a refetched source tree over an existing deployment.
+// Files are added or overwritten, never deleted. Environment files, service
+// metadata, compose files and bind-mounted paths are left untouched so local
+// state and data survive a redeploy.
+func (d *Discovery) SyncSourceTree(name, srcDir string) error {
+	dirPath := filepath.Join(d.basePath, name)
+	var protected []string
+	if composePath := d.findComposeFile(dirPath); composePath != "" {
+		if data, err := os.ReadFile(composePath); err == nil {
+			for _, hostPath := range ExtractBindMounts(string(data)) {
+				protected = append(protected, filepath.Clean(hostPath))
+			}
+		}
+	}
+
+	srcCompose := FindComposeFile(srcDir)
+	skip := func(rel string) bool {
+		top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
+		if strings.HasPrefix(top, ".env") || top == "service.yml" || top == ".flatrun" {
+			return true
+		}
+		if filepath.Join(srcDir, rel) == srcCompose {
+			return true
+		}
+		for _, p := range protected {
+			if rel == p || strings.HasPrefix(rel, p+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		if skip(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		target := filepath.Join(dirPath, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm()|0700)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
+}

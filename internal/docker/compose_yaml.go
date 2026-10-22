@@ -586,3 +586,64 @@ func addNetworkToComposeServices(content string, networkName string, selected ma
 
 	return strings.TrimSpace(string(result)), nil
 }
+
+// CarryExternalNetworks re-attaches the external networks that services in prev
+// joined to the same-named services in next. A refetched compose file lacks the
+// proxy and database networks the agent added when the deployment was created.
+func CarryExternalNetworks(prev, next string) (string, error) {
+	compose, err := ParseComposeYAML(prev)
+	if err != nil {
+		return next, err
+	}
+	external := make(map[string]bool)
+	if networks, ok := compose["networks"].(map[string]interface{}); ok {
+		for name, def := range networks {
+			if spec, ok := def.(map[string]interface{}); ok && spec["external"] == true {
+				external[name] = true
+			}
+		}
+	}
+	if len(external) == 0 {
+		return next, nil
+	}
+
+	nextCompose, err := ParseComposeYAML(next)
+	if err != nil {
+		return next, err
+	}
+	nextServices, _ := nextCompose["services"].(map[string]interface{})
+
+	services, _ := compose["services"].(map[string]interface{})
+	result := next
+	for serviceName, serviceData := range services {
+		if _, ok := nextServices[serviceName]; !ok {
+			continue
+		}
+		service, ok := serviceData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		var joined []string
+		switch n := service["networks"].(type) {
+		case []interface{}:
+			for _, net := range n {
+				if s, ok := net.(string); ok {
+					joined = append(joined, s)
+				}
+			}
+		case map[string]interface{}:
+			for net := range n {
+				joined = append(joined, net)
+			}
+		}
+		for _, net := range joined {
+			if !external[net] {
+				continue
+			}
+			if result, err = AddNetworkToComposeService(result, net, serviceName); err != nil {
+				return next, err
+			}
+		}
+	}
+	return result, nil
+}

@@ -515,6 +515,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.stopDeployment)
 			protected.POST("/deployments/:name/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.restartDeployment)
 			protected.POST("/deployments/:name/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rebuildDeployment)
+			protected.POST("/deployments/:name/redeploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.redeployDeployment)
 			protected.POST("/deployments/:name/deploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deployDeployment)
 			protected.POST("/deployments/:name/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.pullDeploymentImage)
 			protected.GET("/deployments/:name/images", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentImages)
@@ -2472,6 +2473,10 @@ type actionOptions struct {
 	ForceRecreate bool `json:"force_recreate"`
 	NoCache       bool `json:"no_cache"`
 	FreshPull     bool `json:"fresh_pull"`
+	// Revision pins a redeploy to one commit of the deployment's source.
+	Revision string `json:"revision,omitempty"`
+	// Trigger records what started the action; set by the agent, never the body.
+	Trigger string `json:"-"`
 }
 
 func (o actionOptions) runOptions() []docker.RunOption {
@@ -2507,6 +2512,8 @@ func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionO
 		_, err = s.manager.RestartDeployment(name, opts...)
 	case "rebuild":
 		_, err = s.manager.RebuildDeployment(name, opts...)
+	case "redeploy":
+		err = s.redeployFromSource(ctx, name, actOpts, opts, emit)
 	default:
 		err = fmt.Errorf("unsupported deployment action: %s", action)
 	}

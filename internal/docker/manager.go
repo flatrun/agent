@@ -981,3 +981,15 @@ func (m *Manager) ListInfrastructure() ([]models.Deployment, error) {
 
 	return deployments, nil
 }
+
+// UpdateDeploymentFromSource syncs a refetched source tree into the deployment
+// and replaces its compose file, keeping a backup of the previous one.
+func (m *Manager) UpdateDeploymentFromSource(name, srcDir, composeContent string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.discovery.SyncSourceTree(name, srcDir); err != nil {
+		return fmt.Errorf("failed to sync source into deployment: %w", err)
+	}
+	return m.discovery.UpdateComposeFile(name, composeContent)
+}

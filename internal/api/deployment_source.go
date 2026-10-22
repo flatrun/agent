@@ -2,14 +2,17 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/source"
 	"github.com/flatrun/agent/pkg/models"
+	"github.com/gin-gonic/gin"
 )
 
 // deploymentSource is the create-deployment request field that points at code to
@@ -75,6 +78,15 @@ type fetchedSource struct {
 // directory is the caller's to release through the returned cleanup once the
 // files have been copied into the deployment.
 func (s *Server) fetchDeploymentSource(ctx context.Context, req *deploymentSource) (*fetchedSource, error) {
+	return s.fetchDeploymentSourceWithLog(ctx, req, nil)
+}
+
+// fetchDeploymentSourceWithLog is fetchDeploymentSource with fetch progress sent
+// to logf, so a redeploy job can stream it. A nil logf writes to the agent log.
+func (s *Server) fetchDeploymentSourceWithLog(ctx context.Context, req *deploymentSource, logf func(string)) (*fetchedSource, error) {
+	if logf == nil {
+		logf = func(line string) { log.Printf("[source:%s] %s", req.Type, line) }
+	}
 	provider, ok := s.sourceRegistry.Get(req.Type)
 	if !ok {
 		return nil, fmt.Errorf("unknown source type %q", req.Type)
@@ -102,9 +114,7 @@ func (s *Server) fetchDeploymentSource(ctx context.Context, req *deploymentSourc
 		Auth: auth,
 	}
 
-	result, err := provider.Fetch(ctx, descriptor, filepath.Join(tmp, "src"), func(line string) {
-		log.Printf("[source:%s] %s", req.Type, line)
-	})
+	result, err := provider.Fetch(ctx, descriptor, filepath.Join(tmp, "src"), logf)
 	if err != nil {
 		cleanup()
 		return nil, err
@@ -164,4 +174,94 @@ func (s *Server) recordDeploymentSource(name string, cfg *models.SourceConfig) e
 	}
 	meta.Source = cfg
 	return s.manager.SaveMetadata(name, meta)
+}
+
+var errNoSource = errors.New("deployment was not created from a source")
+
+// redeployFromSource refetches a deployment's recorded source (at a pinned
+// revision when given), syncs it into the deployment directory and rebuilds.
+func (s *Server) redeployFromSource(ctx context.Context, name string, actOpts actionOptions, runOpts []docker.RunOption, emit func(string)) error {
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		return err
+	}
+	if deployment.Metadata == nil || deployment.Metadata.Source == nil {
+		return errNoSource
+	}
+	meta := deployment.Metadata
+
+	req := deploymentSourceFrom(meta.Source)
+	req.Revision = actOpts.Revision
+	emit(fmt.Sprintf("Fetching %s (%s)", req.Ref, describeRevision(req)))
+	fetched, err := s.fetchDeploymentSourceWithLog(ctx, req, emit)
+	if err != nil {
+		return err
+	}
+	defer fetched.cleanup()
+
+	compose := fetched.composeContent
+	if content, err := docker.EnsureContainerNames(compose, name); err == nil {
+		compose = content
+	}
+	if current, _, err := s.manager.GetComposeFile(name); err == nil {
+		if carried, err := docker.CarryExternalNetworks(current, compose); err == nil {
+			compose = carried
+		} else {
+			emit("Warning: could not carry networks over: " + err.Error())
+		}
+	}
+	if err := s.validateNewComposeContent(compose, name, nil, fetched.dir); err != nil {
+		return fmt.Errorf("invalid compose content in source: %w", err)
+	}
+
+	if err := s.manager.UpdateDeploymentFromSource(name, fetched.dir, compose); err != nil {
+		return err
+	}
+	emit("Source " + shortRevision(fetched.revision) + " synced, rebuilding")
+
+	if _, err := s.manager.RebuildDeployment(name, runOpts...); err != nil {
+		return err
+	}
+
+	if updated, err := s.manager.GetDeployment(name); err == nil && updated.Metadata != nil && updated.Metadata.Source != nil {
+		updated.Metadata.Source.LastRevision = fetched.revision
+		if err := s.manager.SaveMetadata(name, updated.Metadata); err != nil {
+			emit("Warning: failed to record revision: " + err.Error())
+		}
+	}
+	return nil
+}
+
+func describeRevision(req *deploymentSource) string {
+	if req.Revision != "" {
+		return "revision " + shortRevision(req.Revision)
+	}
+	if req.Branch != "" {
+		return "branch " + req.Branch
+	}
+	return "default branch"
+}
+
+func shortRevision(rev string) string {
+	if len(rev) > 7 {
+		return rev[:7]
+	}
+	return rev
+}
+
+func (s *Server) redeployDeployment(c *gin.Context) {
+	name := c.Param("name")
+	if !s.requireUnprotectedDeploymentAction(c, name, protectedActionRebuild) {
+		return
+	}
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if deployment.Metadata == nil || deployment.Metadata.Source == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errNoSource.Error()})
+		return
+	}
+	s.enqueueDeploymentAction(c, "redeploy")
 }

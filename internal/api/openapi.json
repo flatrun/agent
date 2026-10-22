@@ -6328,6 +6328,30 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/deployments/{name}/redeploy": {
+      "post": {
+        "operationId": "post-deployments-by-name-redeploy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "deployments"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/deployments/{name}/resources": {
       "get": {
         "operationId": "get-deployments-by-name-resources",
