@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -258,23 +259,32 @@ func ContainerNameForService(content, deploymentName, service string) string {
 		}
 	}
 
-	var primaryService string
-	for name := range services {
-		if svc, ok := services[name].(map[string]interface{}); ok && replicated(svc) {
-			continue
-		}
-		if name == "app" {
-			primaryService = "app"
-			break
-		}
-		if primaryService == "" {
-			primaryService = name
-		}
-	}
+	primaryService := primaryServiceName(services)
 	if service == primaryService {
 		return deploymentName
 	}
 	return scoped
+}
+
+// primaryServiceName picks the service that is named after the deployment:
+// "app" when there is one, otherwise the first name in sorted order, so the
+// choice is the same on every deploy. Replicated services cannot be named.
+func primaryServiceName(services map[string]interface{}) string {
+	names := make([]string, 0, len(services))
+	for name, raw := range services {
+		if svc, ok := raw.(map[string]interface{}); ok && replicated(svc) {
+			continue
+		}
+		if name == "app" {
+			return name
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return names[0]
 }
 
 // replicated reports whether a service asks for more than one container.
@@ -322,20 +332,7 @@ func EnsureContainerNames(content string, deploymentName string) (string, error)
 		return content, nil
 	}
 
-	// Find the primary service (prefer "app" if exists, otherwise take first)
-	var primaryService string
-	for name := range services {
-		if svc, ok := services[name].(map[string]interface{}); ok && replicated(svc) {
-			continue
-		}
-		if name == "app" {
-			primaryService = "app"
-			break
-		}
-		if primaryService == "" {
-			primaryService = name
-		}
-	}
+	primaryService := primaryServiceName(services)
 
 	for name := range services {
 		service, ok := services[name].(map[string]interface{})
