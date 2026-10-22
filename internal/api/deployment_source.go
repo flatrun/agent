@@ -328,12 +328,15 @@ func (s *Server) getDeployLogs(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	output, err := s.deploysStore.ReadLog(name, rec.ID)
+	output, phases, err := s.deploysStore.ReadLog(name, rec.ID)
 	if err != nil && !errors.Is(err, deploys.ErrNotFound) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"deploy": rec, "output": output})
+	if phases == nil {
+		phases = []deploys.PhaseStart{}
+	}
+	c.JSON(http.StatusOK, gin.H{"deploy": rec, "output": output, "phases": phases})
 }
 
 // rollbackDeployment redeploys the revision a past deploy fetched.

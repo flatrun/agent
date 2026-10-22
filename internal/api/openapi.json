@@ -13372,6 +13372,12 @@
           "phase": {
             "type": "string"
           },
+          "phases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/deploys.PhaseStart"
+            }
+          },
           "service": {
             "type": "string"
           },
@@ -13390,6 +13396,7 @@
           "action",
           "status",
           "phase",
+          "phases",
           "deploy_id",
           "output",
           "lines",
@@ -15470,6 +15477,25 @@
         "x-property-order": [
           "columns",
           "indexes"
+        ]
+      },
+      "deploys.PhaseStart": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "integer"
+          },
+          "phase": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "phase",
+          "from"
+        ],
+        "x-columns": [
+          "phase",
+          "from"
         ]
       },
       "dns.PowerDNSStatus": {

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flatrun/agent/internal/deploys"
 	"github.com/google/uuid"
 )
 
@@ -36,6 +37,7 @@ type ActionJob struct {
 	mu          sync.Mutex
 	status      JobStatus
 	phase       string
+	phases      []deploys.PhaseStart
 	deployID    string
 	lines       []string
 	errMsg      string
@@ -69,6 +71,9 @@ func (j *ActionJob) setDeploy(id string) {
 
 func (j *ActionJob) setPhase(phase string) {
 	j.mu.Lock()
+	if phase != j.phase {
+		j.phases = append(j.phases, deploys.PhaseStart{Phase: deploys.Phase(phase), From: len(j.lines)})
+	}
 	j.phase = phase
 	for _, c := range j.subscribers {
 		select {
@@ -136,18 +141,20 @@ func (j *ActionJob) subscribe() (buffered []string, ch <-chan string, cancel fun
 }
 
 type JobSnapshot struct {
-	ID         string     `json:"id"`
-	Deployment string     `json:"deployment"`
-	Service    string     `json:"service,omitempty"`
-	Action     string     `json:"action"`
-	Status     JobStatus  `json:"status"`
-	Phase      string     `json:"phase,omitempty"`
-	DeployID   string     `json:"deploy_id,omitempty"`
-	Output     string     `json:"output"`
-	Lines      []string   `json:"lines"`
-	Error      string     `json:"error,omitempty"`
-	StartedAt  time.Time  `json:"started_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	ID         string    `json:"id"`
+	Deployment string    `json:"deployment"`
+	Service    string    `json:"service,omitempty"`
+	Action     string    `json:"action"`
+	Status     JobStatus `json:"status"`
+	Phase      string    `json:"phase,omitempty"`
+	// Phases says at which output line each phase began.
+	Phases     []deploys.PhaseStart `json:"phases,omitempty"`
+	DeployID   string               `json:"deploy_id,omitempty"`
+	Output     string               `json:"output"`
+	Lines      []string             `json:"lines"`
+	Error      string               `json:"error,omitempty"`
+	StartedAt  time.Time            `json:"started_at"`
+	FinishedAt *time.Time           `json:"finished_at,omitempty"`
 }
 
 func (j *ActionJob) snapshot() JobSnapshot {
@@ -161,6 +168,7 @@ func (j *ActionJob) snapshot() JobSnapshot {
 		Action:     j.action,
 		Status:     j.status,
 		Phase:      j.phase,
+		Phases:     append([]deploys.PhaseStart(nil), j.phases...),
 		DeployID:   j.deployID,
 		Output:     strings.Join(j.lines, "\n"),
 		Lines:      append([]string(nil), j.lines...),

@@ -215,6 +215,7 @@ func TestSuccessfulDeploysTakeOverAsActive(t *testing.T) {
 	calls := 0
 	s.runDeploymentAction = func(action, name string, opts actionOptions, emit func(string)) error {
 		opts.progress.phase(deploys.PhaseBuilding)
+		emit("Cloning")
 		opts.progress.fetched(revisions[calls], "Add checkout page")
 		calls++
 		opts.progress.phase(deploys.PhaseDeploying)
@@ -233,8 +234,13 @@ func TestSuccessfulDeploysTakeOverAsActive(t *testing.T) {
 		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/deployments/gitapp/redeploy", nil))
 		var accepted map[string]any
 		_ = json.Unmarshal(rec.Body.Bytes(), &accepted)
-		if job := waitForJob(t, r, "gitapp", accepted["job_id"].(string)); job["phase"] != string(deploys.PhaseActive) {
+		job := waitForJob(t, r, "gitapp", accepted["job_id"].(string))
+		if job["phase"] != string(deploys.PhaseActive) {
 			t.Fatalf("job = %v", job)
+		}
+		phases, _ := json.Marshal(job["phases"])
+		if string(phases) != `[{"from":0,"phase":"queued"},{"from":0,"phase":"building"},{"from":1,"phase":"deploying"},{"from":3,"phase":"active"}]` {
+			t.Fatalf("job phases = %s", phases)
 		}
 	}
 
@@ -251,8 +257,17 @@ func TestSuccessfulDeploysTakeOverAsActive(t *testing.T) {
 	}
 	logs := httptest.NewRecorder()
 	r.ServeHTTP(logs, httptest.NewRequest(http.MethodGet, "/api/deployments/gitapp/deploys/"+newest["id"].(string)+"/logs", nil))
-	if !strings.Contains(logs.Body.String(), `Building image\nStarted app\n`) {
-		t.Fatalf("logs = %s", logs.Body.String())
+	var stored struct {
+		Output string               `json:"output"`
+		Phases []deploys.PhaseStart `json:"phases"`
+	}
+	_ = json.Unmarshal(logs.Body.Bytes(), &stored)
+	if stored.Output != "Cloning\nBuilding image\nStarted app\n" {
+		t.Fatalf("output = %q", stored.Output)
+	}
+	if len(stored.Phases) != 2 || stored.Phases[0] != (deploys.PhaseStart{Phase: deploys.PhaseBuilding, From: 0}) ||
+		stored.Phases[1] != (deploys.PhaseStart{Phase: deploys.PhaseDeploying, From: 1}) {
+		t.Fatalf("phases = %+v", stored.Phases)
 	}
 }
 

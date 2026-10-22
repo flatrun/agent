@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -221,13 +222,40 @@ func (s *Store) logPath(deployment, id string) string {
 	return filepath.Join(s.logDir(deployment), filepath.Base(id)+".log")
 }
 
-// ReadLog returns a deploy's stored output.
-func (s *Store) ReadLog(deployment, id string) (string, error) {
+// PhaseStart marks the output line at which a deploy entered a phase, so a
+// log can be split into its build and deploy parts.
+type PhaseStart struct {
+	Phase Phase `json:"phase"`
+	From  int   `json:"from"`
+}
+
+// phaseLine prefixes a phase change stored in a log. Output lines never start
+// with a NUL byte.
+const phaseLine = "\x00phase:"
+
+// ReadLog returns a deploy's stored output and where each phase began in it.
+func (s *Store) ReadLog(deployment, id string) (string, []PhaseStart, error) {
 	data, err := os.ReadFile(s.logPath(deployment, id))
 	if errors.Is(err, os.ErrNotExist) {
-		return "", ErrNotFound
+		return "", nil, ErrNotFound
 	}
-	return string(data), err
+	if err != nil {
+		return "", nil, err
+	}
+	var lines []string
+	var phases []PhaseStart
+	for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+		if p, ok := strings.CutPrefix(line, phaseLine); ok {
+			phases = append(phases, PhaseStart{Phase: Phase(p), From: len(lines)})
+			continue
+		}
+		lines = append(lines, line)
+	}
+	output := strings.Join(lines, "\n")
+	if output != "" {
+		output += "\n"
+	}
+	return output, phases, nil
 }
 
 // LogWriter appends a deploy's output lines to its log file and stops at
@@ -263,6 +291,15 @@ func (w *LogWriter) Line(line string) {
 	}
 	n, _ := w.file.WriteString(line + "\n")
 	w.written += n
+}
+
+// Phase records that the deploy entered a phase at this point of its output.
+func (w *LogWriter) Phase(phase Phase) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.truncated {
+		_, _ = w.file.WriteString(phaseLine + string(phase) + "\n")
+	}
 }
 
 func (w *LogWriter) Close() error {

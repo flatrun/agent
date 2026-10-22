@@ -64,6 +64,9 @@ func (s *Server) recordDeploy(job *ActionJob) (func(string), actionOptions, func
 	}
 
 	progress := &deployProgress{setPhase: func(phase deploys.Phase) {
+		if writer != nil {
+			writer.Phase(phase)
+		}
 		job.setPhase(string(phase))
 		if err := s.deploysStore.SetPhase(job.deployment, started.ID, phase); err != nil {
 			log.Printf("Warning: failed to record deploy phase for %s: %v", job.deployment, err)
