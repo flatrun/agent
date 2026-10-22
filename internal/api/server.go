@@ -6347,13 +6347,13 @@ func (s *Server) setupProxyWithRetry(deployment *models.Deployment, maxRetries i
 
 func (s *Server) listDeploymentServices(c *gin.Context) {
 	name := c.Param("name")
-	services, err := s.manager.GetComposeServices(name)
+	deployment, err := s.manager.GetDeployment(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
 		return
 	}
-
-	if deployment, err := s.manager.GetDeployment(name); err == nil && deployment.Metadata != nil {
+	services := deployment.Services
+	if deployment.Metadata != nil {
 		primary := deployment.Metadata.EffectivePrimaryService()
 		for i := range services {
 			services[i].IsPrimary = primary != "" && services[i].Name == primary

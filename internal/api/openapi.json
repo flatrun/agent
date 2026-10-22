@@ -16820,6 +16820,12 @@
             "type": "string",
             "format": "date-time"
           },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "health": {
             "type": "string"
           },
@@ -16828,6 +16834,12 @@
           },
           "is_primary": {
             "type": "boolean"
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/models.ServiceMount"
+            }
           },
           "name": {
             "type": "string"
@@ -16844,6 +16856,12 @@
               "type": "string"
             }
           },
+          "replicas": {
+            "type": "integer"
+          },
+          "running_replicas": {
+            "type": "integer"
+          },
           "status": {
             "type": "string"
           }
@@ -16857,7 +16875,11 @@
           "ports",
           "networks",
           "is_primary",
-          "created_at"
+          "created_at",
+          "mounts",
+          "replicas",
+          "running_replicas",
+          "domains"
         ],
         "x-columns": [
           "name",
@@ -16866,7 +16888,9 @@
           "status",
           "health",
           "is_primary",
-          "created_at"
+          "created_at",
+          "replicas",
+          "running_replicas"
         ]
       },
       "models.ServiceMetadata": {
@@ -16997,6 +17021,35 @@
           "require_plan",
           "credential_id",
           "workspace"
+        ]
+      },
+      "models.ServiceMount": {
+        "type": "object",
+        "properties": {
+          "read_only": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "type",
+          "source",
+          "target",
+          "read_only"
+        ],
+        "x-columns": [
+          "type",
+          "source",
+          "target",
+          "read_only"
         ]
       },
       "models.SleepConfig": {

@@ -23,6 +23,42 @@ type Service struct {
 	Networks    []string  `json:"networks,omitempty"`
 	IsPrimary   bool      `json:"is_primary"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Mounts are the service's volumes as written in the compose file.
+	Mounts []ServiceMount `json:"mounts,omitempty"`
+	// Replicas is how many containers the compose file asks for, and
+	// RunningReplicas how many of the service's containers are running.
+	Replicas        int `json:"replicas"`
+	RunningReplicas int `json:"running_replicas"`
+	// Domains are the hostnames routed to this service.
+	Domains []string `json:"domains,omitempty"`
+}
+
+type ServiceMount struct {
+	// Type is bind for a host path and volume for a named volume.
+	Type     string `json:"type"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only,omitempty"`
+}
+
+// ApplyServiceDomains fills each service's domains from the metadata. A
+// domain that names no service belongs to the primary service.
+func ApplyServiceDomains(services []Service, meta *ServiceMetadata) {
+	if meta == nil {
+		return
+	}
+	primary := meta.EffectivePrimaryService()
+	for _, d := range meta.GetDomains() {
+		target := d.Service
+		if target == "" {
+			target = primary
+		}
+		for i := range services {
+			if services[i].Name == target && d.Domain != "" {
+				services[i].Domains = append(services[i].Domains, d.Domain)
+			}
+		}
+	}
 }
 
 type ServiceMetadata struct {

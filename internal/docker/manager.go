@@ -168,6 +168,7 @@ func applyContainers(deployment *models.Deployment, containers []container.Summa
 	deployment.Status = statusFromContainers(containers)
 
 	byService := make(map[string]container.Summary, len(containers))
+	running := map[string]int{}
 	for _, c := range containers {
 		service := c.Labels[composeServiceLabel]
 		if service == "" {
@@ -176,10 +177,14 @@ func applyContainers(deployment *models.Deployment, containers []container.Summa
 		if _, seen := byService[service]; !seen {
 			byService[service] = c
 		}
+		if c.State == container.StateRunning {
+			running[service]++
+		}
 	}
 
 	for i := range deployment.Services {
 		svc := &deployment.Services[i]
+		svc.RunningReplicas = running[svc.Name]
 		c, ok := byService[svc.Name]
 		if !ok {
 			continue
@@ -379,6 +384,12 @@ func (m *Manager) populateContainerInfo(deployment *models.Deployment) {
 
 	for i := range deployment.Services {
 		svc := &deployment.Services[i]
+		svc.RunningReplicas = 0
+		for _, container := range containers {
+			if container.Service == svc.Name && container.State == "running" {
+				svc.RunningReplicas++
+			}
+		}
 		for _, container := range containers {
 			if container.Service == svc.Name {
 				svc.ContainerID = container.ID

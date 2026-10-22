@@ -32,6 +32,22 @@ type composeService struct {
 	Expose   []interface{}   `yaml:"expose"`
 	Networks composeNetworks `yaml:"networks"`
 	Volumes  []composeMount  `yaml:"volumes"`
+	Scale    *int            `yaml:"scale"`
+	Deploy   struct {
+		Replicas *int `yaml:"replicas"`
+	} `yaml:"deploy"`
+}
+
+// replicas is the number of containers the service asks for: deploy.replicas,
+// else scale, else one.
+func (s composeService) replicas() int {
+	if s.Deploy.Replicas != nil {
+		return *s.Deploy.Replicas
+	}
+	if s.Scale != nil {
+		return *s.Scale
+	}
+	return 1
 }
 
 type composeNetworks []string
@@ -54,28 +70,52 @@ func (n *composeNetworks) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// composeMount is one entry of a service's volumes. Source and Target are set
+// only for bind mounts; Mount describes every entry.
 type composeMount struct {
 	Source string
 	Target string
+	Mount  models.ServiceMount
+}
+
+func mountType(source string) string {
+	if source == "" || strings.HasPrefix(source, ".") || strings.HasPrefix(source, "/") || strings.HasPrefix(source, "~") || strings.HasPrefix(source, "$") {
+		return "bind"
+	}
+	return "volume"
 }
 
 func (m *composeMount) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		parts := strings.Split(node.Value, ":")
 		if len(parts) >= 2 {
-			m.Source = parts[0]
-			m.Target = parts[1]
+			m.Mount = models.ServiceMount{Type: mountType(parts[0]), Source: parts[0], Target: parts[1]}
+			if len(parts) >= 3 && strings.Contains(parts[2], "ro") {
+				m.Mount.ReadOnly = true
+			}
+			if m.Mount.Type == "bind" {
+				m.Source = parts[0]
+				m.Target = parts[1]
+			}
+		} else if len(parts) == 1 {
+			m.Mount = models.ServiceMount{Type: "volume", Target: parts[0]}
 		}
 		return nil
 	}
 	var value struct {
-		Type   string `yaml:"type"`
-		Source string `yaml:"source"`
-		Target string `yaml:"target"`
+		Type     string `yaml:"type"`
+		Source   string `yaml:"source"`
+		Target   string `yaml:"target"`
+		ReadOnly bool   `yaml:"read_only"`
 	}
 	if err := node.Decode(&value); err != nil {
 		return err
 	}
+	typ := value.Type
+	if typ == "" {
+		typ = mountType(value.Source)
+	}
+	m.Mount = models.ServiceMount{Type: typ, Source: value.Source, Target: value.Target, ReadOnly: value.ReadOnly}
 	if value.Type == "" || value.Type == "bind" {
 		m.Source = value.Source
 		m.Target = value.Target
@@ -138,6 +178,7 @@ func (d *Discovery) findDeploymentsWithFilter(infraOnly bool) ([]models.Deployme
 		}
 
 		if services, err := d.parseComposeServices(composePath); err == nil {
+			models.ApplyServiceDomains(services, deployment.Metadata)
 			deployment.Services = services
 		}
 
@@ -183,6 +224,7 @@ func (d *Discovery) GetDeployment(name string) (*models.Deployment, error) {
 	deployment.Metadata = metadata
 
 	if services, err := d.parseComposeServices(composePath); err == nil {
+		models.ApplyServiceDomains(services, deployment.Metadata)
 		deployment.Services = services
 	}
 
@@ -245,6 +287,12 @@ func (d *Discovery) parseComposeServices(composePath string) ([]models.Service, 
 			Image:    svc.Image,
 			Status:   "unknown",
 			Networks: []string(svc.Networks),
+			Replicas: svc.replicas(),
+		}
+		for _, v := range svc.Volumes {
+			if v.Mount.Target != "" {
+				service.Mounts = append(service.Mounts, v.Mount)
+			}
 		}
 
 		for _, p := range svc.Ports {
