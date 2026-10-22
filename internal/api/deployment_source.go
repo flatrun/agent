@@ -9,6 +9,7 @@ import (
 
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/source"
+	"github.com/flatrun/agent/pkg/models"
 )
 
 // deploymentSource is the create-deployment request field that points at code to
@@ -25,6 +26,37 @@ type deploymentSource struct {
 	CredentialID string `json:"credential_id,omitempty"`
 	Username     string `json:"username,omitempty"`
 	Token        string `json:"token,omitempty"`
+	// Revision pins the fetch to one commit instead of the branch head.
+	Revision   string `json:"revision,omitempty"`
+	AutoDeploy bool   `json:"auto_deploy,omitempty"`
+	Previews   bool   `json:"previews,omitempty"`
+}
+
+// sourceConfig is what gets persisted on the deployment. Inline credentials are
+// never stored, so a source fetched with a one-off token cannot be refetched.
+func (d *deploymentSource) sourceConfig(revision string) *models.SourceConfig {
+	return &models.SourceConfig{
+		Type:         d.Type,
+		Ref:          d.Ref,
+		Branch:       d.Branch,
+		Subpath:      d.Subpath,
+		CredentialID: d.CredentialID,
+		AutoDeploy:   d.AutoDeploy,
+		Previews:     d.Previews,
+		LastRevision: revision,
+	}
+}
+
+func deploymentSourceFrom(cfg *models.SourceConfig) *deploymentSource {
+	return &deploymentSource{
+		Type:         cfg.Type,
+		Ref:          cfg.Ref,
+		Branch:       cfg.Branch,
+		Subpath:      cfg.Subpath,
+		CredentialID: cfg.CredentialID,
+		AutoDeploy:   cfg.AutoDeploy,
+		Previews:     cfg.Previews,
+	}
 }
 
 // fetchedSource is a materialized source ready to become a deployment: the
@@ -34,6 +66,7 @@ type fetchedSource struct {
 	dir            string
 	composeName    string
 	composeContent string
+	revision       string
 	cleanup        func()
 }
 
@@ -62,8 +95,9 @@ func (s *Server) fetchDeploymentSource(ctx context.Context, req *deploymentSourc
 		Type: req.Type,
 		Ref:  req.Ref,
 		Params: map[string]string{
-			"branch":  req.Branch,
-			"subpath": req.Subpath,
+			"branch":   req.Branch,
+			"subpath":  req.Subpath,
+			"revision": req.Revision,
 		},
 		Auth: auth,
 	}
@@ -92,6 +126,7 @@ func (s *Server) fetchDeploymentSource(ctx context.Context, req *deploymentSourc
 		dir:            result.Dir,
 		composeName:    filepath.Base(composePath),
 		composeContent: string(content),
+		revision:       result.Revision,
 		cleanup:        cleanup,
 	}, nil
 }
@@ -114,4 +149,19 @@ func (s *Server) resolveSourceAuth(req *deploymentSource) (*source.Auth, error) 
 		return &source.Auth{Username: req.Username, Token: req.Token}, nil
 	}
 	return nil, nil
+}
+
+// recordDeploymentSource stores the source on the deployment's current metadata
+// rather than the create request's, which is nil when the caller sent none.
+func (s *Server) recordDeploymentSource(name string, cfg *models.SourceConfig) error {
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		return err
+	}
+	meta := deployment.Metadata
+	if meta == nil {
+		meta = &models.ServiceMetadata{Name: name}
+	}
+	meta.Source = cfg
+	return s.manager.SaveMetadata(name, meta)
 }

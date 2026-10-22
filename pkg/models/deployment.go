@@ -48,6 +48,21 @@ type ServiceMetadata struct {
 	ServiceCredentials map[string]string         `yaml:"service_credentials,omitempty" json:"service_credentials,omitempty"`
 	Domains            []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
 	Databases          []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
+	Source             *SourceConfig             `yaml:"source,omitempty" json:"source,omitempty"`
+}
+
+// SourceConfig records where a deployment's files came from so it can be
+// fetched again on redeploy, on a push, or at an earlier revision.
+type SourceConfig struct {
+	Type         string `yaml:"type" json:"type"`
+	Ref          string `yaml:"ref" json:"ref"`
+	Branch       string `yaml:"branch,omitempty" json:"branch,omitempty"`
+	Subpath      string `yaml:"subpath,omitempty" json:"subpath,omitempty"`
+	CredentialID string `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
+	AutoDeploy   bool   `yaml:"auto_deploy,omitempty" json:"auto_deploy"`
+	Previews     bool   `yaml:"previews,omitempty" json:"previews"`
+	Builder      string `yaml:"builder,omitempty" json:"builder,omitempty"`
+	LastRevision string `yaml:"last_revision,omitempty" json:"last_revision,omitempty"`
 }
 
 type MigrationSpec struct {

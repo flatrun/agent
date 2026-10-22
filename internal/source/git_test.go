@@ -135,3 +135,39 @@ func TestScrubRemovesToken(t *testing.T) {
 		t.Fatal("token was not scrubbed")
 	}
 }
+
+func TestGitProvider_FetchPinnedRevision(t *testing.T) {
+	repo := makeRepo(t, map[string]string{"app.txt": "v1"})
+	first := gitRevision(context.Background(), repo)
+
+	if err := os.WriteFile(filepath.Join(repo, "app.txt"), []byte("v2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	commit := exec.Command("git", "commit", "-qam", "v2")
+	commit.Dir = repo
+	commit.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
+	)
+	if out, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v: %s", err, out)
+	}
+
+	dest := filepath.Join(t.TempDir(), "src")
+	res, err := GitProvider{}.Fetch(context.Background(),
+		Descriptor{Type: "git", Ref: "file://" + repo, Params: map[string]string{"revision": first}},
+		dest, nil)
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	if res.Revision != first {
+		t.Errorf("revision = %q, want %q", res.Revision, first)
+	}
+	content, _ := os.ReadFile(filepath.Join(res.Dir, "app.txt"))
+	if string(content) != "v1" {
+		t.Errorf("app.txt = %q, want the pinned v1", content)
+	}
+	if _, err := os.Stat(filepath.Join(res.Dir, ".git")); !os.IsNotExist(err) {
+		t.Error(".git should be stripped from a pinned fetch")
+	}
+}

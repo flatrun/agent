@@ -12546,13 +12546,22 @@
       "api.deploymentSource": {
         "type": "object",
         "properties": {
+          "auto_deploy": {
+            "type": "boolean"
+          },
           "branch": {
             "type": "string"
           },
           "credential_id": {
             "type": "string"
           },
+          "previews": {
+            "type": "boolean"
+          },
           "ref": {
+            "type": "string"
+          },
+          "revision": {
             "type": "string"
           },
           "subpath": {
@@ -12575,7 +12584,10 @@
           "subpath",
           "credential_id",
           "username",
-          "token"
+          "token",
+          "revision",
+          "auto_deploy",
+          "previews"
         ],
         "x-columns": [
           "type",
@@ -12584,7 +12596,10 @@
           "subpath",
           "credential_id",
           "username",
-          "token"
+          "token",
+          "revision",
+          "auto_deploy",
+          "previews"
         ]
       },
       "api.exchangeRequest": {
@@ -15186,6 +15201,9 @@
               "type": "string"
             }
           },
+          "source": {
+            "$ref": "#/components/schemas/models.SourceConfig"
+          },
           "ssl": {
             "$ref": "#/components/schemas/models.SSLConfig"
           },
@@ -15213,7 +15231,8 @@
           "credential_id",
           "service_credentials",
           "domains",
-          "databases"
+          "databases",
+          "source"
         ],
         "x-columns": [
           "name",
@@ -15222,6 +15241,60 @@
           "primary_service",
           "require_plan",
           "credential_id"
+        ]
+      },
+      "models.SourceConfig": {
+        "type": "object",
+        "properties": {
+          "auto_deploy": {
+            "type": "boolean"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "builder": {
+            "type": "string"
+          },
+          "credential_id": {
+            "type": "string"
+          },
+          "last_revision": {
+            "type": "string"
+          },
+          "previews": {
+            "type": "boolean"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "subpath": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "type",
+          "ref",
+          "branch",
+          "subpath",
+          "credential_id",
+          "auto_deploy",
+          "previews",
+          "builder",
+          "last_revision"
+        ],
+        "x-columns": [
+          "type",
+          "ref",
+          "branch",
+          "subpath",
+          "credential_id",
+          "auto_deploy",
+          "previews",
+          "builder",
+          "last_revision"
         ]
       },
       "notify.Config": {

@@ -1510,6 +1510,12 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 	}
 
+	if fetched != nil {
+		if err := s.recordDeploymentSource(req.Name, req.Source.sourceConfig(fetched.revision)); err != nil {
+			log.Printf("Warning: failed to record source for %s: %v", req.Name, err)
+		}
+	}
+
 	var startOutput string
 	var startError string
 	if req.AutoStart {
