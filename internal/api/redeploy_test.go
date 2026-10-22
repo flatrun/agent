@@ -21,8 +21,9 @@ import (
 func newRedeployTestServer(t *testing.T, runner *fakeRunner) (*Server, *gin.Engine) {
 	t.Helper()
 	s := newJobTestServer(runner)
-	s.config = &config.Config{Infrastructure: config.InfrastructureConfig{DefaultProxyNetwork: "proxy"}}
-	s.manager = docker.NewManager(t.TempDir())
+	base := t.TempDir()
+	s.config = &config.Config{DeploymentsPath: base, Infrastructure: config.InfrastructureConfig{DefaultProxyNetwork: "proxy"}}
+	s.manager = docker.NewManager(base)
 	s.sourceRegistry = source.NewRegistry(source.GitProvider{})
 	r := gin.New()
 	r.POST("/api/deployments", s.createDeployment)
@@ -182,8 +183,11 @@ func TestCreateDeploymentFromDockerfileRepo_QueuesBuild(t *testing.T) {
 		t.Errorf("source = %+v, want builder dockerfile", deployment.Metadata.Source)
 	}
 	compose, _, _ := s.manager.GetComposeFile("built")
-	if !strings.Contains(compose, "image: flatrun/built:") || !strings.Contains(compose, "PORT") {
-		t.Errorf("compose should run the built image with PORT set:\n%s", compose)
+	if !strings.Contains(compose, "image: flatrun/built:") || !strings.Contains(compose, "PORT") || !strings.Contains(compose, ".env.flatrun") {
+		t.Errorf("compose should run the built image with PORT set and the managed env file loaded:\n%s", compose)
+	}
+	if _, err := os.Stat(filepath.Join(deployment.Path, ".env.flatrun")); err != nil {
+		t.Errorf("managed env file must exist for the built image: %v", err)
 	}
 }
 

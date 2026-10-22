@@ -127,6 +127,15 @@ func (s *Server) fetchDeploymentSourceWithLog(ctx context.Context, req *deployme
 
 	kind := build.Detect(result.Dir)
 	if kind != build.KindCompose {
+		// The compose file the agent writes for a built image loads this file,
+		// so validating it against the fetched tree needs it present.
+		envPath := filepath.Join(result.Dir, ".env.flatrun")
+		if _, err := os.Stat(envPath); os.IsNotExist(err) {
+			if err := os.WriteFile(envPath, nil, 0600); err != nil {
+				cleanup()
+				return nil, err
+			}
+		}
 		return &fetchedSource{
 			dir:         result.Dir,
 			composeName: "docker-compose.yml",
@@ -353,6 +362,9 @@ func (s *Server) sourceImageCompose(name, image string, port int) (string, error
 	}
 	content, err := s.generateCustomCompose(&ComposeGenerateRequest{Name: name, Image: image, ContainerPort: port})
 	if err != nil {
+		return "", err
+	}
+	if content, err = docker.EnsureServiceEnvFile(content, ".env.flatrun"); err != nil {
 		return "", err
 	}
 	return docker.SetServiceEnv(content, sourceAppService, "PORT", fmt.Sprintf("%d", port))

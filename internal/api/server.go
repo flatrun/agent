@@ -1420,7 +1420,8 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	allEnvVars := append(req.EnvVars, dbEnvVars...)
-	if len(allEnvVars) > 0 {
+	// A built image's compose file always loads .env.flatrun, so it must exist.
+	if len(allEnvVars) > 0 || needsBuild {
 		if err := s.writeEnvFile(req.Name, allEnvVars); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "Deployment created but failed to write .env file: " + err.Error(),
