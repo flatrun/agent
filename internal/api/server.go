@@ -1859,6 +1859,11 @@ func (s *Server) generateDatabaseEnvVars(prefix string, host string, port int, d
 func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, deploymentName)
 
+	envVars, err := s.resolveEnvVars(deploymentName, envVars)
+	if err != nil {
+		return err
+	}
+
 	var content strings.Builder
 	for _, env := range envVars {
 		if env.Key != "" {
@@ -1967,7 +1972,19 @@ func (s *Server) getDeploymentEnv(c *gin.Context) {
 		}
 		files = append(files, file)
 	}
-	c.JSON(http.StatusOK, gin.H{"env_vars": principalVars, "principal_file": principal, "env_files": files})
+	refs, err := s.readEnvReferences(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resolved := make(map[string]string, len(refs))
+	for i, env := range principalVars {
+		if ref, ok := refs[env.Key]; ok {
+			resolved[env.Key] = env.Value
+			principalVars[i] = EnvVar{Key: env.Key, Value: ref}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"env_vars": principalVars, "principal_file": principal, "env_files": files, "resolved": resolved})
 }
 
 func (s *Server) updateDeploymentEnv(c *gin.Context) {
@@ -1993,7 +2010,7 @@ func (s *Server) updateDeploymentEnv(c *gin.Context) {
 	}
 
 	if err := s.writeEnvFile(name, req.EnvVars); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(envWriteStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -2059,18 +2076,30 @@ func (s *Server) patchDeploymentEnv(c *gin.Context) {
 		return
 	}
 	if err := s.writeEnvFile(name, merged); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(envWriteStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Environment variables updated", "env_vars": merged})
 }
 
+// readPrincipalEnv returns a deployment's variables as written, with any
+// reference shown in its unresolved form.
 func (s *Server) readPrincipalEnv(name string) ([]EnvVar, error) {
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, name)
+	refs, err := s.readEnvReferences(name)
+	if err != nil {
+		return nil, err
+	}
 	for _, filename := range []string{".env", ".env.flatrun"} {
 		content, err := os.ReadFile(filepath.Join(deploymentPath, filename))
 		if err == nil {
-			return parseEnvContent(string(content)), nil
+			vars := parseEnvContent(string(content))
+			for i := range vars {
+				if ref, ok := refs[vars[i].Key]; ok {
+					vars[i].Value = ref
+				}
+			}
+			return vars, nil
 		}
 		if !os.IsNotExist(err) {
 			return nil, err
@@ -2554,6 +2583,12 @@ func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionO
 
 	opts = append(opts, docker.WithLineSink(emit), docker.WithContext(ctx))
 	opts = append(opts, actOpts.runOptions()...)
+
+	if action != "stop" {
+		if err := s.refreshEnvReferences(name); err != nil {
+			emit("Warning: could not refresh variable references: " + err.Error())
+		}
+	}
 
 	var err error
 	switch action {
@@ -8205,4 +8240,11 @@ func (s *Server) requireWriteForMethods(permission auth.Permission, methods ...s
 		}
 		c.Next()
 	}
+}
+
+func envWriteStatus(err error) int {
+	if isEnvReferenceError(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
