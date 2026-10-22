@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/flatrun/agent/internal/build"
 	"github.com/flatrun/agent/internal/deploys"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/source"
@@ -70,8 +71,11 @@ type fetchedSource struct {
 	dir            string
 	composeName    string
 	composeContent string
-	revision       string
-	cleanup        func()
+	// builder is how the source runs: its own compose file, or an image built
+	// from it, in which case composeContent is empty until the agent writes one.
+	builder  build.Kind
+	revision string
+	cleanup  func()
 }
 
 // fetchDeploymentSource resolves the source's provider, fetches into a temporary
@@ -121,11 +125,18 @@ func (s *Server) fetchDeploymentSourceWithLog(ctx context.Context, req *deployme
 		return nil, err
 	}
 
-	composePath := docker.FindComposeFile(result.Dir)
-	if composePath == "" {
-		cleanup()
-		return nil, fmt.Errorf("no compose file found in source")
+	kind := build.Detect(result.Dir)
+	if kind != build.KindCompose {
+		return &fetchedSource{
+			dir:         result.Dir,
+			composeName: "docker-compose.yml",
+			builder:     kind,
+			revision:    result.Revision,
+			cleanup:     cleanup,
+		}, nil
 	}
+
+	composePath := docker.FindComposeFile(result.Dir)
 
 	content, err := os.ReadFile(composePath)
 	if err != nil {
@@ -137,6 +148,7 @@ func (s *Server) fetchDeploymentSourceWithLog(ctx context.Context, req *deployme
 		dir:            result.Dir,
 		composeName:    filepath.Base(composePath),
 		composeContent: string(content),
+		builder:        build.KindCompose,
 		revision:       result.Revision,
 		cleanup:        cleanup,
 	}, nil
@@ -219,15 +231,22 @@ func (s *Server) redeployFromSource(ctx context.Context, name string, actOpts ac
 	defer fetched.cleanup()
 	fetchedRevision = fetched.revision
 
-	compose := fetched.composeContent
-	if content, err := docker.EnsureContainerNames(compose, name); err == nil {
-		compose = content
-	}
-	if current, _, err := s.manager.GetComposeFile(name); err == nil {
-		if carried, err := docker.CarryExternalNetworks(current, compose); err == nil {
-			compose = carried
-		} else {
-			emit("Warning: could not carry networks over: " + err.Error())
+	var compose string
+	if fetched.builder == build.KindCompose {
+		compose = fetched.composeContent
+		if content, err := docker.EnsureContainerNames(compose, name); err == nil {
+			compose = content
+		}
+		if current, _, err := s.manager.GetComposeFile(name); err == nil {
+			if carried, err := docker.CarryExternalNetworks(current, compose); err == nil {
+				compose = carried
+			} else {
+				emit("Warning: could not carry networks over: " + err.Error())
+			}
+		}
+	} else {
+		if compose, err = s.buildSourceImage(ctx, name, meta, fetched, emit); err != nil {
+			return err
 		}
 	}
 	if err := s.validateNewComposeContent(compose, name, nil, fetched.dir); err != nil {
@@ -245,6 +264,7 @@ func (s *Server) redeployFromSource(ctx context.Context, name string, actOpts ac
 
 	if updated, err := s.manager.GetDeployment(name); err == nil && updated.Metadata != nil && updated.Metadata.Source != nil {
 		updated.Metadata.Source.LastRevision = fetched.revision
+		updated.Metadata.Source.Builder = string(fetched.builder)
 		if err := s.manager.SaveMetadata(name, updated.Metadata); err != nil {
 			emit("Warning: failed to record revision: " + err.Error())
 		}
@@ -318,4 +338,47 @@ func (s *Server) rollbackDeployment(c *gin.Context) {
 		Revision: rec.Revision,
 		Trigger:  string(deploys.TriggerRollback),
 	})
+}
+
+// sourceAppService is the service name the agent uses in compose files it
+// writes for built images.
+const sourceAppService = "app"
+
+// sourceImageCompose writes the compose file for a deployment that runs an
+// image built from its source. PORT tells the app where to listen, which is the
+// convention Railpack-built apps follow.
+func (s *Server) sourceImageCompose(name, image string, port int) (string, error) {
+	if port == 0 {
+		port = 8080
+	}
+	content, err := s.generateCustomCompose(&ComposeGenerateRequest{Name: name, Image: image, ContainerPort: port})
+	if err != nil {
+		return "", err
+	}
+	return docker.SetServiceEnv(content, sourceAppService, "PORT", fmt.Sprintf("%d", port))
+}
+
+// buildSourceImage builds the fetched tree into an image tagged with its
+// revision and returns the deployment's compose file pointed at that image.
+func (s *Server) buildSourceImage(ctx context.Context, name string, meta *models.ServiceMetadata, fetched *fetchedSource, emit func(string)) (string, error) {
+	scratch, err := os.MkdirTemp("", "flatrun-build-*")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+
+	tag := build.ImageTag(name, fetched.revision)
+	if err := s.builder.Build(ctx, fetched.builder, fetched.dir, scratch, tag, emit); err != nil {
+		return "", err
+	}
+
+	current, _, err := s.manager.GetComposeFile(name)
+	if err != nil {
+		return s.sourceImageCompose(name, tag, meta.Networking.ContainerPort)
+	}
+	service := sourceAppService
+	if meta.Networking.Service != "" {
+		service = meta.Networking.Service
+	}
+	return docker.SetServiceImage(current, service, tag)
 }

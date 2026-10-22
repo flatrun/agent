@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -144,4 +147,66 @@ func TestRedeployFromSource_RecordsFailedDeploy(t *testing.T) {
 	if records[0].Status != deploys.StatusFailed || records[0].Trigger != deploys.TriggerPush || records[0].Error == "" {
 		t.Errorf("record = %+v", records[0])
 	}
+}
+
+func TestCreateDeploymentFromDockerfileRepo_QueuesBuild(t *testing.T) {
+	runner := &fakeRunner{optsCh: make(chan actionOptions, 1)}
+	s, r := newRedeployTestServer(t, runner)
+	repo := t.TempDir()
+	gitInit(t, repo, map[string]string{"Dockerfile": "FROM busybox\n"})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/deployments",
+		strings.NewReader(`{"name":"built","auto_start":true,"container_port":3000,"source":{"type":"git","ref":"file://`+repo+`","branch":"main"}}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"build_job_id":"`) || strings.Contains(rec.Body.String(), `"build_job_id":""`) {
+		t.Errorf("response should carry the build job id: %s", rec.Body.String())
+	}
+
+	select {
+	case opts := <-runner.optsCh:
+		if len(opts.Revision) != 40 {
+			t.Errorf("build job revision = %q, want the fetched commit", opts.Revision)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("build job never ran")
+	}
+
+	deployment, err := s.manager.GetDeployment("built")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deployment.Metadata.Source == nil || deployment.Metadata.Source.Builder != "dockerfile" {
+		t.Errorf("source = %+v, want builder dockerfile", deployment.Metadata.Source)
+	}
+	compose, _, _ := s.manager.GetComposeFile("built")
+	if !strings.Contains(compose, "image: flatrun/built:") || !strings.Contains(compose, "PORT") {
+		t.Errorf("compose should run the built image with PORT set:\n%s", compose)
+	}
+}
+
+func gitInit(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("init", "-b", "main")
+	for rel, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("add", "-A")
+	run("commit", "-m", "init")
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flatrun/agent/internal/build"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/source"
 	"github.com/flatrun/agent/pkg/config"
@@ -88,8 +89,8 @@ func TestFetchDeploymentSource_Git(t *testing.T) {
 	}
 }
 
-func TestFetchDeploymentSource_NoCompose(t *testing.T) {
-	// A repo with no compose file must be rejected, not deployed empty.
+func TestFetchDeploymentSource_NoComposeIsBuilt(t *testing.T) {
+	// A repo with no compose file and no Dockerfile is built with Railpack.
 	dir := t.TempDir()
 	run := func(args ...string) {
 		cmd := exec.Command("git", args...)
@@ -110,11 +111,15 @@ func TestFetchDeploymentSource_NoCompose(t *testing.T) {
 	run("commit", "-m", "init")
 
 	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{})}
-	_, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{
+	fetched, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{
 		Type: "git", Ref: "file://" + dir, Branch: "main",
 	})
-	if err == nil {
-		t.Fatal("expected an error when the source has no compose file")
+	if err != nil {
+		t.Fatalf("fetch without compose: %v", err)
+	}
+	defer fetched.cleanup()
+	if fetched.builder != build.KindRailpack || fetched.composeContent != "" {
+		t.Errorf("builder = %q, compose = %q; want railpack and no compose", fetched.builder, fetched.composeContent)
 	}
 }
 

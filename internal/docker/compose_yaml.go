@@ -647,3 +647,50 @@ func CarryExternalNetworks(prev, next string) (string, error) {
 	}
 	return result, nil
 }
+
+// SetServiceImage points one service at a different image.
+func SetServiceImage(content, serviceName, image string) (string, error) {
+	return updateService(content, serviceName, func(service map[string]interface{}) {
+		service["image"] = image
+	})
+}
+
+// SetServiceEnv sets one environment variable on a service, accepting both the
+// list and the map form of the environment key.
+func SetServiceEnv(content, serviceName, key, value string) (string, error) {
+	return updateService(content, serviceName, func(service map[string]interface{}) {
+		switch env := service["environment"].(type) {
+		case map[string]interface{}:
+			env[key] = value
+		case []interface{}:
+			kept := make([]interface{}, 0, len(env)+1)
+			for _, entry := range env {
+				if s, ok := entry.(string); ok && (s == key || strings.HasPrefix(s, key+"=")) {
+					continue
+				}
+				kept = append(kept, entry)
+			}
+			service["environment"] = append(kept, key+"="+value)
+		default:
+			service["environment"] = map[string]interface{}{key: value}
+		}
+	})
+}
+
+func updateService(content, serviceName string, mutate func(map[string]interface{})) (string, error) {
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		return content, err
+	}
+	services, _ := compose["services"].(map[string]interface{})
+	service, ok := services[serviceName].(map[string]interface{})
+	if !ok {
+		return content, fmt.Errorf("service %q not found in compose", serviceName)
+	}
+	mutate(service)
+	result, err := MarshalComposeYAML(compose)
+	if err != nil {
+		return content, err
+	}
+	return strings.TrimSpace(string(result)) + "\n", nil
+}

@@ -34,6 +34,7 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/autoscale"
 	"github.com/flatrun/agent/internal/backup"
+	"github.com/flatrun/agent/internal/build"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/internal/credentials"
@@ -119,6 +120,7 @@ type Server struct {
 	certRenewer        *ssl.Renewer
 	planStore          *plan.Store
 	deploysStore       *deploys.Store
+	builder            *build.Builder
 	aiProvider         ai.Provider
 	triageBudget       *triageBudget
 	aiSessions         *ai.SessionStore
@@ -398,6 +400,7 @@ func New(cfg *config.Config, configPath string) *Server {
 		setupHandlers:      setup.NewHandlers(setupManager, authManager),
 		planStore:          plan.NewStore(cfg.DeploymentsPath),
 		deploysStore:       deploys.NewStore(cfg.DeploymentsPath),
+		builder:            build.New(),
 		aiSessions:         ai.NewSessionStore(cfg.DeploymentsPath),
 		aiAgents:           ai.NewAgentStore(cfg.DeploymentsPath),
 		jobs:               newJobRegistry(),
@@ -1240,7 +1243,18 @@ func (s *Server) createDeployment(c *gin.Context) {
 		defer f.cleanup()
 		fetched = f
 		req.ComposeContent = f.composeContent
+		if f.builder != build.KindCompose {
+			// The image is built by a redeploy job after creation; the compose
+			// file only needs to name the tag that job will produce.
+			generated, err := s.sourceImageCompose(req.Name, build.ImageTag(req.Name, f.revision), req.ContainerPort)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to prepare compose for source: " + err.Error()})
+				return
+			}
+			req.ComposeContent = generated
+		}
 	}
+	needsBuild := fetched != nil && fetched.builder != build.KindCompose
 
 	if req.ComposeContent == "" {
 		generated, err := s.generateDeploymentCompose(req.Name, req.Image, req.TemplateID, req.ContainerPort, req.MapPorts, req.HostPort, req.Ports)
@@ -1517,14 +1531,16 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	if fetched != nil {
-		if err := s.recordDeploymentSource(req.Name, req.Source.sourceConfig(fetched.revision)); err != nil {
+		cfg := req.Source.sourceConfig(fetched.revision)
+		cfg.Builder = string(fetched.builder)
+		if err := s.recordDeploymentSource(req.Name, cfg); err != nil {
 			log.Printf("Warning: failed to record source for %s: %v", req.Name, err)
 		}
 	}
 
 	var startOutput string
 	var startError string
-	if req.AutoStart {
+	if req.AutoStart && !needsBuild {
 		var credIDs []string
 		if credentialID != "" {
 			credIDs = append(credIDs, credentialID)
@@ -1584,9 +1600,16 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 	}
 
+	var buildJobID string
+	if needsBuild && req.AutoStart {
+		job, _ := s.startDeploymentJob(req.Name, "redeploy", actionOptions{Revision: fetched.revision})
+		buildJobID = job.ID()
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message":              "Deployment created",
 		"name":                 req.Name,
+		"build_job_id":         buildJobID,
 		"proxy_result":         proxyResult,
 		"auto_started":         req.AutoStart,
 		"start_output":         startOutput,
