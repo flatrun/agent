@@ -58,6 +58,17 @@ func TestEnvReferences_ResolveAcrossDeployments(t *testing.T) {
 	if r := body["resolved"].(map[string]interface{})["DATABASE_URL"]; r != "postgres://app:first@db/app" {
 		t.Errorf("resolved = %v", r)
 	}
+	for _, f := range body["env_files"].([]interface{}) {
+		file := f.(map[string]interface{})
+		if file["path"] == envReferencesFile {
+			t.Errorf("the references file should not be listed as an env file")
+		}
+		if file["path"] == ".env" {
+			if v := file["env_vars"].([]interface{})[0].(map[string]interface{})["value"]; v != "postgres://app:first@db/app" {
+				t.Errorf(".env listing should show the file's resolved content, got %v", v)
+			}
+		}
+	}
 
 	// A patch to another key keeps the reference rather than its resolved value.
 	if resp, body := doJSON(t, http.MethodPatch, ts.URL+"/api/deployments/api/env/variables",

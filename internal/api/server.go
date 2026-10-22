@@ -1971,6 +1971,9 @@ func (s *Server) getDeploymentEnv(c *gin.Context) {
 	files := make([]environmentFile, 0, len(paths))
 	var principalVars []EnvVar
 	for _, envPath := range paths {
+		if filepath.Base(envPath) == envReferencesFile {
+			continue
+		}
 		info, statErr := os.Stat(envPath)
 		if statErr != nil || !info.Mode().IsRegular() {
 			continue
@@ -1982,7 +1985,7 @@ func (s *Server) getDeploymentEnv(c *gin.Context) {
 		}
 		file := environmentFile{Path: filepath.Base(envPath), Principal: filepath.Base(envPath) == principal, EnvVars: parseEnvContent(string(content))}
 		if file.Principal {
-			principalVars = file.EnvVars
+			principalVars = append([]EnvVar(nil), file.EnvVars...)
 		}
 		files = append(files, file)
 	}
