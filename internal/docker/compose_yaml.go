@@ -253,10 +253,16 @@ func ContainerNameForService(content, deploymentName, service string) string {
 		if cn, ok := svc["container_name"].(string); ok && cn != "" {
 			return cn
 		}
+		if replicated(svc) {
+			return service
+		}
 	}
 
 	var primaryService string
 	for name := range services {
+		if svc, ok := services[name].(map[string]interface{}); ok && replicated(svc) {
+			continue
+		}
 		if name == "app" {
 			primaryService = "app"
 			break
@@ -269,6 +275,32 @@ func ContainerNameForService(content, deploymentName, service string) string {
 		return deploymentName
 	}
 	return scoped
+}
+
+// replicated reports whether a service asks for more than one container.
+// Compose refuses a fixed container_name on such a service, and its replicas
+// are reached through the service name instead.
+func replicated(service map[string]interface{}) bool {
+	count := func(v interface{}) int {
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		}
+		return 1
+	}
+	if deploy, ok := service["deploy"].(map[string]interface{}); ok {
+		if r, ok := deploy["replicas"]; ok {
+			return count(r) > 1
+		}
+	}
+	if s, ok := service["scale"]; ok {
+		return count(s) > 1
+	}
+	return false
 }
 
 // EnsureContainerNames ensures all services have explicit container_name set.
@@ -293,6 +325,9 @@ func EnsureContainerNames(content string, deploymentName string) (string, error)
 	// Find the primary service (prefer "app" if exists, otherwise take first)
 	var primaryService string
 	for name := range services {
+		if svc, ok := services[name].(map[string]interface{}); ok && replicated(svc) {
+			continue
+		}
 		if name == "app" {
 			primaryService = "app"
 			break
@@ -309,6 +344,9 @@ func EnsureContainerNames(content string, deploymentName string) (string, error)
 		}
 
 		if _, hasContainerName := service["container_name"]; hasContainerName {
+			continue
+		}
+		if replicated(service) {
 			continue
 		}
 

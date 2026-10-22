@@ -686,3 +686,27 @@ services:
 		})
 	}
 }
+
+func TestEnsureContainerNames_LeavesReplicatedServicesUnnamed(t *testing.T) {
+	content := "services:\n  web:\n    image: nginx:alpine\n  worker:\n    image: busybox:latest\n    deploy:\n      replicas: 2\n  jobs:\n    image: busybox:latest\n    scale: 3\n"
+	got, err := EnsureContainerNames(content, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose, _ := ParseComposeYAML(got)
+	services := compose["services"].(map[string]interface{})
+	for _, name := range []string{"worker", "jobs"} {
+		if _, named := services[name].(map[string]interface{})["container_name"]; named {
+			t.Errorf("%s must not get a container_name:\n%s", name, got)
+		}
+		if got := ContainerNameForService(content, "shop", name); got != name {
+			t.Errorf("ContainerNameForService(%s) = %q, want the service name", name, got)
+		}
+	}
+	if services["web"].(map[string]interface{})["container_name"] != "shop" {
+		t.Errorf("single-container service should still be named:\n%s", got)
+	}
+	if name := ContainerNameForService(content, "shop", "web"); name != "shop" {
+		t.Errorf("ContainerNameForService(web) = %q, want shop", name)
+	}
+}
