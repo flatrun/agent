@@ -78,11 +78,6 @@ func (s *Server) streamDeploymentJob(c *gin.Context) {
 	buffered, lines, cancel := job.subscribe()
 	defer cancel()
 
-	if snap := job.snapshot(); snap.Phase != "" {
-		if err := writeJobLine(conn, phaseMarker+snap.Phase); err != nil {
-			return
-		}
-	}
 	for _, line := range buffered {
 		if err := writeJobLine(conn, line); err != nil {
 			return

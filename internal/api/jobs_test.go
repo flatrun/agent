@@ -416,7 +416,7 @@ func TestJobStreamSendsPhaseChanges(t *testing.T) {
 		case "result":
 			frames = append(frames, "result:"+frame["status"].(string))
 		}
-		if !released && len(frames) == 2 {
+		if !released && len(frames) == 3 {
 			released = true
 			close(gate)
 		}
@@ -424,7 +424,7 @@ func TestJobStreamSendsPhaseChanges(t *testing.T) {
 			break
 		}
 	}
-	want := []string{"phase:building", "line:Fetching", "phase:deploying", "line:Started", "phase:active", "result:succeeded"}
+	want := []string{"phase:queued", "line:Fetching", "phase:building", "phase:deploying", "line:Started", "phase:active", "result:succeeded"}
 	if strings.Join(frames, ",") != strings.Join(want, ",") {
 		t.Fatalf("frames = %v, want %v", frames, want)
 	}

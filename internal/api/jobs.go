@@ -113,11 +113,24 @@ func (j *ActionJob) finish(status JobStatus, errMsg string) {
 // subscribe atomically returns the lines buffered so far plus a channel that
 // receives every subsequent line. The channel is closed when the job finishes.
 // If the job is already finished, the returned channel is closed immediately.
+// subscribe returns the output so far, with phase changes interleaved where
+// they happened as phaseMarker lines, and a channel of what follows.
 func (j *ActionJob) subscribe() (buffered []string, ch <-chan string, cancel func()) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	buffered = append([]string(nil), j.lines...)
+	buffered = make([]string, 0, len(j.lines)+len(j.phases))
+	next := 0
+	for i, line := range j.lines {
+		for next < len(j.phases) && j.phases[next].From <= i {
+			buffered = append(buffered, phaseMarker+string(j.phases[next].Phase))
+			next++
+		}
+		buffered = append(buffered, line)
+	}
+	for ; next < len(j.phases); next++ {
+		buffered = append(buffered, phaseMarker+string(j.phases[next].Phase))
+	}
 
 	if j.status == JobSucceeded || j.status == JobFailed {
 		closed := make(chan string)
