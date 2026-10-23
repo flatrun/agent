@@ -170,3 +170,63 @@ func TestPushDeploysEnvironmentTrackingThatBranch(t *testing.T) {
 		t.Errorf("jobs = %v, want only shop-staging", resp.Jobs)
 	}
 }
+
+func TestEnvironmentIsNotCreatedWhenBaseVariablesAreUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads files regardless of their mode")
+	}
+	s, r, _ := newEnvironmentTestServer(t, &fakeRunner{optsCh: make(chan actionOptions, 1)})
+	base, err := s.manager.GetDeployment("shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(base.Path, ".env")
+	if err := os.Chmod(envFile, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(envFile, 0600) })
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/deployments/shop/environments",
+		strings.NewReader(`{"name":"staging","branch":"develop"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create environment = %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := s.manager.GetDeployment("shop-staging"); err == nil {
+		t.Error("environment was created without the base's variables")
+	}
+}
+
+func TestFailedEnvironmentIsRemovedSoItCanBeRetried(t *testing.T) {
+	s, r, _ := newEnvironmentTestServer(t, &fakeRunner{optsCh: make(chan actionOptions, 1)})
+	base, err := s.manager.GetDeployment("shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := strings.TrimPrefix(base.Metadata.Source.Ref, "file://")
+	if err := os.MkdirAll(filepath.Join(repo, "service.yml"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "service.yml", "keep"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"checkout", "-q", "develop"}, {"add", "-A"}, {"commit", "-qm", "metadata directory"}} {
+		cmd := exec.Command("git", append([]string{"-c", "user.name=test", "-c", "user.email=test@example.com"}, args...)...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/deployments/shop/environments",
+			strings.NewReader(`{"name":"staging","branch":"develop"}`)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("attempt %d = %d: %s", attempt, rec.Code, rec.Body.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(base.Path), "shop-staging")); !os.IsNotExist(err) {
+		t.Errorf("failed environment left its directory behind: %v", err)
+	}
+}

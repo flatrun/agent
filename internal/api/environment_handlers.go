@@ -59,6 +59,10 @@ func (s *Server) createEnvironment(ctx context.Context, base string, req environ
 	if _, err := s.manager.GetDeployment(name); err == nil {
 		return name, nil, errEnvironmentExists
 	}
+	envVars, err := s.readPrincipalEnv(base)
+	if err != nil {
+		return "", nil, fmt.Errorf("read variables of %s: %w", base, err)
+	}
 
 	src := deploymentSourceFrom(baseMeta.Source)
 	if req.Branch != "" {
@@ -87,16 +91,21 @@ func (s *Server) createEnvironment(ctx context.Context, base string, req environ
 		}
 	}
 
-	envVars, _ := s.readPrincipalEnv(base)
 	if err := s.validateNewComposeContent(compose, name, envVars, fetched.dir); err != nil {
 		return "", nil, fmt.Errorf("invalid compose content in source: %w", err)
 	}
 	if err := s.manager.CreateDeploymentFromSource(name, fetched.dir, compose, fetched.composeName); err != nil {
 		return "", nil, err
 	}
+	discard := func(err error) (string, *ActionJob, error) {
+		if delErr := s.manager.DeleteDeployment(name); delErr != nil {
+			log.Printf("Warning: failed to remove incomplete environment %s: %v", name, delErr)
+		}
+		return "", nil, err
+	}
 	if len(envVars) > 0 || fetched.builder != build.KindCompose {
 		if err := s.writeEnvFile(name, envVars); err != nil {
-			return name, nil, err
+			return discard(err)
 		}
 	}
 
@@ -128,7 +137,7 @@ func (s *Server) createEnvironment(ctx context.Context, base string, req environ
 		meta.Networking.Expose = false
 	}
 	if err := s.manager.SaveMetadata(name, meta); err != nil {
-		return name, nil, err
+		return discard(err)
 	}
 	if store := s.workspaces(); store != nil {
 		if owner, err := store.Owner(workspace.Ref{Type: workspace.TypeDeployment, ID: base}); err == nil {
