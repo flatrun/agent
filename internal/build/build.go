@@ -98,6 +98,18 @@ func ImageTag(deployment, revision string) string {
 	return "flatrun/" + strings.ToLower(deployment) + ":" + revision
 }
 
+const maxOutputLine = 1024 * 1024
+
+// splitLongLines splits on newlines and cuts a line longer than the scanner's
+// buffer into pieces instead of failing the scan.
+func splitLongLines(data []byte, atEOF bool) (int, []byte, error) {
+	advance, token, err := bufio.ScanLines(data, atEOF)
+	if advance == 0 && token == nil && err == nil && len(data) >= maxOutputLine {
+		return maxOutputLine, data[:maxOutputLine], nil
+	}
+	return advance, token, err
+}
+
 // Runner executes one command, streaming its combined output lines to sink.
 type Runner func(ctx context.Context, name string, args []string, sink func(string)) error
 
@@ -120,7 +132,8 @@ func runCommand(ctx context.Context, name string, args []string, sink func(strin
 	forward := func(r io.Reader) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(r)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		scanner.Buffer(make([]byte, 64*1024), maxOutputLine)
+		scanner.Split(splitLongLines)
 		for scanner.Scan() {
 			line := scanner.Text()
 			sink(line)
@@ -131,6 +144,9 @@ func runCommand(ctx context.Context, name string, args []string, sink func(strin
 			}
 			mu.Unlock()
 		}
+		// The command blocks once a pipe it writes to is full, so whatever the
+		// scanner could not read is drained or the build never exits.
+		_, _ = io.Copy(io.Discard, r)
 	}
 	wg.Add(2)
 	go forward(stdout)

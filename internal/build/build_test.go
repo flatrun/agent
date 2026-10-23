@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, dir, name string) {
@@ -123,5 +125,27 @@ func TestImageTag(t *testing.T) {
 	}
 	if got := ImageTag("app", ""); got != "flatrun/app:latest" {
 		t.Errorf("ImageTag without revision = %q", got)
+	}
+}
+
+func TestRunCommand_LongOutputLine(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var lines []string
+	var mu sync.Mutex
+	err := runCommand(ctx, "sh", []string{"-c", `head -c 2500000 /dev/zero | tr '\0' a; echo; head -c 300000 /dev/zero | tr '\0' b; echo; echo done`}, func(line string) {
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("runCommand = %v", err)
+	}
+	total := 0
+	for _, l := range lines {
+		total += len(l)
+	}
+	if lines[len(lines)-1] != "done" || total != 2500000+300000+len("done") {
+		t.Fatalf("got %d lines, %d bytes, last %.10q", len(lines), total, lines[len(lines)-1])
 	}
 }
