@@ -70,3 +70,18 @@ The on-disk cache is the durable store. Two things follow:
   The agent picks these up the same way it reads synced templates. Set
   `sync_interval: 0` (or disable both sources) if you want the cache left entirely
   under manual control.
+
+## Logos
+
+A template's `logo` in `metadata.yml` is either a link (`https://cdn.simpleicons.org/<slug>`) or the name of an image file shipped in the template's folder (`logo: logo.svg`). A file is served at `/api/templates/<id>/logo` without sign-in, so it works as an image source.
+
+A project keeps its own `logo` in `service.yml`, in one of these forms:
+
+| Value | Shows |
+|---|---|
+| `simple-icons:redis`, `logos:postgresql` | An icon from a public icon set |
+| `https://...` | The image at that link |
+| `upload` | The file uploaded with `PUT /api/projects/<name>/logo`, stored as `.flatrun/logo.<ext>` in the project's folder |
+| `template:<id>` | That template's logo |
+
+A project created from a template records it as `template` in `service.yml`. With no `logo` set, the dashboard shows the logo of that template, then of a template running the same image, then an icon for the image itself.
