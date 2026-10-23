@@ -4,6 +4,8 @@
 
 ### Added
 - Project paths for every deployment endpoint; the deployment paths keep working
+- A project's deploy history under its deployments path
+- Workspace logos; one Default workspace per instance that can be renamed
 
 ### Fixed
 - The deployment list reports each service's state and running replicas

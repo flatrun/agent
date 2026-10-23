@@ -6655,6 +6655,133 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/projects/{name}/deployments": {
+      "get": {
+        "operationId": "get-projects-by-name-deployments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/deployments/{id}": {
+      "get": {
+        "operationId": "get-projects-by-name-deployments-by-id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/deploys.Record"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/deployments/{id}/logs": {
+      "get": {
+        "operationId": "get-projects-by-name-deployments-by-id-logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/deployments/{id}/rollback": {
+      "post": {
+        "operationId": "post-projects-by-name-deployments-by-id-rollback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/projects/{name}/deploys": {
       "get": {
         "operationId": "get-projects-by-name-deploys",
@@ -12755,6 +12882,78 @@
         }
       }
     },
+    "/api/workspaces/{slug}/logo": {
+      "delete": {
+        "operationId": "delete-workspaces-by-slug-logo",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get-workspaces-by-slug-logo",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      },
+      "put": {
+        "operationId": "put-workspaces-by-slug-logo",
+        "tags": [
+          "workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/workspace.Membership"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{slug}/members": {
       "get": {
         "operationId": "get-workspaces-by-slug-members",
@@ -15498,6 +15697,72 @@
           "from"
         ]
       },
+      "deploys.Record": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "action",
+          "revision",
+          "branch",
+          "message",
+          "trigger",
+          "status",
+          "phase",
+          "error",
+          "started_at",
+          "finished_at"
+        ],
+        "x-columns": [
+          "id",
+          "action",
+          "revision",
+          "branch",
+          "message",
+          "trigger",
+          "status",
+          "phase",
+          "error",
+          "started_at",
+          "finished_at"
+        ]
+      },
       "dns.PowerDNSStatus": {
         "type": "object",
         "properties": {
@@ -18007,6 +18272,9 @@
           "id": {
             "type": "integer"
           },
+          "logo": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -18026,6 +18294,7 @@
           "name",
           "personal",
           "created_at",
+          "logo",
           "role"
         ],
         "x-columns": [
@@ -18034,6 +18303,7 @@
           "name",
           "personal",
           "created_at",
+          "logo",
           "role"
         ]
       },

@@ -316,6 +316,30 @@ func (s *Server) listDeploymentDeploys(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"deploys": records})
 }
 
+// listProjectDeployments is the deploy history under the project vocabulary,
+// where each deploy of a project is one of its deployments.
+func (s *Server) listProjectDeployments(c *gin.Context) {
+	records, err := s.deploysStore.List(c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deployments": records})
+}
+
+func (s *Server) getProjectDeployment(c *gin.Context) {
+	rec, err := s.deploysStore.Get(c.Param("name"), c.Param("id"))
+	if errors.Is(err, deploys.ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, rec)
+}
+
 // getDeployLogs returns the output stored for one deploy.
 func (s *Server) getDeployLogs(c *gin.Context) {
 	name := c.Param("name")
