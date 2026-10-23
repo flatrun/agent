@@ -12,7 +12,7 @@ metadata, and the resource limits are applied to the running container.
 
 Each entry under `domains` in a deployment's `service.yml` carries its own
 serving knobs. Set them from the UI's domain form, or over the API with
-`PUT /api/deployments/:name/domains/:domainId`.
+`PUT /api/projects/:name/domains/:domainId`.
 
 | Field | Type | Default | What it does |
 |-------|------|---------|--------------|
@@ -29,7 +29,7 @@ Memory and CPU caps are applied to the running container, not the compose file,
 so they take effect without a rewrite or a restart. Set them from the UI or over
 the API:
 
-- `GET /api/deployments/:name/resources` reads the current limits.
+- `GET /api/projects/:name/resources` reads the current limits.
 - `PUT /api/containers/:id/resources` updates them.
 
 | Limit | Unit | What it does |

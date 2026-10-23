@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- Project paths for every deployment endpoint; the deployment paths keep working
+
+### Fixed
+- The deployment list reports each service's state and running replicas
+
 ## [0.4.0-beta.11] - 2026-10-09
 
 ### Fixed
