@@ -37,7 +37,6 @@ func (m *Manager) SetSealer(sealer Sealer) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sealer = sealer
-	m.genericCreds = make(map[string]*models.Credential)
 	if err := m.loadGenericCredentials(); err != nil {
 		return err
 	}
@@ -47,18 +46,33 @@ func (m *Manager) SetSealer(sealer Sealer) error {
 	return m.saveGenericCredentials()
 }
 
+// loadGenericCredentials replaces the in-memory store only when every stored
+// credential could be read. Otherwise saving stays refused, because a save
+// would write back only the credentials that were read and drop the rest.
 func (m *Manager) loadGenericCredentials() error {
+	creds, err := m.readGenericCredentials()
+	if err != nil {
+		m.genericLoadErr = err
+		return err
+	}
+	m.genericCreds = creds
+	m.genericLoadErr = nil
+	return nil
+}
+
+func (m *Manager) readGenericCredentials() (map[string]*models.Credential, error) {
+	creds := make(map[string]*models.Credential)
 	data, err := os.ReadFile(m.genericCredsFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return creds, nil
 		}
-		return err
+		return nil, err
 	}
 
 	var cf genericCredentialsFile
 	if err := yaml.Unmarshal(data, &cf); err != nil {
-		return err
+		return nil, err
 	}
 
 	for _, cred := range cf.Credentials {
@@ -70,21 +84,24 @@ func (m *Manager) loadGenericCredentials() error {
 				continue
 			}
 			if m.sealer == nil {
-				return fmt.Errorf("credential %s holds sealed values but no key is loaded", cred.ID)
+				return nil, fmt.Errorf("credential %s holds sealed values but no key is loaded", cred.ID)
 			}
 			plain, err := m.sealer.Open(v)
 			if err != nil {
-				return fmt.Errorf("credential %s: %w", cred.ID, err)
+				return nil, fmt.Errorf("credential %s: %w", cred.ID, err)
 			}
 			cred.Data[k] = plain
 		}
-		m.genericCreds[cred.ID] = cred
+		creds[cred.ID] = cred
 	}
 
-	return nil
+	return creds, nil
 }
 
 func (m *Manager) saveGenericCredentials() error {
+	if m.genericLoadErr != nil {
+		return fmt.Errorf("stored credentials could not be read, so they are not overwritten: %w", m.genericLoadErr)
+	}
 	if err := os.MkdirAll(m.storagePath, 0700); err != nil {
 		return err
 	}

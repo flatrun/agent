@@ -24,6 +24,7 @@ type Manager struct {
 	credsFilePath    string
 	genericCredsFile string
 	sealer           Sealer
+	genericLoadErr   error
 }
 
 func NewManager(deploymentsPath string) *Manager {
