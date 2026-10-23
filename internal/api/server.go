@@ -491,6 +491,7 @@ func (s *Server) setupRoutes() {
 	{
 		api.GET("/health", s.healthCheck)
 		api.GET("/openapi.json", s.getOpenAPISpec)
+		api.GET("/templates/:id/logo", s.getTemplateLogo)
 		api.GET("/auth/status", s.authMiddleware.GetAuthStatus)
 		api.POST("/auth/login", s.authMiddleware.Login)
 		api.GET("/auth/validate", s.authMiddleware.ValidateToken)
@@ -559,6 +560,9 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/deployments/:name/source", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentSource)
 			protected.GET("/deployments/:name/webhook", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentWebhook)
 			protected.POST("/deployments/:name/webhook/rotate", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rotateDeploymentWebhook)
+			bodiless.GET("/deployments/:name/logo", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getProjectLogo)
+			bodiless.PUT("/deployments/:name/logo", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.putProjectLogo)
+			bodiless.DELETE("/deployments/:name/logo", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteProjectLogo)
 			protected.PUT("/deployments/:name/sleep", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentSleep)
 			protected.GET("/deployments/:name/environments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listEnvironments)
 			protected.POST("/deployments/:name/environments", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createEnvironmentHandler)
@@ -1156,6 +1160,7 @@ func (s *Server) listDeployments(c *gin.Context) {
 		deployments = scoped
 	}
 
+	s.withProjectLogos(deployments)
 	c.JSON(http.StatusOK, NewList(deployments, "deployments").Also("path", s.manager.BasePath()))
 }
 
@@ -1173,6 +1178,7 @@ func (s *Server) getDeployment(c *gin.Context) {
 	if owners := s.deploymentOwners([]models.Deployment{*deployment}); owners != nil {
 		deployment.Workspace = owners[name]
 	}
+	deployment.LogoVersion = logoVersion(s.projectLogoDir(name))
 	composeContent, composeFilename, _ := s.manager.GetComposeFile(name)
 	proxyStatus := s.proxyOrchestrator.GetDeploymentProxyStatus(deployment)
 
@@ -1296,6 +1302,12 @@ func (s *Server) createDeployment(c *gin.Context) {
 			"error": err.Error(),
 		})
 		return
+	}
+	if req.Metadata != nil {
+		if err := validateProjectLogo(req.Metadata.Logo); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	ownerWorkspace, ok := s.creationWorkspace(c)
 	if !ok {
@@ -1531,6 +1543,16 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 	}
 
+	if req.TemplateID != "" {
+		if req.Metadata == nil {
+			if created, err := s.manager.GetDeployment(req.Name); err == nil && created.Metadata != nil {
+				req.Metadata = created.Metadata
+			} else {
+				req.Metadata = &models.ServiceMetadata{Name: req.Name}
+			}
+		}
+		req.Metadata.Template = req.TemplateID
+	}
 	if req.Metadata != nil {
 		if len(databaseConfigs) > 0 {
 			req.Metadata.Databases = databaseConfigs
@@ -2339,6 +2361,10 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 			seenServices[healthCheck.Service] = struct{}{}
 		}
 	}
+	if err := validateProjectLogo(incoming.Logo); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if _, sentDomains := sentFields["domains"]; sentDomains {
 		for i := range incoming.Domains {
 			if err := s.validateDomainAccess(incoming.Domains[i].Access); err != nil {
@@ -2472,6 +2498,12 @@ func mergeMetadata(existing, incoming *models.ServiceMetadata, sentFields map[st
 	}
 	if _, ok := sentFields["require_plan"]; ok {
 		merged.RequirePlan = incoming.RequirePlan
+	}
+	if _, ok := sentFields["logo"]; ok {
+		merged.Logo = incoming.Logo
+	}
+	if _, ok := sentFields["template"]; ok {
+		merged.Template = incoming.Template
 	}
 
 	return &merged
@@ -4438,7 +4470,7 @@ func (s *Server) listTemplates(c *gin.Context) {
 				Name:          metadata.Name,
 				Description:   metadata.Description,
 				Icon:          metadata.Icon,
-				Logo:          metadata.Logo,
+				Logo:          templateLogo(templateID, metadata.Logo),
 				Category:      metadata.Category,
 				ObjectStore:   metadata.ObjectStore,
 				Priority:      metadata.Priority,
