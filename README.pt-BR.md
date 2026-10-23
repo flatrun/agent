@@ -1,10 +1,6 @@
 <p align="center">
-  <a href="https://flatrun.dev">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://flatrun.dev/flatrun-logo-white.svg">
-      <img src="https://flatrun.dev/flatrun-logo.svg" alt="FlatRun" width="360">
-    </picture>
-  </a>
+  <a href="https://flatrun.dev#gh-light-mode-only"><img src="docs/assets/flatrun-logo.svg" alt="FlatRun" width="360"></a>
+  <a href="https://flatrun.dev#gh-dark-mode-only"><img src="docs/assets/flatrun-logo-white.svg" alt="FlatRun" width="360"></a>
 </p>
 
 <p align="center">
@@ -17,10 +13,8 @@ O FlatRun leva o fluxo de trabalho do Railway para um servidor que você control
 
 Comece com um servidor. Conecte outros e escale os serviços compatíveis com Docker Swarm ou k3s quando a carga precisar.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
-  <img alt="Os serviços de um projeto como um grafo" src="docs/screenshots/project-architecture-light.png">
-</picture>
+![Os serviços de um projeto como um grafo](docs/screenshots/project-architecture-light.png#gh-light-mode-only)
+![Os serviços de um projeto como um grafo](docs/screenshots/project-architecture-dark.png#gh-dark-mode-only)
 
 ## Primeira aplicação
 

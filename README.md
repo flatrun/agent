@@ -1,10 +1,6 @@
 <p align="center">
-  <a href="https://flatrun.dev">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://flatrun.dev/flatrun-logo-white.svg">
-      <img src="https://flatrun.dev/flatrun-logo.svg" alt="FlatRun" width="360">
-    </picture>
-  </a>
+  <a href="https://flatrun.dev#gh-light-mode-only"><img src="docs/assets/flatrun-logo.svg" alt="FlatRun" width="360"></a>
+  <a href="https://flatrun.dev#gh-dark-mode-only"><img src="docs/assets/flatrun-logo-white.svg" alt="FlatRun" width="360"></a>
 </p>
 
 <p align="center">
@@ -22,10 +18,8 @@ FlatRun brings the Railway workflow to a server you control: projects made of se
 
 Start with one server. Connect more and scale eligible services through Docker Swarm or k3s when the workload needs it.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
-  <img alt="A shop project's services as a graph: web, api and worker above Redis, PostgreSQL and MinIO" src="docs/screenshots/project-architecture-light.png">
-</picture>
+![A shop project's services as a graph: web, api and worker above Redis, PostgreSQL and MinIO](docs/screenshots/project-architecture-light.png#gh-light-mode-only)
+![A shop project's services as a graph: web, api and worker above Redis, PostgreSQL and MinIO](docs/screenshots/project-architecture-dark.png#gh-dark-mode-only)
 
 This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
 
