@@ -2044,6 +2044,21 @@ func (s *Server) getDeploymentEnv(c *gin.Context) {
 			principalVars[i] = EnvVar{Key: env.Key, Value: ref}
 		}
 	}
+	// A reference can pull in a secret or another deployment's variable, so
+	// only actors who could write that reference themselves see its value.
+	actor := auth.GetActorFromContext(c)
+	if actor == nil || !actor.HasPermission(auth.PermDeploymentsWrite) || !actor.CanAccessDeployment(name, auth.AccessLevelWrite) {
+		for k := range resolved {
+			resolved[k] = models.CredentialMask
+		}
+		for i := range files {
+			for j, env := range files[i].EnvVars {
+				if _, ok := refs[env.Key]; ok {
+					files[i].EnvVars[j].Value = models.CredentialMask
+				}
+			}
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"env_vars": principalVars, "principal_file": principal, "env_files": files, "resolved": resolved})
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -96,6 +97,19 @@ func TestSecretsResolveIntoADeploymentsVariables(t *testing.T) {
 	}
 	if smtp := envLine(env, "SMTP_KEY"); len(smtp) != 24 {
 		t.Fatalf("workspace secret did not resolve: %s", env)
+	}
+	if _, err := s.authManager.CreateUser("dave", "dave@example.com", "dave-pass", auth.RoleViewer, nil); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := alice.do(http.MethodPost, "/workspaces/acme/members", "", map[string]string{"username": "dave", "role": "member"}); status != http.StatusCreated {
+		t.Fatalf("add dave = %d %v", status, body)
+	}
+	dave := alice.login("dave", "dave-pass")
+	if status, body := dave.do(http.MethodGet, "/deployments/shop/env", "", nil); status != http.StatusOK || strings.Contains(fmt.Sprint(body), "correct-horse") {
+		t.Fatalf("read-only env = %d %v", status, body)
+	}
+	if status, body := alice.do(http.MethodGet, "/deployments/shop/env", "", nil); status != http.StatusOK || body["resolved"].(map[string]any)["DATABASE_URL"] != "postgres://shop:correct-horse@db/shop" {
+		t.Fatalf("writer env = %d %v", status, body)
 	}
 	if refs := readDeploymentFile(t, s, "shop", envReferencesFile); strings.Contains(refs, "correct-horse") {
 		t.Fatalf("references file holds the value: %s", refs)
