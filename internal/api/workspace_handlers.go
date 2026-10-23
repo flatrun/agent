@@ -457,6 +457,10 @@ func (s *Server) removeWorkspaceMember(c *gin.Context) {
 	actor := auth.GetActorFromContext(c)
 	leaving := actor != nil && actor.User != nil && actor.User.ID == userID
 	if !leaving {
+		if actor == nil || !actor.HasPermission(auth.PermWorkspacesWrite) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "removing another member needs workspaces:write"})
+			return
+		}
 		current, err := s.workspaces().Role(w.ID, userID)
 		if err != nil {
 			workspaceError(c, err)

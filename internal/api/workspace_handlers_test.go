@@ -345,3 +345,35 @@ func TestDeletingAWorkspacesOnlyOwnerIsRefused(t *testing.T) {
 		t.Fatalf("deleting an owner with a co-owner = %d %v", status, body)
 	}
 }
+
+func TestReadOnlyUserCannotRemoveOtherMembers(t *testing.T) {
+	s, client := setupWorkspaceTestServer(t)
+	if _, err := s.authManager.CreateUser("alice", "alice@example.com", "alice-pass", auth.RoleOperator, nil); err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.authManager.CreateUser("bob", "bob@example.com", "bob-pass", auth.RoleOperator, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := s.authManager.CreateUser("vera", "vera@example.com", "vera-pass", auth.RoleViewer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := client.login("alice", "alice-pass")
+	if status, body := alice.do(http.MethodPost, "/workspaces", "", map[string]string{"name": "Acme"}); status != http.StatusCreated {
+		t.Fatalf("workspace = %d %v", status, body)
+	}
+	for _, member := range []map[string]string{{"username": "bob", "role": "member"}, {"username": "vera", "role": "admin"}} {
+		if status, body := alice.do(http.MethodPost, "/workspaces/acme/members", "", member); status != http.StatusCreated {
+			t.Fatalf("add %s = %d %v", member["username"], status, body)
+		}
+	}
+
+	vera := client.login("vera", "vera-pass")
+	if status, body := vera.do(http.MethodDelete, fmt.Sprintf("/workspaces/acme/members/%d", bob.ID), "", nil); status != http.StatusForbidden {
+		t.Fatalf("read-only admin removing a member = %d %v", status, body)
+	}
+	if status, body := vera.do(http.MethodDelete, fmt.Sprintf("/workspaces/acme/members/%d", viewer.ID), "", nil); status != http.StatusNoContent {
+		t.Fatalf("read-only member leaving = %d %v", status, body)
+	}
+}
