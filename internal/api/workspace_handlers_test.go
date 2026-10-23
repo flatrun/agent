@@ -170,7 +170,7 @@ func TestExistingDeploymentsMoveIntoTheDefaultWorkspace(t *testing.T) {
 		t.Fatalf("list workspaces = %d %v", status, body)
 	}
 	slugs := itemNames(body, "slug")
-	if len(slugs) != 2 || slugs[0] != "admin" || slugs[1] != "default" {
+	if len(slugs) != 1 || slugs[0] != "default" {
 		t.Fatalf("admin workspaces = %v", slugs)
 	}
 
@@ -181,11 +181,6 @@ func TestExistingDeploymentsMoveIntoTheDefaultWorkspace(t *testing.T) {
 	item := body["items"].([]any)[0].(map[string]any)
 	if item["name"] != "legacy" || item["workspace"] != "default" {
 		t.Fatalf("legacy deployment = %v", item)
-	}
-
-	status, body = admin.do(http.MethodGet, "/deployments", "admin", nil)
-	if status != http.StatusOK || len(itemNames(body, "name")) != 0 {
-		t.Fatalf("personal workspace deployments = %d %v", status, body)
 	}
 
 	status, body = admin.do(http.MethodGet, "/workspaces/default/resources?type=deployment", "", nil)
@@ -220,9 +215,12 @@ func TestWorkspaceMembershipGrantsDeploymentAccess(t *testing.T) {
 	if names := itemNames(body, "name"); status != http.StatusOK || len(names) != 1 || names[0] != "shop" {
 		t.Fatalf("acme deployments = %d %v", status, body)
 	}
-	status, body = alice.do(http.MethodGet, "/deployments", "alice", nil)
-	if names := itemNames(body, "name"); status != http.StatusOK || len(names) != 1 || names[0] != "notes" {
-		t.Fatalf("personal deployments = %d %v", status, body)
+	if status, body := alice.do(http.MethodGet, "/deployments/notes", "", nil); status != http.StatusOK {
+		t.Fatalf("creator reading notes = %d %v", status, body)
+	}
+	status, body = alice.do(http.MethodGet, "/workspaces", "", nil)
+	if slugs := itemNames(body, "slug"); status != http.StatusOK || len(slugs) != 1 || slugs[0] != "acme-shop" {
+		t.Fatalf("operator workspaces = %d %v", status, body)
 	}
 
 	if status, _ := bob.do(http.MethodGet, "/deployments/shop", "", nil); status != http.StatusForbidden {
@@ -306,6 +304,7 @@ func TestMovingADeploymentNeedsAdminOnBothSides(t *testing.T) {
 		t.Fatalf("create = %d", status)
 	}
 	alice.do(http.MethodPost, "/workspaces", "", map[string]string{"name": "Team"})
+	bob.do(http.MethodPost, "/workspaces", "", map[string]string{"name": "Bob"})
 	if status, _ := bob.do(http.MethodPut, "/workspaces/bob/resources", "", map[string]string{"type": "deployment", "id": "api"}); status != http.StatusForbidden {
 		t.Fatalf("moving someone else's deployment = %d", status)
 	}

@@ -71,8 +71,8 @@ func (m *Manager) Workspaces() *workspace.Store {
 	return m.workspaces
 }
 
-// ensureWorkspaces creates the default workspace, owned by the current
-// admins, and a personal workspace for every user that lacks one.
+// ensureWorkspaces creates the default workspace, owned by the current admins,
+// and folds per-user workspaces from earlier builds into it.
 func (m *Manager) ensureWorkspaces() error {
 	users, err := m.db.GetUsers()
 	if err != nil {
@@ -87,23 +87,12 @@ func (m *Manager) ensureWorkspaces() error {
 	if _, err := m.workspaces.EnsureDefault(admins); err != nil {
 		return err
 	}
-	for _, u := range users {
-		if u.Role == RoleService {
-			continue
-		}
-		if _, err := m.workspaces.EnsurePersonal(u.ID, u.Username); err != nil {
-			return err
-		}
-	}
-	return nil
+	return m.workspaces.FoldPersonal()
 }
 
 func (m *Manager) adoptUserIntoWorkspaces(user *User) error {
 	if user.Role == RoleService {
 		return nil
-	}
-	if _, err := m.workspaces.EnsurePersonal(user.ID, user.Username); err != nil {
-		return err
 	}
 	if user.Role != RoleAdmin {
 		return nil

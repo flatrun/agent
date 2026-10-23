@@ -35,6 +35,9 @@ func (s *Server) registerWorkspaceRoutes(r *gin.RouterGroup) {
 	r.DELETE("/workspaces/:slug/invitations/:id", write, s.revokeWorkspaceInvitation)
 	r.GET("/workspaces/:slug/resources", read, s.listWorkspaceResources)
 	r.PUT("/workspaces/:slug/resources", write, s.moveWorkspaceResource)
+	r.GET("/workspaces/:slug/logo", read, s.getWorkspaceLogo)
+	r.PUT("/workspaces/:slug/logo", write, s.putWorkspaceLogo)
+	r.DELETE("/workspaces/:slug/logo", write, s.deleteWorkspaceLogo)
 }
 
 func (s *Server) workspaces() *workspace.Store {
@@ -139,7 +142,7 @@ func (s *Server) requestWorkspace(c *gin.Context) (*workspace.Workspace, bool) {
 }
 
 // creationWorkspace is where a resource created by this request belongs: the
-// requested workspace, else the actor's personal workspace, else default.
+// requested workspace, else default.
 func (s *Server) creationWorkspace(c *gin.Context) (*workspace.Workspace, bool) {
 	store := s.workspaces()
 	if store == nil {
@@ -148,11 +151,6 @@ func (s *Server) creationWorkspace(c *gin.Context) (*workspace.Workspace, bool) 
 	w, ok := s.requestWorkspace(c)
 	if !ok || w != nil {
 		return w, ok
-	}
-	if actor := auth.GetActorFromContext(c); actor != nil && actor.User != nil && !isGlobalAdmin(actor) {
-		if personal, err := store.PersonalFor(actor.User.ID); err == nil {
-			return personal, true
-		}
 	}
 	def, err := store.EnsureDefault(nil)
 	if err != nil {
@@ -254,6 +252,9 @@ func (s *Server) listWorkspaces(c *gin.Context) {
 			}
 		}
 	}
+	for i := range memberships {
+		memberships[i] = s.withLogo(memberships[i])
+	}
 	c.JSON(http.StatusOK, NewList(memberships, ""))
 }
 
@@ -284,7 +285,7 @@ func (s *Server) getWorkspace(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, workspace.Membership{Workspace: *w, Role: role})
+	c.JSON(http.StatusOK, s.withLogo(workspace.Membership{Workspace: *w, Role: role}))
 }
 
 func (s *Server) updateWorkspace(c *gin.Context) {
@@ -304,7 +305,7 @@ func (s *Server) updateWorkspace(c *gin.Context) {
 		workspaceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, workspace.Membership{Workspace: *updated, Role: role})
+	c.JSON(http.StatusOK, s.withLogo(workspace.Membership{Workspace: *updated, Role: role}))
 }
 
 func (s *Server) deleteWorkspace(c *gin.Context) {

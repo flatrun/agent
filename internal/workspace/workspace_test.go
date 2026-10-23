@@ -168,20 +168,19 @@ func TestInvitationAcceptance(t *testing.T) {
 	}
 }
 
-func TestRemovingAUserHandsTheirResourcesToDefault(t *testing.T) {
+func TestPersonalWorkspacesFoldIntoDefault(t *testing.T) {
 	s := newStore(t)
 	def, _ := s.EnsureDefault([]int64{1})
-	personal, err := s.EnsurePersonal(2, "Dev")
-	if err != nil || personal.Slug != "dev" || !personal.Personal {
-		t.Fatalf("personal = %+v, %v", personal, err)
-	}
-	again, _ := s.EnsurePersonal(2, "Dev")
-	if again.ID != personal.ID {
-		t.Fatal("a second personal workspace was created")
+	personal, err := s.Create("dev", "Dev's workspace", true, 2)
+	if err != nil {
+		t.Fatal(err)
 	}
 	_ = s.Assign(personal.ID, Ref{TypeDeployment, "blog"})
+	if _, _, err := s.Invite(personal.ID, "ops", RoleMember, 2, 0); err != nil {
+		t.Fatal(err)
+	}
 
-	if err := s.RemoveUser(2); err != nil {
+	if err := s.FoldPersonal(); err != nil {
 		t.Fatal(err)
 	}
 	owner, err := s.Owner(Ref{TypeDeployment, "blog"})
@@ -190,6 +189,9 @@ func TestRemovingAUserHandsTheirResourcesToDefault(t *testing.T) {
 	}
 	if _, err := s.Get("dev"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("personal workspace still exists: %v", err)
+	}
+	if err := s.FoldPersonal(); err != nil {
+		t.Fatalf("folding twice: %v", err)
 	}
 	if err := s.Delete(DefaultSlug); !errors.Is(err, ErrProtected) {
 		t.Fatalf("deleting default: %v", err)

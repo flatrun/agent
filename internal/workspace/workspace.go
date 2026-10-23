@@ -58,6 +58,8 @@ type Workspace struct {
 	Name      string    `json:"name"`
 	Personal  bool      `json:"personal"`
 	CreatedAt time.Time `json:"created_at"`
+	// Logo is a version string for the workspace logo, empty when it has none.
+	Logo string `json:"logo,omitempty"`
 }
 
 type Membership struct {
@@ -324,14 +326,6 @@ func (s *Store) ListForUser(userID int64) ([]Membership, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) PersonalFor(userID int64) (*Workspace, error) {
-	return scanWorkspace(s.db.QueryRow(`
-		SELECT w.id, w.slug, w.name, w.personal, w.created_at
-		FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
-		WHERE m.user_id = ? AND m.role = ? AND w.personal = TRUE
-		ORDER BY w.id LIMIT 1`, userID, RoleOwner))
-}
-
 func (s *Store) Rename(slug, name string) (*Workspace, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -456,34 +450,10 @@ func (s *Store) ensureAnotherOwner(workspaceID, userID int64) error {
 	return nil
 }
 
-// RemoveUser drops every membership of a deleted user. Their personal
-// workspace is removed and anything it owned moves to the default workspace.
+// RemoveUser drops every membership of a deleted user.
 func (s *Store) RemoveUser(userID int64) error {
-	personal, err := s.PersonalFor(userID)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	if personal != nil {
-		def, err := s.Get(DefaultSlug)
-		if err != nil {
-			return err
-		}
-		if _, err := s.db.Exec(`UPDATE workspace_resources SET workspace_id = ? WHERE workspace_id = ?`, def.ID, personal.ID); err != nil {
-			return err
-		}
-	}
-	if _, err := s.db.Exec(`DELETE FROM workspace_members WHERE user_id = ?`, userID); err != nil {
-		return err
-	}
-	if personal != nil {
-		if _, err := s.db.Exec(`DELETE FROM workspace_invitations WHERE workspace_id = ?`, personal.ID); err != nil {
-			return err
-		}
-		if _, err := s.db.Exec(`DELETE FROM workspaces WHERE id = ?`, personal.ID); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := s.db.Exec(`DELETE FROM workspace_members WHERE user_id = ?`, userID)
+	return err
 }
 
 func hashToken(token string) string {
@@ -739,20 +709,30 @@ func (s *Store) EnsureDefault(ownerIDs []int64) (*Workspace, error) {
 	return w, nil
 }
 
-// EnsurePersonal gives a user their own workspace if they have none.
-func (s *Store) EnsurePersonal(userID int64, username string) (*Workspace, error) {
-	if w, err := s.PersonalFor(userID); err == nil {
-		return w, nil
-	} else if !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
-	base := Slugify(username)
-	if base == "" || base == DefaultSlug {
-		base = "personal"
-	}
-	slug, err := s.freeSlug(base)
+// FoldPersonal moves everything owned by per-user workspaces, which earlier
+// builds created, into the default workspace and removes them.
+func (s *Store) FoldPersonal() error {
+	def, err := s.Get(DefaultSlug)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return s.Create(slug, username+"'s workspace", true, userID)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	const personal = `SELECT id FROM workspaces WHERE personal = TRUE`
+	if _, err := tx.Exec(`UPDATE workspace_resources SET workspace_id = ? WHERE workspace_id IN (`+personal+`)`, def.ID); err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`DELETE FROM workspace_members WHERE workspace_id IN (` + personal + `)`,
+		`DELETE FROM workspace_invitations WHERE workspace_id IN (` + personal + `)`,
+		`DELETE FROM workspaces WHERE personal = TRUE`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
