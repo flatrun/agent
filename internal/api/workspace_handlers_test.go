@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -315,5 +316,32 @@ func TestMovingADeploymentNeedsAdminOnBothSides(t *testing.T) {
 	meta, err := os.ReadFile(filepath.Join(s.config.DeploymentsPath, "api", "service.yml"))
 	if err != nil || !bytes.Contains(meta, []byte("workspace: team")) {
 		t.Fatalf("service.yml = %q, %v", meta, err)
+	}
+}
+
+func TestDeletingAWorkspacesOnlyOwnerIsRefused(t *testing.T) {
+	s, client := setupWorkspaceTestServer(t)
+	alice, err := s.authManager.CreateUser("alice", "alice@example.com", "alice-pass", auth.RoleOperator, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.authManager.CreateUser("bob", "bob@example.com", "bob-pass", auth.RoleOperator, nil); err != nil {
+		t.Fatal(err)
+	}
+	admin := client.login("admin", "admin-pass")
+	aliceClient := client.login("alice", "alice-pass")
+	if status, body := aliceClient.do(http.MethodPost, "/workspaces", "", map[string]string{"name": "Acme"}); status != http.StatusCreated {
+		t.Fatalf("workspace = %d %v", status, body)
+	}
+
+	path := fmt.Sprintf("/users/%d", alice.ID)
+	if status, body := admin.do(http.MethodDelete, path, "", nil); status != http.StatusConflict {
+		t.Fatalf("deleting the only owner = %d %v", status, body)
+	}
+	if status, body := aliceClient.do(http.MethodPost, "/workspaces/acme/members", "", map[string]string{"username": "bob", "role": "owner"}); status != http.StatusCreated {
+		t.Fatalf("add bob = %d %v", status, body)
+	}
+	if status, body := admin.do(http.MethodDelete, path, "", nil); status != http.StatusOK {
+		t.Fatalf("deleting an owner with a co-owner = %d %v", status, body)
 	}
 }

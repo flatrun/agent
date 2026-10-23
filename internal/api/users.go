@@ -1,10 +1,12 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/workspace"
 	"github.com/gin-gonic/gin"
 )
 
@@ -167,6 +169,10 @@ func (s *Server) deleteUser(c *gin.Context) {
 	if err := s.authManager.DeleteUser(id, actor.UserID); err != nil {
 		if err == auth.ErrCannotDeleteSelf {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, workspace.ErrLastOwner) {
+			c.JSON(http.StatusConflict, gin.H{"error": "the user is the only owner of a workspace; make someone else an owner first"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})

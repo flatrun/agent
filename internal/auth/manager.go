@@ -231,6 +231,11 @@ func (m *Manager) DeleteUser(id int64, actorID int64) error {
 	if id == actorID {
 		return ErrCannotDeleteSelf
 	}
+	if m.workspaces != nil {
+		if err := m.workspaces.CheckUserRemovable(id); err != nil {
+			return err
+		}
+	}
 	if err := m.db.DeleteUser(id); err != nil {
 		return err
 	}

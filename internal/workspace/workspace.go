@@ -450,8 +450,28 @@ func (s *Store) ensureAnotherOwner(workspaceID, userID int64) error {
 	return nil
 }
 
+// CheckUserRemovable refuses when the user is the only owner of a workspace.
+func (s *Store) CheckUserRemovable(userID int64) error {
+	var soleOwned int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM workspace_members m
+		WHERE m.user_id = ? AND m.role = ? AND NOT EXISTS (
+			SELECT 1 FROM workspace_members o
+			WHERE o.workspace_id = m.workspace_id AND o.role = ? AND o.user_id != m.user_id)`,
+		userID, RoleOwner, RoleOwner).Scan(&soleOwned)
+	if err != nil {
+		return err
+	}
+	if soleOwned > 0 {
+		return ErrLastOwner
+	}
+	return nil
+}
+
 // RemoveUser drops every membership of a deleted user.
 func (s *Store) RemoveUser(userID int64) error {
+	if err := s.CheckUserRemovable(userID); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`DELETE FROM workspace_members WHERE user_id = ?`, userID)
 	return err
 }
