@@ -278,7 +278,7 @@ func (m *Manager) ListDeployments() ([]models.Deployment, error) {
 	if err == nil {
 		m.noteStatusRecovered()
 		for i := range deployments {
-			deployments[i].Status = statusFromContainers(index[m.projectFor(&deployments[i], index)])
+			applyContainers(&deployments[i], index[m.projectFor(&deployments[i], index)])
 		}
 		return deployments, nil
 	}
