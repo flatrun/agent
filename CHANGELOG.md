@@ -1,14 +1,34 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0-beta.12] - 2026-10-23
 
 ### Added
-- Project paths for every deployment endpoint; the deployment paths keep working
-- A project's deploy history under its deployments path
-- Workspace logos; one Default workspace per instance that can be renamed
+- Deploy a project from a git repository; repositories without a compose file are built from their Dockerfile or with Railpack
+- Redeploy on push through GitHub, GitLab and generic webhooks
+- Every deploy is recorded with its log, phases, message and revision, and any past deploy can be rolled back to
+- Environments such as staging that follow their own branch, and preview environments for pull requests that are removed when the pull request closes
+- Variables that reference another project's variables or address, as in `${{ api.DATABASE_URL }}`
+- Encrypted secrets with scheduled rotation, and secrets read from Infisical, Vault or OpenBao, Doppler and 1Password Connect
+- Idle projects can sleep and wake on the next request
+- Workspaces that own projects and credentials, with one Default workspace per instance that can be renamed and given a logo
+- Project paths for every deployment endpoint, and a project's deploy history under its deployments path; the deployment paths keep working
+- Each compose service is described with the services it depends on
 
 ### Fixed
 - The deployment list reports each service's state and running replicas
+- Services that run several replicas are accepted
+- A service keeps the same container name on every deploy
+- A new project whose compose file names env files is accepted
+- Apps built from source receive the project's environment variables
+- A build that prints a very long line no longer hangs the deploy
+- Saved credentials are never overwritten when one of them cannot be read
+- Only workspace admins can bind a secret manager, and removing another member needs write access
+- Read-only callers see variable references with their values masked
+- Secret and workspace changes are recorded in the audit log
+- A workspace's only owner cannot be deleted
+- A failed webhook signature answers like an unknown hook
+- A failed environment leaves nothing behind and can be retried
+- A project whose sleep stop fails stays marked awake
 
 ### Upgrading
 - Existing projects, containers, compose and env files are left as they are; projects join the Default workspace on first start

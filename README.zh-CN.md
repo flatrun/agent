@@ -21,7 +21,7 @@ FlatRun 把 Railway 的工作方式带到你掌控的服务器上：由服务组
 在 Ubuntu 或 Debian 服务器上安装 FlatRun：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/flatrun/installer/main/scripts/install.sh | sudo bash
+curl -fsSL https://get.flatrun.dev/install.sh | sudo bash
 ```
 
 打开 `http://<你的服务器>:8080`，完成设置，然后通过模板、镜像或 Compose 文件创建

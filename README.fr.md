@@ -21,7 +21,7 @@ Commencez avec un serveur. Connectez-en d'autres et faites évoluer les services
 Installez FlatRun sur Ubuntu ou Debian :
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/flatrun/installer/main/scripts/install.sh | sudo bash
+curl -fsSL https://get.flatrun.dev/install.sh | sudo bash
 ```
 
 Ouvrez `http://<votre-serveur>:8080`, terminez la configuration, puis créez un
