@@ -19,6 +19,11 @@ FlatRun 把 Railway 的工作方式带到你掌控的服务器上：由服务组
 
 从一台服务器开始。在需要时连接更多服务器，并通过 Docker Swarm 或 k3s 扩展符合条件的服务。
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
+  <img alt="以图的形式展示一个项目的服务" src="docs/screenshots/project-architecture-light.png">
+</picture>
+
 ## 部署第一个应用
 
 在 Ubuntu 或 Debian 服务器上安装 FlatRun：
@@ -38,21 +43,6 @@ flatrun profile add production --url https://panel.example.com --token your-api-
 flatrun profile use production
 flatrun health
 ```
-
-## 项目和服务
-
-每个项目都是一个包含 Compose 文件的目录。控制面板把项目画在画布上，显示域名、状态和服务。打开一个项目可以看到它的服务以及服务之间的依赖关系。
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/projects-canvas-dark.png">
-  <img alt="画布上的项目，每个卡片显示标志、域名、状态和服务" src="docs/screenshots/projects-canvas-light.png">
-</picture>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
-  <img alt="以图的形式展示一个项目的服务" src="docs/screenshots/project-architecture-light.png">
-</picture>
-
 
 ## FlatRun 提供什么
 

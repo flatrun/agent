@@ -19,6 +19,11 @@ FlatRun apporte le fonctionnement de Railway sur un serveur que vous contrôlez 
 
 Commencez avec un serveur. Connectez-en d'autres et faites évoluer les services adaptés avec Docker Swarm ou k3s lorsque la charge l'exige.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
+  <img alt="Les services d'un projet sous forme de graphe" src="docs/screenshots/project-architecture-light.png">
+</picture>
+
 ## Première application
 
 Installez FlatRun sur Ubuntu ou Debian :
@@ -39,21 +44,6 @@ flatrun profile add production --url https://panel.example.com --token your-api-
 flatrun profile use production
 flatrun health
 ```
-
-## Projets et services
-
-Chaque projet est un dossier avec un fichier Compose. Le tableau de bord les affiche sur un canevas, avec leur domaine, leur état et leurs services. Un projet ouvert montre ses services et leurs dépendances.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/projects-canvas-dark.png">
-  <img alt="Les projets sur un canevas, chacun avec son logo, son domaine, son état et ses services" src="docs/screenshots/projects-canvas-light.png">
-</picture>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
-  <img alt="Les services d'un projet sous forme de graphe" src="docs/screenshots/project-architecture-light.png">
-</picture>
-
 
 ## Ce que FlatRun apporte
 

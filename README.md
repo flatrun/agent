@@ -24,24 +24,12 @@ FlatRun brings the Railway workflow to a server you control: projects made of se
 
 Start with one server. Connect more and scale eligible services through Docker Swarm or k3s when the workload needs it.
 
-This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
-
-## Projects and services
-
-Every project appears on one canvas with its domain, state and services, and an arrow where one project reads another's variables:
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/projects-canvas-dark.png">
-  <img alt="Projects on a canvas, each card showing its logo, domain, state and services" src="docs/screenshots/projects-canvas-light.png">
-</picture>
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
   <img alt="A shop project's services as a graph: web, api and worker above Redis, PostgreSQL and MinIO" src="docs/screenshots/project-architecture-light.png">
 </picture>
 
-Open a project to see its services drawn from the Compose file: what depends on what, which domain points where, how many replicas are up, and the folder each one keeps its data in. The [UI README](https://github.com/flatrun/ui#a-tour) has the full tour.
-
+This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
 
 ## From server to working application
 
