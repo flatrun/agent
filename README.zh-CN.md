@@ -11,13 +11,13 @@
   <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português do Brasil</a> · 简体中文
 </p>
 
-# 在自己的服务器上运行容器应用
+# FlatRun
 
-FlatRun 让你从一个位置部署、保护、诊断、自动化和管理容器应用。它直接运行标准
-Docker Compose 项目，也可以通过 Docker Swarm 或 k3s 扩展符合条件的工作负载。
+**Railway 和 Render 的开源、自托管替代方案。** 在你自己的服务器上部署 Docker Compose 项目。
 
-Compose 文件、配置和数据始终保留在你的机器上。你可以从一台 Docker 主机开始，
-在需要时连接更多服务器并启用编排。
+FlatRun 把 Railway 的工作方式带到你掌控的服务器上：由服务组成的项目、环境、可以回滚的部署、在项目之间共享的变量，以及常用应用的模板。每个项目都是一个包含标准 Compose 文件的目录，即使不再使用 FlatRun，也能继续用 `docker compose` 运行。
+
+从一台服务器开始。在需要时连接更多服务器，并通过 Docker Swarm 或 k3s 扩展符合条件的服务。
 
 ## 部署第一个应用
 
@@ -39,7 +39,7 @@ flatrun profile use production
 flatrun health
 ```
 
-## 预览
+## 项目和服务
 
 每个项目都是一个包含 Compose 文件的目录。控制面板把项目画在画布上，显示域名、状态和服务。打开一个项目可以看到它的服务以及服务之间的依赖关系。
 

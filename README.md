@@ -16,22 +16,19 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
-# Run containerized applications on your own servers
+# FlatRun
 
-FlatRun gives you one place to deploy, secure, diagnose, automate, and manage
-containerized applications across one server or a connected fleet. It runs
-standard Docker Compose projects directly and can scale eligible workloads
-through Docker Swarm or k3s.
+**Open source, self-hosted alternative to Railway and Render.** Deploy Docker Compose projects on your own servers.
 
-FlatRun is for operators who want a clear container workflow without giving up
-control of their servers, Compose files, or data. Start with one Docker host,
-then connect peers and enable orchestration when the workload needs it.
+FlatRun brings the Railway workflow to a server you control: projects made of services, environments, deployments you can roll back, variables shared between projects, and templates for common apps. Each project is a directory with a standard Compose file, so it keeps running under plain `docker compose` if you stop using FlatRun.
+
+Start with one server. Connect more and scale eligible services through Docker Swarm or k3s when the workload needs it.
 
 This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
 
-## See it
+## Projects and services
 
-Every project is a directory with a Compose file. The dashboard draws them on a canvas, each with its domain, state and services, and an arrow where one project reads another's variables:
+Every project appears on one canvas with its domain, state and services, and an arrow where one project reads another's variables:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/projects-canvas-dark.png">

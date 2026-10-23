@@ -11,16 +11,13 @@
   <a href="README.md">English</a> · Français · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português do Brasil</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-# Exécutez des applications conteneurisées sur vos propres serveurs
+# FlatRun
 
-FlatRun permet de déployer, sécuriser, diagnostiquer, automatiser et gérer des
-applications conteneurisées depuis une seule interface. Il exécute directement
-des projets Docker Compose standards et peut faire évoluer les charges adaptées
-avec Docker Swarm ou k3s.
+**Alternative open source et auto-hébergée à Railway et Render.** Déployez des projets Docker Compose sur vos propres serveurs.
 
-Vos fichiers Compose, configurations et données restent sur vos machines. Vous
-pouvez commencer avec un seul hôte Docker, puis connecter des serveurs et
-activer l'orchestration lorsque la charge l'exige.
+FlatRun apporte le fonctionnement de Railway sur un serveur que vous contrôlez : des projets composés de services, des environnements, des déploiements que vous pouvez annuler, des variables partagées entre projets et des modèles pour les applications courantes. Chaque projet est un dossier avec un fichier Compose standard : il continue de tourner avec `docker compose` si vous arrêtez d'utiliser FlatRun.
+
+Commencez avec un serveur. Connectez-en d'autres et faites évoluer les services adaptés avec Docker Swarm ou k3s lorsque la charge l'exige.
 
 ## Première application
 
@@ -43,7 +40,7 @@ flatrun profile use production
 flatrun health
 ```
 
-## Aperçu
+## Projets et services
 
 Chaque projet est un dossier avec un fichier Compose. Le tableau de bord les affiche sur un canevas, avec leur domaine, leur état et leurs services. Un projet ouvert montre ses services et leurs dépendances.
 

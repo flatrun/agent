@@ -11,15 +11,13 @@
   <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · Português do Brasil · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-# Execute aplicações em contêineres nos seus próprios servidores
+# FlatRun
 
-O FlatRun permite implantar, proteger, diagnosticar, automatizar e gerenciar
-aplicações em contêineres em um só lugar. Ele executa projetos Docker Compose
-padrão diretamente e pode escalar cargas compatíveis com Docker Swarm ou k3s.
+**Alternativa de código aberto e auto-hospedada ao Railway e ao Render.** Implante projetos Docker Compose nos seus próprios servidores.
 
-Seus arquivos Compose, configurações e dados permanecem nas suas máquinas.
-Comece com um único host Docker, conecte outros servidores e ative a
-orquestração quando a carga precisar.
+O FlatRun leva o fluxo de trabalho do Railway para um servidor que você controla: projetos formados por serviços, ambientes, implantações que você pode reverter, variáveis compartilhadas entre projetos e modelos para aplicações comuns. Cada projeto é uma pasta com um arquivo Compose padrão, então continua rodando com `docker compose` se você parar de usar o FlatRun.
+
+Comece com um servidor. Conecte outros e escale os serviços compatíveis com Docker Swarm ou k3s quando a carga precisar.
 
 ## Primeira aplicação
 
@@ -42,7 +40,7 @@ flatrun profile use production
 flatrun health
 ```
 
-## Visão geral
+## Projetos e serviços
 
 Cada projeto é uma pasta com um arquivo Compose. O painel mostra os projetos em uma tela, com domínio, estado e serviços. Ao abrir um projeto, você vê os serviços e como eles dependem uns dos outros.
 
