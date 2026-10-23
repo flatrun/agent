@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,5 +91,34 @@ func TestPutIdleDeploymentsToSleep_SkipsStopped(t *testing.T) {
 	// The deployment was never started, so there is nothing to put to sleep.
 	if due := s.putIdleDeploymentsToSleep(context.Background(), time.Now()); len(due) != 0 {
 		t.Errorf("stopped deployment was put to sleep: %v", due)
+	}
+}
+
+func TestFailedSleepStopLeavesTheDeploymentAwake(t *testing.T) {
+	s, _ := newRedeployTestServer(t, &fakeRunner{err: errors.New("stop failed")})
+	if err := s.manager.CreateDeployment("app", "services:\n  app:\n    image: nginx\n", nil); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := s.manager.GetDeployment("app")
+	d.Metadata.Sleep = &models.SleepConfig{Enabled: true, IdleMinutes: 5}
+	if err := s.manager.SaveMetadata("app", d.Metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.setSleeping("app", true); err != nil {
+		t.Fatal(err)
+	}
+
+	job, created := s.startDeploymentJob("app", "stop", actionOptions{putToSleep: true})
+	if !created {
+		t.Fatal("stop job was not started")
+	}
+	if !waitFor(func() bool { return job.snapshot().Status == JobFailed }) {
+		t.Fatalf("stop job = %v", job.snapshot().Status)
+	}
+	if !waitFor(func() bool {
+		d, err := s.manager.GetDeployment("app")
+		return err == nil && !d.Metadata.Sleep.Sleeping
+	}) {
+		t.Error("deployment is still marked sleeping after its stop failed")
 	}
 }

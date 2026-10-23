@@ -2607,6 +2607,11 @@ func (s *Server) runActionJob(job *ActionJob) {
 	err := s.runDeploymentAction(job.action, job.deployment, opts, emit)
 	finishRecord(err)
 	if err != nil {
+		if job.opts.putToSleep {
+			if wakeErr := s.setSleeping(job.deployment, false); wakeErr != nil {
+				log.Printf("Warning: failed to clear sleep on %s after its stop failed: %v", job.deployment, wakeErr)
+			}
+		}
 		s.jobs.finish(job, JobFailed, err.Error())
 		return
 	}
@@ -2626,6 +2631,9 @@ type actionOptions struct {
 	Trigger string `json:"-"`
 	// progress receives a recorded deploy's phase and fetched commit.
 	progress *deployProgress
+	// putToSleep marks a stop started by the idle sweep. If the stop fails the
+	// deployment is still running, so it is no longer marked sleeping.
+	putToSleep bool
 }
 
 func (o actionOptions) runOptions() []docker.RunOption {

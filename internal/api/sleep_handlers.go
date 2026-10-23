@@ -89,7 +89,7 @@ func (s *Server) putIdleDeploymentsToSleep(ctx context.Context, now time.Time) [
 			log.Printf("Warning: failed to mark %s sleeping: %v", name, err)
 			continue
 		}
-		if _, created := s.startDeploymentJob(name, "stop", actionOptions{}); !created {
+		if _, created := s.startDeploymentJob(name, "stop", actionOptions{putToSleep: true}); !created {
 			log.Printf("Sleep for %s deferred: an action is running", name)
 			_ = s.setSleeping(name, false)
 		}
