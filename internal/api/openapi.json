@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FlatRun Agent API",
-    "description": "Generated from the agent's routes and the types its handlers bind and return.",
+    "description": "Generated from the agent's routes and the types its handlers bind and return. Every /projects path is also served under /deployments.",
     "version": "0.4.0-beta.11"
   },
   "paths": {
@@ -3711,3557 +3711,6 @@
         "x-permission": "databases:write"
       }
     },
-    "/api/deployments": {
-      "get": {
-        "operationId": "get-deployments",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.ListOfDeployment"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "post": {
-        "operationId": "post-deployments",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "auto_start": {
-                    "type": "boolean"
-                  },
-                  "compose_content": {
-                    "type": "string"
-                  },
-                  "container_port": {
-                    "type": "integer"
-                  },
-                  "databases": {
-                    "items": {
-                      "$ref": "#/components/schemas/api.DatabaseConfigRequest"
-                    },
-                    "type": "array"
-                  },
-                  "env_vars": {
-                    "items": {
-                      "$ref": "#/components/schemas/api.EnvVar"
-                    },
-                    "type": "array"
-                  },
-                  "existing_database_container": {
-                    "type": "string"
-                  },
-                  "host_port": {
-                    "type": "string"
-                  },
-                  "image": {
-                    "type": "string"
-                  },
-                  "map_ports": {
-                    "type": "boolean"
-                  },
-                  "metadata": {
-                    "$ref": "#/components/schemas/models.ServiceMetadata"
-                  },
-                  "mount_ownership": {
-                    "items": {
-                      "$ref": "#/components/schemas/api.MountOwnershipRequest"
-                    },
-                    "type": "array"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "ports": {
-                    "items": {
-                      "$ref": "#/components/schemas/api.PortConfig"
-                    },
-                    "type": "array"
-                  },
-                  "registry_credential": {
-                    "properties": {
-                      "credential_id": {
-                        "type": "string"
-                      },
-                      "credential_name": {
-                        "type": "string"
-                      },
-                      "password": {
-                        "type": "string"
-                      },
-                      "registry_type_slug": {
-                        "type": "string"
-                      },
-                      "registry_url": {
-                        "type": "string"
-                      },
-                      "save_credential": {
-                        "type": "boolean"
-                      },
-                      "username": {
-                        "type": "string"
-                      }
-                    },
-                    "type": "object",
-                    "x-columns": [
-                      "credential_id",
-                      "username",
-                      "password",
-                      "save_credential",
-                      "credential_name",
-                      "registry_type_slug",
-                      "registry_url"
-                    ],
-                    "x-property-order": [
-                      "credential_id",
-                      "username",
-                      "password",
-                      "save_credential",
-                      "credential_name",
-                      "registry_type_slug",
-                      "registry_url"
-                    ]
-                  },
-                  "seed_mounts": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "service_credentials": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "type": "object"
-                  },
-                  "source": {
-                    "$ref": "#/components/schemas/api.deploymentSource"
-                  },
-                  "template_id": {
-                    "type": "string"
-                  },
-                  "use_shared_database": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "name"
-                ],
-                "type": "object",
-                "x-columns": [
-                  "name",
-                  "image",
-                  "compose_content",
-                  "template_id",
-                  "container_port",
-                  "map_ports",
-                  "host_port",
-                  "auto_start",
-                  "use_shared_database",
-                  "existing_database_container"
-                ],
-                "x-property-order": [
-                  "name",
-                  "image",
-                  "compose_content",
-                  "template_id",
-                  "metadata",
-                  "env_vars",
-                  "container_port",
-                  "map_ports",
-                  "host_port",
-                  "ports",
-                  "auto_start",
-                  "use_shared_database",
-                  "existing_database_container",
-                  "databases",
-                  "registry_credential",
-                  "service_credentials",
-                  "seed_mounts",
-                  "mount_ownership",
-                  "source"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}": {
-      "delete": {
-        "operationId": "delete-deployments-by-name",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "delete_database",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "delete_ssl",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "delete_vhost",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:delete",
-        "x-plan-supported": true
-      },
-      "get": {
-        "operationId": "get-deployments-by-name",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "put": {
-        "operationId": "put-deployments-by-name",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "compose_content": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "compose_content"
-                ],
-                "type": "object",
-                "x-columns": [
-                  "compose_content"
-                ],
-                "x-property-order": [
-                  "compose_content"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write",
-        "x-plan-supported": true
-      }
-    },
-    "/api/deployments/{name}/access/email-targets": {
-      "get": {
-        "operationId": "get-deployments-by-name-access-email-targets",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/actions/{actionId}": {
-      "post": {
-        "operationId": "post-deployments-by-name-actions-by-actionId",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "actionId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/ai/analyze": {
-      "post": {
-        "operationId": "post-deployments-by-name-ai-analyze",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/api.assistRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/archive": {
-      "get": {
-        "operationId": "get-deployments-by-name-archive",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.ListOfArchiveEntry"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/autoscale": {
-      "get": {
-        "operationId": "get-deployments-by-name-autoscale",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.autoscalePolicyResponse"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "put": {
-        "operationId": "put-deployments-by-name-autoscale",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/api.autoscalePolicyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.autoscalePolicyResponse"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/autoscale/activate": {
-      "post": {
-        "operationId": "post-deployments-by-name-autoscale-activate",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/autoscale.Activation"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/autoscale/compatibility": {
-      "get": {
-        "operationId": "get-deployments-by-name-autoscale-compatibility",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/autoscale/workload": {
-      "put": {
-        "operationId": "put-deployments-by-name-autoscale-workload",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/models.ScalingConfig"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/backup-cleanup": {
-      "post": {
-        "operationId": "post-deployments-by-name-backup-cleanup",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "keep": {
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "keep"
-                ],
-                "type": "object",
-                "x-columns": [
-                  "keep"
-                ],
-                "x-property-order": [
-                  "keep"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:delete"
-      }
-    },
-    "/api/deployments/{name}/backup-cleanup-preview": {
-      "get": {
-        "operationId": "get-deployments-by-name-backup-cleanup-preview",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "keep",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:read"
-      }
-    },
-    "/api/deployments/{name}/backup-config": {
-      "get": {
-        "operationId": "get-deployments-by-name-backup-config",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:read"
-      },
-      "put": {
-        "operationId": "put-deployments-by-name-backup-config",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/models.BackupSpec"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:write"
-      }
-    },
-    "/api/deployments/{name}/backup-destinations": {
-      "get": {
-        "operationId": "get-deployments-by-name-backup-destinations",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:read"
-      }
-    },
-    "/api/deployments/{name}/backup-policy": {
-      "get": {
-        "operationId": "get-deployments-by-name-backup-policy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:read"
-      }
-    },
-    "/api/deployments/{name}/backups": {
-      "get": {
-        "operationId": "get-deployments-by-name-backups",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.ListOfBackup"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:read"
-      },
-      "post": {
-        "operationId": "post-deployments-by-name-backups",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:write"
-      }
-    },
-    "/api/deployments/{name}/backups/jobs/{id}": {
-      "get": {
-        "operationId": "get-deployments-by-name-backups-jobs-by-id",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:read"
-      }
-    },
-    "/api/deployments/{name}/backups/{id}": {
-      "delete": {
-        "operationId": "delete-deployments-by-name-backups-by-id",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:delete"
-      }
-    },
-    "/api/deployments/{name}/backups/{id}/download": {
-      "get": {
-        "operationId": "get-deployments-by-name-backups-by-id-download",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:read"
-      }
-    },
-    "/api/deployments/{name}/backups/{id}/restore": {
-      "post": {
-        "operationId": "post-deployments-by-name-backups-by-id-restore",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/backup.RestoreBackupRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:write"
-      }
-    },
-    "/api/deployments/{name}/backups/{id}/retry-publication": {
-      "post": {
-        "operationId": "post-deployments-by-name-backups-by-id-retry-publication",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "backups:write"
-      }
-    },
-    "/api/deployments/{name}/certificates/renew": {
-      "post": {
-        "operationId": "post-deployments-by-name-certificates-renew",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "certificates:write"
-      }
-    },
-    "/api/deployments/{name}/compose": {
-      "get": {
-        "operationId": "get-deployments-by-name-compose",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/compose/mount": {
-      "post": {
-        "operationId": "post-deployments-by-name-compose-mount",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "read_only": {
-                    "type": "boolean"
-                  },
-                  "selinux": {
-                    "type": "string"
-                  },
-                  "service_name": {
-                    "type": "string"
-                  },
-                  "source_path": {
-                    "type": "string"
-                  },
-                  "target_path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "source_path",
-                  "target_path",
-                  "service_name"
-                ],
-                "type": "object",
-                "x-columns": [
-                  "source_path",
-                  "target_path",
-                  "service_name",
-                  "read_only",
-                  "selinux"
-                ],
-                "x-property-order": [
-                  "source_path",
-                  "target_path",
-                  "service_name",
-                  "read_only",
-                  "selinux"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/compose/unmount": {
-      "post": {
-        "operationId": "post-deployments-by-name-compose-unmount",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "service_name": {
-                    "type": "string"
-                  },
-                  "source_path": {
-                    "type": "string"
-                  },
-                  "target_path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "source_path",
-                  "target_path",
-                  "service_name"
-                ],
-                "type": "object",
-                "x-columns": [
-                  "source_path",
-                  "target_path",
-                  "service_name"
-                ],
-                "x-property-order": [
-                  "source_path",
-                  "target_path",
-                  "service_name"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/container-files/{service}": {
-      "get": {
-        "operationId": "get-deployments-by-name-container-files-by-service",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/container-files/{service}/materialize": {
-      "post": {
-        "operationId": "post-deployments-by-name-container-files-by-service-materialize",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "container_path": {
-                    "type": "string"
-                  },
-                  "host_path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "container_path"
-                ],
-                "type": "object",
-                "x-columns": [
-                  "container_path",
-                  "host_path"
-                ],
-                "x-property-order": [
-                  "container_path",
-                  "host_path"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/copy": {
-      "post": {
-        "operationId": "post-deployments-by-name-copy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/api.fileOperationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.Message"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/databases/attach": {
-      "post": {
-        "operationId": "post-deployments-by-name-databases-attach",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/api.DatabaseConfigRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/deploy": {
-      "post": {
-        "operationId": "post-deployments-by-name-deploy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "action": {
-                    "type": "string"
-                  },
-                  "cleanup": {
-                    "type": "boolean"
-                  },
-                  "only_latest": {
-                    "type": "boolean"
-                  },
-                  "pull": {
-                    "type": "boolean"
-                  }
-                },
-                "type": "object",
-                "x-columns": [
-                  "action",
-                  "pull",
-                  "only_latest",
-                  "cleanup"
-                ],
-                "x-property-order": [
-                  "action",
-                  "pull",
-                  "only_latest",
-                  "cleanup"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/deploys": {
-      "get": {
-        "operationId": "get-deployments-by-name-deploys",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/deploys/{id}/logs": {
-      "get": {
-        "operationId": "get-deployments-by-name-deploys-by-id-logs",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/deploys/{id}/rollback": {
-      "post": {
-        "operationId": "post-deployments-by-name-deploys-by-id-rollback",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/diagnostics": {
-      "get": {
-        "operationId": "get-deployments-by-name-diagnostics",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "incident_id",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.DeploymentDiagnostics"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/domains": {
-      "get": {
-        "operationId": "get-deployments-by-name-domains",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "post": {
-        "operationId": "post-deployments-by-name-domains",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/models.DomainConfig"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write",
-        "x-plan-supported": true
-      }
-    },
-    "/api/deployments/{name}/domains/{domainId}": {
-      "delete": {
-        "operationId": "delete-deployments-by-name-domains-by-domainId",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "domainId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write",
-        "x-plan-supported": true
-      },
-      "put": {
-        "operationId": "put-deployments-by-name-domains-by-domainId",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "domainId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/models.DomainConfig"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write",
-        "x-plan-supported": true
-      }
-    },
-    "/api/deployments/{name}/env": {
-      "get": {
-        "operationId": "get-deployments-by-name-env",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "put": {
-        "operationId": "put-deployments-by-name-env",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "env_vars": {
-                    "items": {
-                      "$ref": "#/components/schemas/api.EnvVar"
-                    },
-                    "type": "array"
-                  }
-                },
-                "type": "object",
-                "x-property-order": [
-                  "env_vars"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write",
-        "x-plan-supported": true
-      }
-    },
-    "/api/deployments/{name}/env/variables": {
-      "patch": {
-        "operationId": "patch-deployments-by-name-env-variables",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "remove": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "set": {
-                    "items": {
-                      "$ref": "#/components/schemas/api.EnvVar"
-                    },
-                    "type": "array"
-                  }
-                },
-                "type": "object",
-                "x-property-order": [
-                  "set",
-                  "remove"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write",
-        "x-plan-supported": true
-      }
-    },
-    "/api/deployments/{name}/environments": {
-      "get": {
-        "operationId": "get-deployments-by-name-environments",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "post": {
-        "operationId": "post-deployments-by-name-environments",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/api.environmentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/extract": {
-      "post": {
-        "operationId": "post-deployments-by-name-extract",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/api.fileOperationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.Message"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/files": {
-      "get": {
-        "operationId": "get-deployments-by-name-files",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/files-info": {
-      "get": {
-        "operationId": "get-deployments-by-name-files-info",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/files-push": {
-      "post": {
-        "operationId": "post-deployments-by-name-files-push",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/api.filePushRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.ItemOffilePushResult"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/files/{path}": {
-      "delete": {
-        "operationId": "delete-deployments-by-name-files-by-path",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "x-rest-of-path": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:delete"
-      },
-      "get": {
-        "operationId": "get-deployments-by-name-files-by-path",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "x-rest-of-path": true
-          },
-          {
-            "in": "query",
-            "name": "info",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "list",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/files.FileInfo"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "post": {
-        "operationId": "post-deployments-by-name-files-by-path",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "x-rest-of-path": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/images": {
-      "get": {
-        "operationId": "get-deployments-by-name-images",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/images/cleanup": {
-      "post": {
-        "operationId": "post-deployments-by-name-images-cleanup",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "dry_run": {
-                    "type": "boolean"
-                  }
-                },
-                "type": "object",
-                "x-columns": [
-                  "dry_run"
-                ],
-                "x-property-order": [
-                  "dry_run"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "images:write"
-      }
-    },
-    "/api/deployments/{name}/jobs/active": {
-      "get": {
-        "operationId": "get-deployments-by-name-jobs-active",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.JobSnapshot"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/jobs/{jobId}": {
-      "get": {
-        "operationId": "get-deployments-by-name-jobs-by-jobId",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "jobId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.JobSnapshot"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/log-sources": {
-      "get": {
-        "operationId": "get-deployments-by-name-log-sources",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "put": {
-        "operationId": "put-deployments-by-name-log-sources",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "sources": {
-                    "items": {
-                      "$ref": "#/components/schemas/models.LogSource"
-                    },
-                    "type": "array"
-                  }
-                },
-                "type": "object",
-                "x-property-order": [
-                  "sources"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/logs": {
-      "delete": {
-        "operationId": "delete-deployments-by-name-logs",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "service",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "source",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      },
-      "get": {
-        "operationId": "get-deployments-by-name-logs",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "filter",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "service",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "source",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "tail",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/metadata": {
-      "put": {
-        "operationId": "put-deployments-by-name-metadata",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/migration": {
-      "get": {
-        "operationId": "get-deployments-by-name-migration",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      },
-      "put": {
-        "operationId": "put-deployments-by-name-migration",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/models.MigrationSpec"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/migration/check-dns": {
-      "post": {
-        "operationId": "post-deployments-by-name-migration-check-dns",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/mkdir/{path}": {
-      "post": {
-        "operationId": "post-deployments-by-name-mkdir-by-path",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "x-rest-of-path": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/move": {
-      "post": {
-        "operationId": "post-deployments-by-name-move",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/api.fileOperationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/api.Message"
-                }
-              }
-            },
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:delete"
-      }
-    },
-    "/api/deployments/{name}/permissions/{path}": {
-      "put": {
-        "operationId": "put-deployments-by-name-permissions-by-path",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "x-rest-of-path": true
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "gid": {
-                    "type": "integer"
-                  },
-                  "mode": {
-                    "type": "integer"
-                  },
-                  "recursive": {
-                    "type": "boolean"
-                  },
-                  "uid": {
-                    "type": "integer"
-                  }
-                },
-                "type": "object",
-                "x-columns": [
-                  "mode",
-                  "uid",
-                  "gid",
-                  "recursive"
-                ],
-                "x-property-order": [
-                  "mode",
-                  "uid",
-                  "gid",
-                  "recursive"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/protected-mode": {
-      "put": {
-        "operationId": "put-deployments-by-name-protected-mode",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/models.ProtectedModeConfig"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/pull": {
-      "post": {
-        "operationId": "post-deployments-by-name-pull",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "cleanup": {
-                    "type": "boolean"
-                  },
-                  "only_latest": {
-                    "type": "boolean"
-                  }
-                },
-                "type": "object",
-                "x-columns": [
-                  "only_latest",
-                  "cleanup"
-                ],
-                "x-property-order": [
-                  "only_latest",
-                  "cleanup"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/rebuild": {
-      "post": {
-        "operationId": "post-deployments-by-name-rebuild",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/redeploy": {
-      "post": {
-        "operationId": "post-deployments-by-name-redeploy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/resources": {
-      "get": {
-        "operationId": "get-deployments-by-name-resources",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/restart": {
-      "post": {
-        "operationId": "post-deployments-by-name-restart",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/security": {
-      "get": {
-        "operationId": "get-deployments-by-name-security",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "security:read"
-      },
-      "put": {
-        "operationId": "put-deployments-by-name-security",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/models.DeploymentSecurityConfig"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "security:write"
-      }
-    },
-    "/api/deployments/{name}/security/events": {
-      "get": {
-        "operationId": "get-deployments-by-name-security-events",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "security:read"
-      }
-    },
-    "/api/deployments/{name}/services": {
-      "get": {
-        "operationId": "get-deployments-by-name-services",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/services/{service}/job": {
-      "post": {
-        "operationId": "post-deployments-by-name-services-by-service-job",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "action": {
-                    "enum": [
-                      "start",
-                      "stop",
-                      "restart",
-                      "rebuild",
-                      "pull",
-                      "run"
-                    ],
-                    "type": "string"
-                  },
-                  "force_recreate": {
-                    "type": "boolean"
-                  },
-                  "fresh_pull": {
-                    "type": "boolean"
-                  },
-                  "no_cache": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "action"
-                ],
-                "type": "object",
-                "x-columns": [
-                  "action",
-                  "force_recreate",
-                  "no_cache",
-                  "fresh_pull"
-                ],
-                "x-property-order": [
-                  "action",
-                  "force_recreate",
-                  "no_cache",
-                  "fresh_pull"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/services/{service}/pull": {
-      "post": {
-        "operationId": "post-deployments-by-name-services-by-service-pull",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/services/{service}/rebuild": {
-      "post": {
-        "operationId": "post-deployments-by-name-services-by-service-rebuild",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/services/{service}/restart": {
-      "post": {
-        "operationId": "post-deployments-by-name-services-by-service-restart",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/services/{service}/start": {
-      "post": {
-        "operationId": "post-deployments-by-name-services-by-service-start",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/services/{service}/stop": {
-      "post": {
-        "operationId": "post-deployments-by-name-services-by-service-stop",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/serving": {
-      "get": {
-        "operationId": "get-deployments-by-name-serving",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "since",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/sleep": {
-      "put": {
-        "operationId": "put-deployments-by-name-sleep",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "idle_minutes": {
-                    "type": "integer"
-                  }
-                },
-                "type": "object",
-                "x-columns": [
-                  "enabled",
-                  "idle_minutes"
-                ],
-                "x-property-order": [
-                  "enabled",
-                  "idle_minutes"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/source": {
-      "put": {
-        "operationId": "put-deployments-by-name-source",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "auto_deploy": {
-                    "type": "boolean"
-                  },
-                  "branch": {
-                    "type": "string"
-                  },
-                  "previews": {
-                    "type": "boolean"
-                  }
-                },
-                "type": "object",
-                "x-columns": [
-                  "branch",
-                  "auto_deploy",
-                  "previews"
-                ],
-                "x-property-order": [
-                  "branch",
-                  "auto_deploy",
-                  "previews"
-                ]
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/ssl/disable": {
-      "post": {
-        "operationId": "post-deployments-by-name-ssl-disable",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/start": {
-      "post": {
-        "operationId": "post-deployments-by-name-start",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/stats": {
-      "get": {
-        "operationId": "get-deployments-by-name-stats",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/stop": {
-      "post": {
-        "operationId": "post-deployments-by-name-stop",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/touch/{path}": {
-      "post": {
-        "operationId": "post-deployments-by-name-touch-by-path",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "x-rest-of-path": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
-    "/api/deployments/{name}/traffic": {
-      "get": {
-        "operationId": "get-deployments-by-name-traffic",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "since",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/users": {
-      "get": {
-        "operationId": "get-deployments-by-name-users",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "users:read"
-      }
-    },
-    "/api/deployments/{name}/webhook": {
-      "get": {
-        "operationId": "get-deployments-by-name-webhook",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:read"
-      }
-    },
-    "/api/deployments/{name}/webhook/rotate": {
-      "post": {
-        "operationId": "post-deployments-by-name-webhook-rotate",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "deployments"
-        ],
-        "x-permission": "deployments:write"
-      }
-    },
     "/api/dns/powerdns/disable": {
       "post": {
         "operationId": "post-dns-powerdns-disable",
@@ -8779,6 +5228,3557 @@
           "ports"
         ],
         "x-permission": "system:write"
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "operationId": "get-projects",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfDeployment"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "post": {
+        "operationId": "post-projects",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "auto_start": {
+                    "type": "boolean"
+                  },
+                  "compose_content": {
+                    "type": "string"
+                  },
+                  "container_port": {
+                    "type": "integer"
+                  },
+                  "databases": {
+                    "items": {
+                      "$ref": "#/components/schemas/api.DatabaseConfigRequest"
+                    },
+                    "type": "array"
+                  },
+                  "env_vars": {
+                    "items": {
+                      "$ref": "#/components/schemas/api.EnvVar"
+                    },
+                    "type": "array"
+                  },
+                  "existing_database_container": {
+                    "type": "string"
+                  },
+                  "host_port": {
+                    "type": "string"
+                  },
+                  "image": {
+                    "type": "string"
+                  },
+                  "map_ports": {
+                    "type": "boolean"
+                  },
+                  "metadata": {
+                    "$ref": "#/components/schemas/models.ServiceMetadata"
+                  },
+                  "mount_ownership": {
+                    "items": {
+                      "$ref": "#/components/schemas/api.MountOwnershipRequest"
+                    },
+                    "type": "array"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "ports": {
+                    "items": {
+                      "$ref": "#/components/schemas/api.PortConfig"
+                    },
+                    "type": "array"
+                  },
+                  "registry_credential": {
+                    "properties": {
+                      "credential_id": {
+                        "type": "string"
+                      },
+                      "credential_name": {
+                        "type": "string"
+                      },
+                      "password": {
+                        "type": "string"
+                      },
+                      "registry_type_slug": {
+                        "type": "string"
+                      },
+                      "registry_url": {
+                        "type": "string"
+                      },
+                      "save_credential": {
+                        "type": "boolean"
+                      },
+                      "username": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object",
+                    "x-columns": [
+                      "credential_id",
+                      "username",
+                      "password",
+                      "save_credential",
+                      "credential_name",
+                      "registry_type_slug",
+                      "registry_url"
+                    ],
+                    "x-property-order": [
+                      "credential_id",
+                      "username",
+                      "password",
+                      "save_credential",
+                      "credential_name",
+                      "registry_type_slug",
+                      "registry_url"
+                    ]
+                  },
+                  "seed_mounts": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "service_credentials": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "source": {
+                    "$ref": "#/components/schemas/api.deploymentSource"
+                  },
+                  "template_id": {
+                    "type": "string"
+                  },
+                  "use_shared_database": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "name",
+                  "image",
+                  "compose_content",
+                  "template_id",
+                  "container_port",
+                  "map_ports",
+                  "host_port",
+                  "auto_start",
+                  "use_shared_database",
+                  "existing_database_container"
+                ],
+                "x-property-order": [
+                  "name",
+                  "image",
+                  "compose_content",
+                  "template_id",
+                  "metadata",
+                  "env_vars",
+                  "container_port",
+                  "map_ports",
+                  "host_port",
+                  "ports",
+                  "auto_start",
+                  "use_shared_database",
+                  "existing_database_container",
+                  "databases",
+                  "registry_credential",
+                  "service_credentials",
+                  "seed_mounts",
+                  "mount_ownership",
+                  "source"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}": {
+      "delete": {
+        "operationId": "delete-projects-by-name",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "delete_database",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "delete_ssl",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "delete_vhost",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:delete",
+        "x-plan-supported": true
+      },
+      "get": {
+        "operationId": "get-projects-by-name",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "compose_content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "compose_content"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "compose_content"
+                ],
+                "x-property-order": [
+                  "compose_content"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      }
+    },
+    "/api/projects/{name}/access/email-targets": {
+      "get": {
+        "operationId": "get-projects-by-name-access-email-targets",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/actions/{actionId}": {
+      "post": {
+        "operationId": "post-projects-by-name-actions-by-actionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/ai/analyze": {
+      "post": {
+        "operationId": "post-projects-by-name-ai-analyze",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.assistRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/archive": {
+      "get": {
+        "operationId": "get-projects-by-name-archive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfArchiveEntry"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/autoscale": {
+      "get": {
+        "operationId": "get-projects-by-name-autoscale",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.autoscalePolicyResponse"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name-autoscale",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.autoscalePolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.autoscalePolicyResponse"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/autoscale/activate": {
+      "post": {
+        "operationId": "post-projects-by-name-autoscale-activate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/autoscale.Activation"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/autoscale/compatibility": {
+      "get": {
+        "operationId": "get-projects-by-name-autoscale-compatibility",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/autoscale/workload": {
+      "put": {
+        "operationId": "put-projects-by-name-autoscale-workload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.ScalingConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/backup-cleanup": {
+      "post": {
+        "operationId": "post-projects-by-name-backup-cleanup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "keep": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "keep"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "keep"
+                ],
+                "x-property-order": [
+                  "keep"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:delete"
+      }
+    },
+    "/api/projects/{name}/backup-cleanup-preview": {
+      "get": {
+        "operationId": "get-projects-by-name-backup-cleanup-preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "keep",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/projects/{name}/backup-config": {
+      "get": {
+        "operationId": "get-projects-by-name-backup-config",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name-backup-config",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.BackupSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:write"
+      }
+    },
+    "/api/projects/{name}/backup-destinations": {
+      "get": {
+        "operationId": "get-projects-by-name-backup-destinations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/projects/{name}/backup-policy": {
+      "get": {
+        "operationId": "get-projects-by-name-backup-policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/projects/{name}/backups": {
+      "get": {
+        "operationId": "get-projects-by-name-backups",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ListOfBackup"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:read"
+      },
+      "post": {
+        "operationId": "post-projects-by-name-backups",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:write"
+      }
+    },
+    "/api/projects/{name}/backups/jobs/{id}": {
+      "get": {
+        "operationId": "get-projects-by-name-backups-jobs-by-id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/projects/{name}/backups/{id}": {
+      "delete": {
+        "operationId": "delete-projects-by-name-backups-by-id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:delete"
+      }
+    },
+    "/api/projects/{name}/backups/{id}/download": {
+      "get": {
+        "operationId": "get-projects-by-name-backups-by-id-download",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:read"
+      }
+    },
+    "/api/projects/{name}/backups/{id}/restore": {
+      "post": {
+        "operationId": "post-projects-by-name-backups-by-id-restore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backup.RestoreBackupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:write"
+      }
+    },
+    "/api/projects/{name}/backups/{id}/retry-publication": {
+      "post": {
+        "operationId": "post-projects-by-name-backups-by-id-retry-publication",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "backups:write"
+      }
+    },
+    "/api/projects/{name}/certificates/renew": {
+      "post": {
+        "operationId": "post-projects-by-name-certificates-renew",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "certificates:write"
+      }
+    },
+    "/api/projects/{name}/compose": {
+      "get": {
+        "operationId": "get-projects-by-name-compose",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/compose/mount": {
+      "post": {
+        "operationId": "post-projects-by-name-compose-mount",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "read_only": {
+                    "type": "boolean"
+                  },
+                  "selinux": {
+                    "type": "string"
+                  },
+                  "service_name": {
+                    "type": "string"
+                  },
+                  "source_path": {
+                    "type": "string"
+                  },
+                  "target_path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source_path",
+                  "target_path",
+                  "service_name"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "source_path",
+                  "target_path",
+                  "service_name",
+                  "read_only",
+                  "selinux"
+                ],
+                "x-property-order": [
+                  "source_path",
+                  "target_path",
+                  "service_name",
+                  "read_only",
+                  "selinux"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/compose/unmount": {
+      "post": {
+        "operationId": "post-projects-by-name-compose-unmount",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "service_name": {
+                    "type": "string"
+                  },
+                  "source_path": {
+                    "type": "string"
+                  },
+                  "target_path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source_path",
+                  "target_path",
+                  "service_name"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "source_path",
+                  "target_path",
+                  "service_name"
+                ],
+                "x-property-order": [
+                  "source_path",
+                  "target_path",
+                  "service_name"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/container-files/{service}": {
+      "get": {
+        "operationId": "get-projects-by-name-container-files-by-service",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/container-files/{service}/materialize": {
+      "post": {
+        "operationId": "post-projects-by-name-container-files-by-service-materialize",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "container_path": {
+                    "type": "string"
+                  },
+                  "host_path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "container_path"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "container_path",
+                  "host_path"
+                ],
+                "x-property-order": [
+                  "container_path",
+                  "host_path"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/copy": {
+      "post": {
+        "operationId": "post-projects-by-name-copy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/databases/attach": {
+      "post": {
+        "operationId": "post-projects-by-name-databases-attach",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.DatabaseConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/deploy": {
+      "post": {
+        "operationId": "post-projects-by-name-deploy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "cleanup": {
+                    "type": "boolean"
+                  },
+                  "only_latest": {
+                    "type": "boolean"
+                  },
+                  "pull": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "action",
+                  "pull",
+                  "only_latest",
+                  "cleanup"
+                ],
+                "x-property-order": [
+                  "action",
+                  "pull",
+                  "only_latest",
+                  "cleanup"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/deploys": {
+      "get": {
+        "operationId": "get-projects-by-name-deploys",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/deploys/{id}/logs": {
+      "get": {
+        "operationId": "get-projects-by-name-deploys-by-id-logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/deploys/{id}/rollback": {
+      "post": {
+        "operationId": "post-projects-by-name-deploys-by-id-rollback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/diagnostics": {
+      "get": {
+        "operationId": "get-projects-by-name-diagnostics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "incident_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.DeploymentDiagnostics"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/domains": {
+      "get": {
+        "operationId": "get-projects-by-name-domains",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "post": {
+        "operationId": "post-projects-by-name-domains",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.DomainConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      }
+    },
+    "/api/projects/{name}/domains/{domainId}": {
+      "delete": {
+        "operationId": "delete-projects-by-name-domains-by-domainId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "domainId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      },
+      "put": {
+        "operationId": "put-projects-by-name-domains-by-domainId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "domainId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.DomainConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      }
+    },
+    "/api/projects/{name}/env": {
+      "get": {
+        "operationId": "get-projects-by-name-env",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name-env",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "env_vars": {
+                    "items": {
+                      "$ref": "#/components/schemas/api.EnvVar"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object",
+                "x-property-order": [
+                  "env_vars"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      }
+    },
+    "/api/projects/{name}/env/variables": {
+      "patch": {
+        "operationId": "patch-projects-by-name-env-variables",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "remove": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "set": {
+                    "items": {
+                      "$ref": "#/components/schemas/api.EnvVar"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object",
+                "x-property-order": [
+                  "set",
+                  "remove"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      }
+    },
+    "/api/projects/{name}/environments": {
+      "get": {
+        "operationId": "get-projects-by-name-environments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "post": {
+        "operationId": "post-projects-by-name-environments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.environmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/extract": {
+      "post": {
+        "operationId": "post-projects-by-name-extract",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/files": {
+      "get": {
+        "operationId": "get-projects-by-name-files",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/files-info": {
+      "get": {
+        "operationId": "get-projects-by-name-files-info",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/files-push": {
+      "post": {
+        "operationId": "post-projects-by-name-files-push",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/api.filePushRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ItemOffilePushResult"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/files/{path}": {
+      "delete": {
+        "operationId": "delete-projects-by-name-files-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:delete"
+      },
+      "get": {
+        "operationId": "get-projects-by-name-files-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          },
+          {
+            "in": "query",
+            "name": "info",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "list",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/files.FileInfo"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "post": {
+        "operationId": "post-projects-by-name-files-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/images": {
+      "get": {
+        "operationId": "get-projects-by-name-images",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/images/cleanup": {
+      "post": {
+        "operationId": "post-projects-by-name-images-cleanup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "dry_run": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "dry_run"
+                ],
+                "x-property-order": [
+                  "dry_run"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "images:write"
+      }
+    },
+    "/api/projects/{name}/jobs/active": {
+      "get": {
+        "operationId": "get-projects-by-name-jobs-active",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.JobSnapshot"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/jobs/{jobId}": {
+      "get": {
+        "operationId": "get-projects-by-name-jobs-by-jobId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "jobId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.JobSnapshot"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/log-sources": {
+      "get": {
+        "operationId": "get-projects-by-name-log-sources",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name-log-sources",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "sources": {
+                    "items": {
+                      "$ref": "#/components/schemas/models.LogSource"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object",
+                "x-property-order": [
+                  "sources"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/logs": {
+      "delete": {
+        "operationId": "delete-projects-by-name-logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "service",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      },
+      "get": {
+        "operationId": "get-projects-by-name-logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "service",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tail",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/metadata": {
+      "put": {
+        "operationId": "put-projects-by-name-metadata",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/migration": {
+      "get": {
+        "operationId": "get-projects-by-name-migration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name-migration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.MigrationSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/migration/check-dns": {
+      "post": {
+        "operationId": "post-projects-by-name-migration-check-dns",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/mkdir/{path}": {
+      "post": {
+        "operationId": "post-projects-by-name-mkdir-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/move": {
+      "post": {
+        "operationId": "post-projects-by-name-move",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/api.fileOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.Message"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:delete"
+      }
+    },
+    "/api/projects/{name}/permissions/{path}": {
+      "put": {
+        "operationId": "put-projects-by-name-permissions-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "gid": {
+                    "type": "integer"
+                  },
+                  "mode": {
+                    "type": "integer"
+                  },
+                  "recursive": {
+                    "type": "boolean"
+                  },
+                  "uid": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "mode",
+                  "uid",
+                  "gid",
+                  "recursive"
+                ],
+                "x-property-order": [
+                  "mode",
+                  "uid",
+                  "gid",
+                  "recursive"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/protected-mode": {
+      "put": {
+        "operationId": "put-projects-by-name-protected-mode",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.ProtectedModeConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/pull": {
+      "post": {
+        "operationId": "post-projects-by-name-pull",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "cleanup": {
+                    "type": "boolean"
+                  },
+                  "only_latest": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "only_latest",
+                  "cleanup"
+                ],
+                "x-property-order": [
+                  "only_latest",
+                  "cleanup"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/rebuild": {
+      "post": {
+        "operationId": "post-projects-by-name-rebuild",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/redeploy": {
+      "post": {
+        "operationId": "post-projects-by-name-redeploy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/resources": {
+      "get": {
+        "operationId": "get-projects-by-name-resources",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/restart": {
+      "post": {
+        "operationId": "post-projects-by-name-restart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/security": {
+      "get": {
+        "operationId": "get-projects-by-name-security",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "security:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name-security",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.DeploymentSecurityConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "security:write"
+      }
+    },
+    "/api/projects/{name}/security/events": {
+      "get": {
+        "operationId": "get-projects-by-name-security-events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "security:read"
+      }
+    },
+    "/api/projects/{name}/services": {
+      "get": {
+        "operationId": "get-projects-by-name-services",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/services/{service}/job": {
+      "post": {
+        "operationId": "post-projects-by-name-services-by-service-job",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "action": {
+                    "enum": [
+                      "start",
+                      "stop",
+                      "restart",
+                      "rebuild",
+                      "pull",
+                      "run"
+                    ],
+                    "type": "string"
+                  },
+                  "force_recreate": {
+                    "type": "boolean"
+                  },
+                  "fresh_pull": {
+                    "type": "boolean"
+                  },
+                  "no_cache": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "action"
+                ],
+                "type": "object",
+                "x-columns": [
+                  "action",
+                  "force_recreate",
+                  "no_cache",
+                  "fresh_pull"
+                ],
+                "x-property-order": [
+                  "action",
+                  "force_recreate",
+                  "no_cache",
+                  "fresh_pull"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/services/{service}/pull": {
+      "post": {
+        "operationId": "post-projects-by-name-services-by-service-pull",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/services/{service}/rebuild": {
+      "post": {
+        "operationId": "post-projects-by-name-services-by-service-rebuild",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/services/{service}/restart": {
+      "post": {
+        "operationId": "post-projects-by-name-services-by-service-restart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/services/{service}/start": {
+      "post": {
+        "operationId": "post-projects-by-name-services-by-service-start",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/services/{service}/stop": {
+      "post": {
+        "operationId": "post-projects-by-name-services-by-service-stop",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/serving": {
+      "get": {
+        "operationId": "get-projects-by-name-serving",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/sleep": {
+      "put": {
+        "operationId": "put-projects-by-name-sleep",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "idle_minutes": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "enabled",
+                  "idle_minutes"
+                ],
+                "x-property-order": [
+                  "enabled",
+                  "idle_minutes"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/source": {
+      "put": {
+        "operationId": "put-projects-by-name-source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "auto_deploy": {
+                    "type": "boolean"
+                  },
+                  "branch": {
+                    "type": "string"
+                  },
+                  "previews": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "branch",
+                  "auto_deploy",
+                  "previews"
+                ],
+                "x-property-order": [
+                  "branch",
+                  "auto_deploy",
+                  "previews"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/ssl/disable": {
+      "post": {
+        "operationId": "post-projects-by-name-ssl-disable",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/start": {
+      "post": {
+        "operationId": "post-projects-by-name-start",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/stats": {
+      "get": {
+        "operationId": "get-projects-by-name-stats",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/stop": {
+      "post": {
+        "operationId": "post-projects-by-name-stop",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/touch/{path}": {
+      "post": {
+        "operationId": "post-projects-by-name-touch-by-path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-rest-of-path": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
+    "/api/projects/{name}/traffic": {
+      "get": {
+        "operationId": "get-projects-by-name-traffic",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/users": {
+      "get": {
+        "operationId": "get-projects-by-name-users",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "users:read"
+      }
+    },
+    "/api/projects/{name}/webhook": {
+      "get": {
+        "operationId": "get-projects-by-name-webhook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
+    "/api/projects/{name}/webhook/rotate": {
+      "post": {
+        "operationId": "post-projects-by-name-webhook-rotate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
       }
     },
     "/api/proxy/setup/{name}": {

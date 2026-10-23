@@ -1044,7 +1044,7 @@ func (s *Server) Start() error {
 
 	s.server = &http.Server{
 		Addr:    addr,
-		Handler: s.router,
+		Handler: s.Handler(),
 	}
 
 	go func() {

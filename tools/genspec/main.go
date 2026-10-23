@@ -87,15 +87,17 @@ func build(root string) (*openAPI, error) {
 	spec := &openAPI{
 		OpenAPI: "3.1.0",
 		Info: info{
-			Title:       "FlatRun Agent API",
-			Description: "Generated from the agent's routes and the types its handlers bind and return.",
-			Version:     readVersion(root),
+			Title: "FlatRun Agent API",
+			Description: "Generated from the agent's routes and the types its handlers bind and return. " +
+				"Every /projects path is also served under /deployments.",
+			Version: readVersion(root),
 		},
 		Paths:      map[string]map[string]*operation{},
 		Components: components{Schemas: schemas.byName},
 	}
 
 	for _, r := range routes {
+		r.Path = projectPath(r.Path)
 		op := &operation{
 			OperationID: operationID(r),
 			Tags:        []string{familyOf(r.Path)},
@@ -568,6 +570,16 @@ func openAPIPath(path string) string {
 		}
 	}
 	return strings.Join(segments, "/")
+}
+
+// projectPath names a deployment route by the path the agent documents for it; the agent
+// serves the deployment path as well.
+func projectPath(path string) string {
+	const deployments, projects = "/api/deployments", "/api/projects"
+	if path == deployments || strings.HasPrefix(path, deployments+"/") {
+		return projects + strings.TrimPrefix(path, deployments)
+	}
+	return path
 }
 
 func familyOf(path string) string {
