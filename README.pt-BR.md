@@ -42,6 +42,21 @@ flatrun profile use production
 flatrun health
 ```
 
+## Visão geral
+
+Cada projeto é uma pasta com um arquivo Compose. O painel mostra os projetos em uma tela, com domínio, estado e serviços. Ao abrir um projeto, você vê os serviços e como eles dependem uns dos outros.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/projects-canvas-dark.png">
+  <img alt="Projetos em uma tela, cada um com logotipo, domínio, estado e serviços" src="docs/screenshots/projects-canvas-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
+  <img alt="Os serviços de um projeto como um grafo" src="docs/screenshots/project-architecture-light.png">
+</picture>
+
+
 ## O que o FlatRun oferece
 
 - Implantações mantidas como arquivos e projetos Docker Compose padrão.
@@ -51,6 +66,9 @@ flatrun health
 - Gestão de vários servidores em um único painel.
 - Escalabilidade com Docker Swarm ou k3s para cargas compatíveis.
 - Notificações relacionadas agrupadas em incidentes úteis.
+- Espaços de trabalho para equipes, com proprietários, administradores e membros.
+- Segredos criptografados, rotacionáveis e nunca exibidos novamente, ou fornecidos por Infisical, Vault, OpenBao, Doppler ou 1Password.
+- Variáveis que referenciam as de outro projeto, e um histórico de cada implantação com seus logs.
 
 O painel, o CLI, o GitHub Actions e as integrações externas usam a mesma API. A
 descrição OpenAPI exata do agente instalado está disponível em

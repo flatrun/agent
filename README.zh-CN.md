@@ -39,6 +39,21 @@ flatrun profile use production
 flatrun health
 ```
 
+## 预览
+
+每个项目都是一个包含 Compose 文件的目录。控制面板把项目画在画布上，显示域名、状态和服务。打开一个项目可以看到它的服务以及服务之间的依赖关系。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/projects-canvas-dark.png">
+  <img alt="画布上的项目，每个卡片显示标志、域名、状态和服务" src="docs/screenshots/projects-canvas-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
+  <img alt="以图的形式展示一个项目的服务" src="docs/screenshots/project-architecture-light.png">
+</picture>
+
+
 ## FlatRun 提供什么
 
 - 部署保持为普通文件和标准 Docker Compose 项目。
@@ -48,6 +63,9 @@ flatrun health
 - 从一个控制面板管理多台服务器。
 - 使用 Docker Swarm 或 k3s 扩展符合条件的工作负载。
 - 将相关通知合并为有用的事件。
+- 面向团队的工作区，包含所有者、管理员和成员角色。
+- 加密的密钥，可以轮换，保存后不再显示，也可以由 Infisical、Vault、OpenBao、Doppler 或 1Password 提供。
+- 可以引用其他项目变量的变量，以及每次部署的记录和日志。
 
 控制面板、CLI、GitHub Actions 和外部集成都使用同一个 API。已安装代理的准确
 OpenAPI 描述位于 `/api/openapi.json`。

@@ -29,6 +29,23 @@ then connect peers and enable orchestration when the workload needs it.
 
 This repository is the **agent**: the Go service that runs deployments and serves the API the UI and CLI talk to.
 
+## See it
+
+Every project is a directory with a Compose file. The dashboard draws them on a canvas, each with its domain, state and services, and an arrow where one project reads another's variables:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/projects-canvas-dark.png">
+  <img alt="Projects on a canvas, each card showing its logo, domain, state and services" src="docs/screenshots/projects-canvas-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
+  <img alt="A shop project's services as a graph: web, api and worker above Redis, PostgreSQL and MinIO" src="docs/screenshots/project-architecture-light.png">
+</picture>
+
+Open a project to see its services drawn from the Compose file: what depends on what, which domain points where, how many replicas are up, and the folder each one keeps its data in. The [UI README](https://github.com/flatrun/ui#a-tour) has the full tour.
+
+
 ## From server to working application
 
 Install FlatRun on an Ubuntu or Debian server:
@@ -51,7 +68,7 @@ flatrun profile use production
 flatrun health
 ```
 
-The dashboard, CLI, GitHub Action, and external integrations use the same API.
+The dashboard, CLI, GitHub Action, and external integrations use the same API. Projects live under `/api/projects`, and every path there also answers under `/api/deployments`.
 
 ## Why FlatRun exists
 
@@ -71,6 +88,10 @@ FlatRun inverts that. Every app is a directory: a `docker-compose.yml` and its d
 - **Fleet management**: connect independent FlatRun servers, give each peer scoped access, and manage its deployments from one dashboard.
 - **Managed scaling**: validate a stateless workload, scale it through Docker Swarm or k3s, and use peer capacity only when an administrator grants explicit limits.
 - **Grouped notifications**: related events become one incident, then delivery rules route useful updates to email, webhooks, or other supported targets.
+- **Workspaces**: teams with owners, admins and members, and projects that belong to a team rather than to one login.
+- **Secrets that stay sealed**: secrets are encrypted at rest, can be rotated on a schedule, and are never shown again once saved. Infisical, HashiCorp Vault or OpenBao, Doppler and 1Password Connect can supply them instead, fetched again on every deploy.
+- **Variables that reference each other**: `${{ billing.API_URL }}` pulls a value from another project, so a change in one place reaches every project that uses it.
+- **Deploy history**: every deploy is kept with its commit, phase and logs, ready to redeploy or roll back.
 
 ## What gets installed
 
