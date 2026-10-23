@@ -532,11 +532,15 @@ func (s *Server) setupRoutes() {
 		protected := api.Group("")
 		protected.Use(s.authMiddleware.RequireAuth())
 		protected.Use(restrictClusterServiceResources)
-		s.registerWorkspaceRoutes(protected)
-		s.registerSecretRoutes(protected)
+		// gin copies a group's middleware into each route as it is registered,
+		// so every route below is added after its audit middleware.
+		bodiless := protected.Group("")
 		if s.auditMiddleware != nil {
 			protected.Use(s.auditMiddleware.Capture())
+			bodiless.Use(s.auditMiddleware.CaptureWithoutBody())
 		}
+		s.registerWorkspaceRoutes(bodiless)
+		s.registerSecretRoutes(bodiless)
 		{
 			// Deployment endpoints
 			protected.GET("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listDeployments)
