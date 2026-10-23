@@ -100,8 +100,8 @@ func TestWebhook_GitHubPushDeploysRevision(t *testing.T) {
 
 func TestWebhook_RejectsBadSignature(t *testing.T) {
 	_, r, _ := newWebhookTestServer(t, &fakeRunner{}, true)
-	if rec := deliverGitHub(r, "push", "github-push.json", "wrong-secret"); rec.Code != http.StatusUnauthorized {
-		t.Errorf("bad signature = %d, want 401", rec.Code)
+	if rec := deliverGitHub(r, "push", "github-push.json", "wrong-secret"); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "webhook not found") {
+		t.Errorf("bad signature = %d %s, want the same 404 as an unknown deployment", rec.Code, rec.Body.String())
 	}
 }
 

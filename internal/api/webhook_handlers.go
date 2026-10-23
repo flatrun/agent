@@ -19,8 +19,8 @@ import (
 const maxWebhookBody = 5 << 20
 
 // receiveWebhook is the public endpoint git hosts deliver to. It is
-// authenticated only by the deployment's webhook secret, so every failure
-// before verification answers the same way and reveals nothing.
+// authenticated only by the deployment's webhook secret, so every failure up
+// to and including verification answers the same way and reveals nothing.
 func (s *Server) receiveWebhook(c *gin.Context) {
 	notFound := func() { c.JSON(http.StatusNotFound, gin.H{"error": "webhook not found"}) }
 
@@ -48,7 +48,7 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 		return
 	}
 	if err := provider.Verify(c.Request.Header, body, secret); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		notFound()
 		return
 	}
 
