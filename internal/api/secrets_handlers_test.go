@@ -205,6 +205,9 @@ func TestBoundSecretManagerSuppliesVariables(t *testing.T) {
 		t.Fatalf("outsider sees connections: %d %v", status, body)
 	}
 
+	if status, body := bob.do(http.MethodPost, "/secret-bindings?scope=deployment:shop", "", map[string]any{"connection_id": connectionID}); status != http.StatusForbidden {
+		t.Fatalf("member binding a connection = %d %v", status, body)
+	}
 	status, body = alice.do(http.MethodPost, "/secret-bindings?scope=deployment:shop", "", map[string]any{"connection_id": connectionID})
 	if status != http.StatusCreated {
 		t.Fatalf("binding = %d %v", status, body)

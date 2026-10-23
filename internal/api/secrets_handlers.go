@@ -734,8 +734,12 @@ func (s *Server) createSecretBinding(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	cred, _, _, ok := s.connectionRole(c, req.ConnectionID)
+	cred, role, _, ok := s.connectionRole(c, req.ConnectionID)
 	if !ok {
+		return
+	}
+	if workspace.RoleRank(role) < workspace.RoleRank(workspace.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "connections are bound by workspace admins"})
 		return
 	}
 	provider, found := s.secretRegistry.Get(string(cred.Kind))
