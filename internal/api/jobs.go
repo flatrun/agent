@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flatrun/agent/internal/deploys"
 	"github.com/google/uuid"
 )
 
@@ -35,6 +36,9 @@ type ActionJob struct {
 
 	mu          sync.Mutex
 	status      JobStatus
+	phase       string
+	phases      []deploys.PhaseStart
+	deployID    string
 	lines       []string
 	errMsg      string
 	startedAt   time.Time
@@ -51,6 +55,31 @@ func (j *ActionJob) setRunning() {
 	j.mu.Lock()
 	if j.status == JobPending {
 		j.status = JobRunning
+	}
+	j.mu.Unlock()
+}
+
+// phaseMarker prefixes phase changes on a subscriber channel, which otherwise
+// carries output lines.
+const phaseMarker = "\x00phase:"
+
+func (j *ActionJob) setDeploy(id string) {
+	j.mu.Lock()
+	j.deployID = id
+	j.mu.Unlock()
+}
+
+func (j *ActionJob) setPhase(phase string) {
+	j.mu.Lock()
+	if phase != j.phase {
+		j.phases = append(j.phases, deploys.PhaseStart{Phase: deploys.Phase(phase), From: len(j.lines)})
+	}
+	j.phase = phase
+	for _, c := range j.subscribers {
+		select {
+		case c <- phaseMarker + phase:
+		default:
+		}
 	}
 	j.mu.Unlock()
 }
@@ -84,11 +113,24 @@ func (j *ActionJob) finish(status JobStatus, errMsg string) {
 // subscribe atomically returns the lines buffered so far plus a channel that
 // receives every subsequent line. The channel is closed when the job finishes.
 // If the job is already finished, the returned channel is closed immediately.
+// subscribe returns the output so far, with phase changes interleaved where
+// they happened as phaseMarker lines, and a channel of what follows.
 func (j *ActionJob) subscribe() (buffered []string, ch <-chan string, cancel func()) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	buffered = append([]string(nil), j.lines...)
+	buffered = make([]string, 0, len(j.lines)+len(j.phases))
+	next := 0
+	for i, line := range j.lines {
+		for next < len(j.phases) && j.phases[next].From <= i {
+			buffered = append(buffered, phaseMarker+string(j.phases[next].Phase))
+			next++
+		}
+		buffered = append(buffered, line)
+	}
+	for ; next < len(j.phases); next++ {
+		buffered = append(buffered, phaseMarker+string(j.phases[next].Phase))
+	}
 
 	if j.status == JobSucceeded || j.status == JobFailed {
 		closed := make(chan string)
@@ -112,16 +154,20 @@ func (j *ActionJob) subscribe() (buffered []string, ch <-chan string, cancel fun
 }
 
 type JobSnapshot struct {
-	ID         string     `json:"id"`
-	Deployment string     `json:"deployment"`
-	Service    string     `json:"service,omitempty"`
-	Action     string     `json:"action"`
-	Status     JobStatus  `json:"status"`
-	Output     string     `json:"output"`
-	Lines      []string   `json:"lines"`
-	Error      string     `json:"error,omitempty"`
-	StartedAt  time.Time  `json:"started_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	ID         string    `json:"id"`
+	Deployment string    `json:"deployment"`
+	Service    string    `json:"service,omitempty"`
+	Action     string    `json:"action"`
+	Status     JobStatus `json:"status"`
+	Phase      string    `json:"phase,omitempty"`
+	// Phases says at which output line each phase began.
+	Phases     []deploys.PhaseStart `json:"phases,omitempty"`
+	DeployID   string               `json:"deploy_id,omitempty"`
+	Output     string               `json:"output"`
+	Lines      []string             `json:"lines"`
+	Error      string               `json:"error,omitempty"`
+	StartedAt  time.Time            `json:"started_at"`
+	FinishedAt *time.Time           `json:"finished_at,omitempty"`
 }
 
 func (j *ActionJob) snapshot() JobSnapshot {
@@ -134,6 +180,9 @@ func (j *ActionJob) snapshot() JobSnapshot {
 		Service:    j.service,
 		Action:     j.action,
 		Status:     j.status,
+		Phase:      j.phase,
+		Phases:     append([]deploys.PhaseStart(nil), j.phases...),
+		DeployID:   j.deployID,
 		Output:     strings.Join(j.lines, "\n"),
 		Lines:      append([]string(nil), j.lines...),
 		Error:      j.errMsg,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +54,7 @@ func (db *DB) migrate() error {
 	CREATE TABLE IF NOT EXISTS scheduled_tasks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL,
-		type TEXT NOT NULL CHECK (type IN ('backup', 'command')),
+		type TEXT NOT NULL,
 		deployment_name TEXT NOT NULL,
 		cron_expr TEXT NOT NULL,
 		enabled BOOLEAN DEFAULT TRUE,
@@ -84,8 +85,54 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_executions_started ON task_executions(started_at DESC);
 	`
 
-	_, err := db.conn.Exec(schema)
-	return err
+	if _, err := db.conn.Exec(schema); err != nil {
+		return err
+	}
+	return db.dropTaskTypeCheck()
+}
+
+// dropTaskTypeCheck rebuilds scheduled_tasks when it was created with a CHECK
+// that only allowed backup and command tasks. SQLite cannot alter a CHECK, so
+// the rows move to a new table. Task types are validated in Go instead.
+func (db *DB) dropTaskTypeCheck() error {
+	var ddl string
+	if err := db.conn.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_tasks'`).Scan(&ddl); err != nil {
+		return err
+	}
+	if !strings.Contains(ddl, "CHECK (type IN") {
+		return nil
+	}
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`CREATE TABLE scheduled_tasks_rebuilt (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL,
+			deployment_name TEXT NOT NULL,
+			cron_expr TEXT NOT NULL,
+			enabled BOOLEAN DEFAULT TRUE,
+			config TEXT,
+			last_run DATETIME,
+			next_run DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`INSERT INTO scheduled_tasks_rebuilt SELECT id, name, type, deployment_name, cron_expr, enabled, config, last_run, next_run, created_at, updated_at FROM scheduled_tasks`,
+		`DROP TABLE scheduled_tasks`,
+		`ALTER TABLE scheduled_tasks_rebuilt RENAME TO scheduled_tasks`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_deployment ON scheduled_tasks(deployment_name)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_enabled ON scheduled_tasks(enabled)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_next_run ON scheduled_tasks(next_run)`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (db *DB) CreateTask(task *ScheduledTask) (int64, error) {

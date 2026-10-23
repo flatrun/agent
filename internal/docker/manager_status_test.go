@@ -222,3 +222,19 @@ func TestProjectForFallsBackToIndex(t *testing.T) {
 		t.Errorf("projectFor() = %q, want imported", got)
 	}
 }
+
+func TestApplyContainersCountsRunningReplicas(t *testing.T) {
+	deployment := &models.Deployment{Services: []models.Service{{Name: "worker", Replicas: 3}, {Name: "app", Replicas: 1}}}
+	applyContainers(deployment, []container.Summary{
+		summary(container.StateRunning, "Up 2 hours", "worker"),
+		summary(container.StateRunning, "Up 2 hours", "worker"),
+		summary(container.StateExited, "Exited (1) 13 hours ago", "worker"),
+		summary(container.StateExited, "Exited (1) 13 hours ago", "app"),
+	})
+	if got := deployment.Services[0].RunningReplicas; got != 2 {
+		t.Fatalf("worker running replicas = %d, want 2", got)
+	}
+	if got := deployment.Services[1].RunningReplicas; got != 0 {
+		t.Fatalf("app running replicas = %d, want 0", got)
+	}
+}

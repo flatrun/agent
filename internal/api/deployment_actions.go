@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/flatrun/agent/internal/access"
+	"github.com/flatrun/agent/internal/secrets"
+	"github.com/flatrun/agent/internal/workspace"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -102,6 +104,27 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 
 	if err := s.manager.DeleteDeployment(name); err != nil {
 		return deletedItems, err
+	}
+	if deployment != nil && deployment.Metadata != nil && deployment.Metadata.Source != nil &&
+		deployment.Metadata.Source.WebhookCredentialID != "" && s.credentialsManager != nil {
+		if err := s.credentialsManager.DeleteGenericCredential(deployment.Metadata.Source.WebhookCredentialID); err != nil {
+			log.Printf("Warning: failed to remove webhook secret for %s: %v", name, err)
+		}
+	}
+	if s.secretStore != nil {
+		if err := s.secretStore.DropScope(secrets.Scope{Type: secrets.ScopeDeployment, ID: name}); err != nil {
+			log.Printf("Warning: failed to remove secrets of %s: %v", name, err)
+		}
+	}
+	if store := s.workspaces(); store != nil {
+		if err := store.Release(workspace.Ref{Type: workspace.TypeDeployment, ID: name}); err != nil {
+			log.Printf("Warning: failed to release workspace ownership of %s: %v", name, err)
+		}
+	}
+	if s.deploysStore != nil {
+		if err := s.deploysStore.Delete(name); err != nil {
+			log.Printf("Warning: failed to remove deploy history for %s: %v", name, err)
+		}
 	}
 
 	return deletedItems, nil

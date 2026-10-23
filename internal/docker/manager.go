@@ -168,6 +168,7 @@ func applyContainers(deployment *models.Deployment, containers []container.Summa
 	deployment.Status = statusFromContainers(containers)
 
 	byService := make(map[string]container.Summary, len(containers))
+	running := map[string]int{}
 	for _, c := range containers {
 		service := c.Labels[composeServiceLabel]
 		if service == "" {
@@ -176,10 +177,14 @@ func applyContainers(deployment *models.Deployment, containers []container.Summa
 		if _, seen := byService[service]; !seen {
 			byService[service] = c
 		}
+		if c.State == container.StateRunning {
+			running[service]++
+		}
 	}
 
 	for i := range deployment.Services {
 		svc := &deployment.Services[i]
+		svc.RunningReplicas = running[svc.Name]
 		c, ok := byService[svc.Name]
 		if !ok {
 			continue
@@ -273,7 +278,7 @@ func (m *Manager) ListDeployments() ([]models.Deployment, error) {
 	if err == nil {
 		m.noteStatusRecovered()
 		for i := range deployments {
-			deployments[i].Status = statusFromContainers(index[m.projectFor(&deployments[i], index)])
+			applyContainers(&deployments[i], index[m.projectFor(&deployments[i], index)])
 		}
 		return deployments, nil
 	}
@@ -379,6 +384,12 @@ func (m *Manager) populateContainerInfo(deployment *models.Deployment) {
 
 	for i := range deployment.Services {
 		svc := &deployment.Services[i]
+		svc.RunningReplicas = 0
+		for _, container := range containers {
+			if container.Service == svc.Name && container.State == "running" {
+				svc.RunningReplicas++
+			}
+		}
 		for _, container := range containers {
 			if container.Service == svc.Name {
 				svc.ContainerID = container.ID
@@ -980,4 +991,16 @@ func (m *Manager) ListInfrastructure() ([]models.Deployment, error) {
 	}
 
 	return deployments, nil
+}
+
+// UpdateDeploymentFromSource syncs a refetched source tree into the deployment
+// and replaces its compose file, keeping a backup of the previous one.
+func (m *Manager) UpdateDeploymentFromSource(name, srcDir, composeContent string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.discovery.SyncSourceTree(name, srcDir); err != nil {
+		return fmt.Errorf("failed to sync source into deployment: %w", err)
+	}
+	return m.discovery.UpdateComposeFile(name, composeContent)
 }

@@ -11,16 +11,16 @@
   <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · Español · <a href="README.pt-BR.md">Português do Brasil</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-# Ejecuta aplicaciones en contenedores en tus propios servidores
+**Alternativa de código abierto y autoalojada a Railway y Render.** Despliega proyectos Docker Compose en tus propios servidores.
 
-FlatRun permite desplegar, proteger, diagnosticar, automatizar y administrar
-aplicaciones en contenedores desde un solo lugar. Ejecuta proyectos Docker
-Compose estándar directamente y puede escalar cargas compatibles mediante
-Docker Swarm o k3s.
+FlatRun lleva el flujo de trabajo de Railway a un servidor que tú controlas: proyectos formados por servicios, entornos, despliegues que puedes revertir, variables compartidas entre proyectos y plantillas para aplicaciones comunes. Cada proyecto es una carpeta con un archivo Compose estándar, así que sigue funcionando con `docker compose` si dejas de usar FlatRun.
 
-Tus archivos Compose, configuraciones y datos permanecen en tus máquinas.
-Puedes comenzar con un solo host Docker, conectar más servidores y activar la
-orquestación cuando la carga lo necesite.
+Empieza con un servidor. Conecta más y escala los servicios compatibles con Docker Swarm o k3s cuando la carga lo necesite.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
+  <img alt="Los servicios de un proyecto como un grafo" src="docs/screenshots/project-architecture-light.png">
+</picture>
 
 ## Primera aplicación
 
@@ -52,6 +52,9 @@ flatrun health
 - Gestión de varios servidores desde un solo panel.
 - Escalado mediante Docker Swarm o k3s para cargas compatibles.
 - Notificaciones relacionadas agrupadas en incidentes útiles.
+- Espacios de trabajo para equipos, con propietarios, administradores y miembros.
+- Secretos cifrados, rotables y que nunca se vuelven a mostrar, o aportados por Infisical, Vault, OpenBao, Doppler o 1Password.
+- Variables que hacen referencia a las de otro proyecto, y un historial de cada despliegue con sus registros.
 
 El panel, el CLI, GitHub Actions y las integraciones externas utilizan la misma
 API. La descripción OpenAPI exacta del agente instalado está disponible en

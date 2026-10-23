@@ -11,13 +11,16 @@
   <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português do Brasil</a> · 简体中文
 </p>
 
-# 在自己的服务器上运行容器应用
+**Railway 和 Render 的开源、自托管替代方案。** 在你自己的服务器上部署 Docker Compose 项目。
 
-FlatRun 让你从一个位置部署、保护、诊断、自动化和管理容器应用。它直接运行标准
-Docker Compose 项目，也可以通过 Docker Swarm 或 k3s 扩展符合条件的工作负载。
+FlatRun 把 Railway 的工作方式带到你掌控的服务器上：由服务组成的项目、环境、可以回滚的部署、在项目之间共享的变量，以及常用应用的模板。每个项目都是一个包含标准 Compose 文件的目录，即使不再使用 FlatRun，也能继续用 `docker compose` 运行。
 
-Compose 文件、配置和数据始终保留在你的机器上。你可以从一台 Docker 主机开始，
-在需要时连接更多服务器并启用编排。
+从一台服务器开始。在需要时连接更多服务器，并通过 Docker Swarm 或 k3s 扩展符合条件的服务。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
+  <img alt="以图的形式展示一个项目的服务" src="docs/screenshots/project-architecture-light.png">
+</picture>
 
 ## 部署第一个应用
 
@@ -48,6 +51,9 @@ flatrun health
 - 从一个控制面板管理多台服务器。
 - 使用 Docker Swarm 或 k3s 扩展符合条件的工作负载。
 - 将相关通知合并为有用的事件。
+- 面向团队的工作区，包含所有者、管理员和成员角色。
+- 加密的密钥，可以轮换，保存后不再显示，也可以由 Infisical、Vault、OpenBao、Doppler 或 1Password 提供。
+- 可以引用其他项目变量的变量，以及每次部署的记录和日志。
 
 控制面板、CLI、GitHub Actions 和外部集成都使用同一个 API。已安装代理的准确
 OpenAPI 描述位于 `/api/openapi.json`。

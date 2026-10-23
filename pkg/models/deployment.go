@@ -10,6 +10,7 @@ type Deployment struct {
 	UpdatedAt time.Time        `json:"updated_at"`
 	Services  []Service        `json:"services,omitempty"`
 	Metadata  *ServiceMetadata `json:"metadata,omitempty"`
+	Workspace string           `json:"workspace,omitempty"`
 }
 
 type Service struct {
@@ -22,6 +23,44 @@ type Service struct {
 	Networks    []string  `json:"networks,omitempty"`
 	IsPrimary   bool      `json:"is_primary"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Mounts are the service's volumes as written in the compose file.
+	Mounts []ServiceMount `json:"mounts,omitempty"`
+	// Replicas is how many containers the compose file asks for, and
+	// RunningReplicas how many of the service's containers are running.
+	Replicas        int `json:"replicas"`
+	RunningReplicas int `json:"running_replicas"`
+	// Domains are the hostnames routed to this service.
+	Domains []string `json:"domains,omitempty"`
+	// DependsOn names the services this one waits for.
+	DependsOn []string `json:"depends_on,omitempty"`
+}
+
+type ServiceMount struct {
+	// Type is bind for a host path and volume for a named volume.
+	Type     string `json:"type"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only,omitempty"`
+}
+
+// ApplyServiceDomains fills each service's domains from the metadata. A
+// domain that names no service belongs to the primary service.
+func ApplyServiceDomains(services []Service, meta *ServiceMetadata) {
+	if meta == nil {
+		return
+	}
+	primary := meta.EffectivePrimaryService()
+	for _, d := range meta.GetDomains() {
+		target := d.Service
+		if target == "" {
+			target = primary
+		}
+		for i := range services {
+			if services[i].Name == target && d.Domain != "" {
+				services[i].Domains = append(services[i].Domains, d.Domain)
+			}
+		}
+	}
 }
 
 type ServiceMetadata struct {
@@ -48,6 +87,43 @@ type ServiceMetadata struct {
 	ServiceCredentials map[string]string         `yaml:"service_credentials,omitempty" json:"service_credentials,omitempty"`
 	Domains            []DomainConfig            `yaml:"domains,omitempty" json:"domains,omitempty"`
 	Databases          []DatabaseConfig          `yaml:"databases,omitempty" json:"databases,omitempty"`
+	Source             *SourceConfig             `yaml:"source,omitempty" json:"source,omitempty"`
+	Environment        *EnvironmentInfo          `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Sleep              *SleepConfig              `yaml:"sleep,omitempty" json:"sleep,omitempty"`
+	Workspace          string                    `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+}
+
+// SleepConfig stops a deployment after a stretch without traffic and starts
+// it again on the next request. Sleeping is set by the agent.
+type SleepConfig struct {
+	Enabled     bool `yaml:"enabled" json:"enabled"`
+	IdleMinutes int  `yaml:"idle_minutes" json:"idle_minutes"`
+	Sleeping    bool `yaml:"sleeping,omitempty" json:"sleeping"`
+}
+
+// EnvironmentInfo marks a deployment as another environment of a base
+// deployment: a copy that follows its own branch. A PR number marks it as a
+// preview that is removed when the pull request closes.
+type EnvironmentInfo struct {
+	Base string `yaml:"base" json:"base"`
+	Name string `yaml:"name" json:"name"`
+	PR   int    `yaml:"pr,omitempty" json:"pr,omitempty"`
+}
+
+// SourceConfig records where a deployment's files came from so it can be
+// fetched again on redeploy, on a push, or at an earlier revision.
+type SourceConfig struct {
+	Type         string `yaml:"type" json:"type"`
+	Ref          string `yaml:"ref" json:"ref"`
+	Branch       string `yaml:"branch,omitempty" json:"branch,omitempty"`
+	Subpath      string `yaml:"subpath,omitempty" json:"subpath,omitempty"`
+	CredentialID string `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
+	AutoDeploy   bool   `yaml:"auto_deploy,omitempty" json:"auto_deploy"`
+	Previews     bool   `yaml:"previews,omitempty" json:"previews"`
+	Builder      string `yaml:"builder,omitempty" json:"builder,omitempty"`
+	LastRevision string `yaml:"last_revision,omitempty" json:"last_revision,omitempty"`
+	// WebhookCredentialID names the stored secret for incoming push webhooks.
+	WebhookCredentialID string `yaml:"webhook_credential_id,omitempty" json:"-"`
 }
 
 type MigrationSpec struct {

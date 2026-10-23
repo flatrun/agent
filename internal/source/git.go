@@ -31,27 +31,35 @@ func (GitProvider) Fetch(ctx context.Context, d Descriptor, destDir string, log 
 		return nil, err
 	}
 
-	args := []string{"clone", "--depth", "1"}
-	if branch := d.Params["branch"]; branch != "" {
-		args = append(args, "--branch", branch)
-	}
-	args = append(args, cloneURL, destDir)
-
-	cmd := exec.CommandContext(ctx, "git", args...)
-	// Never block on an interactive credential or host-key prompt: a private
-	// repo with no or wrong auth must fail fast, not hang the request.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, runErr := cmd.CombinedOutput()
-	if log != nil {
-		if line := strings.TrimSpace(scrub(string(out), d.Auth)); line != "" {
-			log(line)
+	if revision := d.Params["revision"]; revision != "" {
+		// clone cannot target a commit, so a pinned revision is fetched alone
+		// into an empty repository.
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create clone directory: %w", err)
 		}
-	}
-	if runErr != nil {
-		return nil, fmt.Errorf("git clone failed: %s", scrub(strings.TrimSpace(string(out)), d.Auth))
+		steps := [][]string{
+			{"-C", destDir, "init", "-q"},
+			{"-C", destDir, "fetch", "-q", "--depth", "1", cloneURL, revision},
+			{"-C", destDir, "checkout", "-q", "FETCH_HEAD"},
+		}
+		for _, args := range steps {
+			if err := runGit(ctx, args, d.Auth, log); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		args := []string{"clone", "--depth", "1"}
+		if branch := d.Params["branch"]; branch != "" {
+			args = append(args, "--branch", branch)
+		}
+		args = append(args, cloneURL, destDir)
+		if err := runGit(ctx, args, d.Auth, log); err != nil {
+			return nil, err
+		}
 	}
 
 	revision := gitRevision(ctx, destDir)
+	message := gitSubject(ctx, destDir)
 	_ = os.RemoveAll(filepath.Join(destDir, ".git"))
 
 	contentDir, err := resolveSubpath(destDir, d.Params["subpath"])
@@ -62,7 +70,7 @@ func (GitProvider) Fetch(ctx context.Context, d Descriptor, destDir string, log 
 		return nil, fmt.Errorf("subpath %q not found in repository", d.Params["subpath"])
 	}
 
-	return &Result{Dir: contentDir, Revision: revision}, nil
+	return &Result{Dir: contentDir, Revision: revision, Message: message}, nil
 }
 
 // authenticatedURL injects auth into an https clone URL. It leaves ssh and other
@@ -105,8 +113,44 @@ func resolveSubpath(root, subpath string) (string, error) {
 	return target, nil
 }
 
+func runGit(ctx context.Context, args []string, auth *Auth, log func(string)) error {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	// Never block on an interactive credential or host-key prompt: a private
+	// repo with no or wrong auth must fail fast, not hang the request.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	if log != nil {
+		if line := strings.TrimSpace(scrub(string(out), auth)); line != "" {
+			log(line)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("git %s failed: %s", gitVerb(args), scrub(strings.TrimSpace(string(out)), auth))
+	}
+	return nil
+}
+
+func gitVerb(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-C" {
+			i++
+			continue
+		}
+		return args[i]
+	}
+	return ""
+}
+
 func gitRevision(ctx context.Context, dir string) string {
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitSubject(ctx context.Context, dir string) string {
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "log", "-1", "--format=%s").Output()
 	if err != nil {
 		return ""
 	}

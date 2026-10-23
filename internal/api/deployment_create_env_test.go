@@ -63,3 +63,45 @@ func TestDeploymentCreateOmitsLegacyVariablesForMultipleDatabases(t *testing.T) 
 		t.Fatalf("legacy database variables must be absent: %s", text)
 	}
 }
+
+func TestDeploymentCreateAcceptsEnvFilesTheProjectAddsLater(t *testing.T) {
+	_, deploymentsPath, httpServer := setupPlanTestServer(t)
+	compose := `services:
+  web:
+    image: nginx:alpine
+    env_file:
+      - path: .env.services
+        required: true
+  worker:
+    image: nginx:alpine
+    env_file: config/worker.env
+`
+	response, body := doJSON(t, http.MethodPost, httpServer.URL+"/api/deployments", map[string]any{
+		"name":            "env-later",
+		"compose_content": compose,
+	})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, body = %#v", response.StatusCode, body)
+	}
+	for _, name := range []string{".env.services", "config/worker.env"} {
+		if _, err := os.Stat(filepath.Join(deploymentsPath, "env-later", name)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be left for the project to add, stat err = %v", name, err)
+		}
+	}
+}
+
+func TestDeploymentCreateRejectsEnvFileOutsideTheProject(t *testing.T) {
+	_, _, httpServer := setupPlanTestServer(t)
+	compose := `services:
+  web:
+    image: nginx:alpine
+    env_file: ../../etc/flatrun.env
+`
+	response, body := doJSON(t, http.MethodPost, httpServer.URL+"/api/deployments", map[string]any{
+		"name":            "env-escape",
+		"compose_content": compose,
+	})
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %#v", response.StatusCode, body)
+	}
+}

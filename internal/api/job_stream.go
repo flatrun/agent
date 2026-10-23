@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
@@ -104,6 +105,12 @@ func sendJobError(conn *websocket.Conn, msg string) {
 }
 
 func writeJobLine(conn *websocket.Conn, line string) error {
+	if phase, ok := strings.CutPrefix(line, phaseMarker); ok {
+		return conn.WriteMessage(websocket.TextMessage, mustJSON(gin.H{
+			"type":  "phase",
+			"phase": phase,
+		}))
+	}
 	return conn.WriteMessage(websocket.TextMessage, mustJSON(gin.H{
 		"type": "line",
 		"data": line,

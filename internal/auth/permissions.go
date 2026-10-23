@@ -91,6 +91,12 @@ const (
 	PermClusterRead          Permission = "cluster:read"
 	PermClusterWrite         Permission = "cluster:write"
 	PermClusterCapacityClaim Permission = "cluster:capacity:claim"
+
+	PermWorkspacesRead  Permission = "workspaces:read"
+	PermWorkspacesWrite Permission = "workspaces:write"
+
+	PermSecretsRead  Permission = "secrets:read"
+	PermSecretsWrite Permission = "secrets:write"
 )
 
 var adminPermissions = []Permission{
@@ -120,6 +126,8 @@ var adminPermissions = []Permission{
 	PermTemplatesRead, PermTemplatesWrite,
 	PermTrafficRead, PermTrafficWrite,
 	PermClusterRead, PermClusterWrite, PermClusterCapacityClaim,
+	PermWorkspacesRead, PermWorkspacesWrite,
+	PermSecretsRead, PermSecretsWrite,
 }
 
 var operatorPermissions = []Permission{
@@ -141,6 +149,8 @@ var operatorPermissions = []Permission{
 	PermTemplatesRead,
 	PermTrafficRead,
 	PermAlertsRead, PermAlertsWrite,
+	PermWorkspacesRead, PermWorkspacesWrite,
+	PermSecretsRead, PermSecretsWrite,
 }
 
 var viewerPermissions = []Permission{
@@ -162,6 +172,8 @@ var viewerPermissions = []Permission{
 	PermTemplatesRead,
 	PermTrafficRead,
 	PermAlertsRead,
+	PermWorkspacesRead,
+	PermSecretsRead,
 }
 
 func GetRolePermissions(role Role) []Permission {

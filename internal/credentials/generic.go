@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/flatrun/agent/internal/secrets"
 	"github.com/flatrun/agent/pkg/models"
 	"gopkg.in/yaml.v3"
 )
@@ -14,42 +15,114 @@ type genericCredentialsFile struct {
 }
 
 var knownCredentialKinds = map[models.CredentialKind]bool{
-	models.CredentialKindS3:  true,
-	models.CredentialKindGit: true,
+	models.CredentialKindS3:          true,
+	models.CredentialKindGit:         true,
+	models.CredentialKindWebhook:     true,
+	models.CredentialKindInfisical:   true,
+	models.CredentialKindVault:       true,
+	models.CredentialKindDoppler:     true,
+	models.CredentialKindOnePassword: true,
 }
 
+// Sealer encrypts secret values before they are written to disk.
+type Sealer interface {
+	Seal(plain string) (string, error)
+	Open(sealed string) (string, error)
+}
+
+// SetSealer makes the store seal secret values on disk. Stored credentials are
+// read again and written back, so values saved before encryption existed are
+// sealed now.
+func (m *Manager) SetSealer(sealer Sealer) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sealer = sealer
+	if err := m.loadGenericCredentials(); err != nil {
+		return err
+	}
+	if len(m.genericCreds) == 0 {
+		return nil
+	}
+	return m.saveGenericCredentials()
+}
+
+// loadGenericCredentials replaces the in-memory store only when every stored
+// credential could be read. Otherwise saving stays refused, because a save
+// would write back only the credentials that were read and drop the rest.
 func (m *Manager) loadGenericCredentials() error {
+	creds, err := m.readGenericCredentials()
+	if err != nil {
+		m.genericLoadErr = err
+		return err
+	}
+	m.genericCreds = creds
+	m.genericLoadErr = nil
+	return nil
+}
+
+func (m *Manager) readGenericCredentials() (map[string]*models.Credential, error) {
+	creds := make(map[string]*models.Credential)
 	data, err := os.ReadFile(m.genericCredsFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return creds, nil
 		}
-		return err
+		return nil, err
 	}
 
 	var cf genericCredentialsFile
 	if err := yaml.Unmarshal(data, &cf); err != nil {
-		return err
+		return nil, err
 	}
 
 	for _, cred := range cf.Credentials {
 		if cred.Data == nil {
 			cred.Data = map[string]string{}
 		}
-		m.genericCreds[cred.ID] = cred
+		for k, v := range cred.Data {
+			if !secrets.IsSealed(v) {
+				continue
+			}
+			if m.sealer == nil {
+				return nil, fmt.Errorf("credential %s holds sealed values but no key is loaded", cred.ID)
+			}
+			plain, err := m.sealer.Open(v)
+			if err != nil {
+				return nil, fmt.Errorf("credential %s: %w", cred.ID, err)
+			}
+			cred.Data[k] = plain
+		}
+		creds[cred.ID] = cred
 	}
 
-	return nil
+	return creds, nil
 }
 
 func (m *Manager) saveGenericCredentials() error {
+	if m.genericLoadErr != nil {
+		return fmt.Errorf("stored credentials could not be read, so they are not overwritten: %w", m.genericLoadErr)
+	}
 	if err := os.MkdirAll(m.storagePath, 0700); err != nil {
 		return err
 	}
 
 	creds := make([]*models.Credential, 0, len(m.genericCreds))
 	for _, cred := range m.genericCreds {
-		creds = append(creds, cred)
+		stored := *cred
+		if m.sealer != nil {
+			stored.Data = copyData(cred.Data)
+			for k, v := range stored.Data {
+				if v == "" || !models.IsSecretKey(cred.Kind, k) {
+					continue
+				}
+				sealed, err := m.sealer.Seal(v)
+				if err != nil {
+					return err
+				}
+				stored.Data[k] = sealed
+			}
+		}
+		creds = append(creds, &stored)
 	}
 
 	if len(creds) == 0 {

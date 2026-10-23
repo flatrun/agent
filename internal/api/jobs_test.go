@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
+	"github.com/flatrun/agent/internal/deploys"
+	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -361,3 +363,69 @@ func waitFor(cond func() bool) bool {
 type errStub string
 
 func (e errStub) Error() string { return string(e) }
+
+func TestJobStreamSendsPhaseChanges(t *testing.T) {
+	gate := make(chan struct{})
+	runner := &fakeRunner{gate: gate}
+	s := newJobTestServer(runner)
+	s.authMiddleware = auth.NewMiddleware(&config.AuthConfig{Enabled: false})
+	s.runDeploymentAction = func(action, name string, opts actionOptions, emit func(string)) error {
+		emit("Fetching")
+		opts.progress.phase("building")
+		<-gate
+		opts.progress.phase("deploying")
+		emit("Started")
+		return nil
+	}
+	s.deploysStore = deploys.NewStore(t.TempDir())
+	s.manager = docker.NewManager(t.TempDir())
+
+	job, _ := s.jobs.create("myapp", "redeploy", actionOptions{})
+	go s.runActionJob(job)
+	if !waitFor(func() bool { return job.snapshot().Phase == "building" }) {
+		t.Fatalf("job never reached building: %+v", job.snapshot())
+	}
+
+	r := gin.New()
+	r.GET("/api/deployments/:name/jobs/:jobId/stream", s.streamDeploymentJob)
+	srv := newSkippableHTTPServer(t, r)
+	defer srv.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/api/deployments/myapp/jobs/"+job.ID()+"/stream", nil)
+	if err != nil {
+		t.Fatalf("failed to dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	var frames []string
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	released := false
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var frame map[string]any
+		if json.Unmarshal(msg, &frame) != nil {
+			continue
+		}
+		switch frame["type"] {
+		case "phase":
+			frames = append(frames, "phase:"+frame["phase"].(string))
+		case "line":
+			frames = append(frames, "line:"+frame["data"].(string))
+		case "result":
+			frames = append(frames, "result:"+frame["status"].(string))
+		}
+		if !released && len(frames) == 3 {
+			released = true
+			close(gate)
+		}
+		if frame["type"] == "result" {
+			break
+		}
+	}
+	want := []string{"phase:queued", "line:Fetching", "phase:building", "phase:deploying", "line:Started", "phase:active", "result:succeeded"}
+	if strings.Join(frames, ",") != strings.Join(want, ",") {
+		t.Fatalf("frames = %v, want %v", frames, want)
+	}
+}

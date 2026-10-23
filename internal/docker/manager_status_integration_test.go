@@ -63,7 +63,7 @@ services:
 		t.Fatalf("start failed: %v (%s)", err, out)
 	}
 
-	statusOf := func(t *testing.T) string {
+	listed := func(t *testing.T) models.Deployment {
 		t.Helper()
 		deployments, err := m.ListDeployments()
 		if err != nil {
@@ -71,15 +71,19 @@ services:
 		}
 		for _, d := range deployments {
 			if d.Name == name {
-				return d.Status
+				return d
 			}
 		}
 		t.Fatalf("deployment %q missing from the list", name)
-		return ""
+		return models.Deployment{}
 	}
 
-	if got := statusOf(t); got != string(models.StatusRunning) {
+	listedRunning := listed(t)
+	if got := listedRunning.Status; got != string(models.StatusRunning) {
 		t.Errorf("running deployment listed as %q, want running", got)
+	}
+	if len(listedRunning.Services) != 1 || listedRunning.Services[0].Status != "running" || listedRunning.Services[0].RunningReplicas != 1 {
+		t.Errorf("listed services = %+v, want app running with one replica", listedRunning.Services)
 	}
 
 	running, err := m.GetDeployment(name)
@@ -104,7 +108,7 @@ services:
 		t.Fatalf("stop failed: %v (%s)", err, out)
 	}
 
-	if got := statusOf(t); got != string(models.StatusStopped) {
+	if got := listed(t).Status; got != string(models.StatusStopped) {
 		t.Errorf("stopped deployment listed as %q, want stopped", got)
 	}
 

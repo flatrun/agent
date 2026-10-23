@@ -34,11 +34,13 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/autoscale"
 	"github.com/flatrun/agent/internal/backup"
+	"github.com/flatrun/agent/internal/build"
 	"github.com/flatrun/agent/internal/certs"
 	"github.com/flatrun/agent/internal/cluster"
 	"github.com/flatrun/agent/internal/credentials"
 	"github.com/flatrun/agent/internal/dashboards"
 	"github.com/flatrun/agent/internal/database"
+	"github.com/flatrun/agent/internal/deploys"
 	"github.com/flatrun/agent/internal/dns"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/files"
@@ -51,13 +53,16 @@ import (
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/routing"
 	"github.com/flatrun/agent/internal/scheduler"
+	"github.com/flatrun/agent/internal/secrets"
 	"github.com/flatrun/agent/internal/security"
 	"github.com/flatrun/agent/internal/setup"
+	"github.com/flatrun/agent/internal/sleep"
 	"github.com/flatrun/agent/internal/source"
 	"github.com/flatrun/agent/internal/ssl"
 	"github.com/flatrun/agent/internal/system"
 	"github.com/flatrun/agent/internal/templatesource"
 	"github.com/flatrun/agent/internal/traffic"
+	"github.com/flatrun/agent/internal/webhook"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/flatrun/agent/pkg/pluginapi"
@@ -106,6 +111,8 @@ type Server struct {
 	backupManager      *backup.Manager
 	schedulerManager   *scheduler.Manager
 	auditManager       *audit.Manager
+	secretStore        *secrets.Store
+	secretRegistry     *secrets.Registry
 	auditMiddleware    *audit.Middleware
 	autoscaleStore     *autoscale.Store
 	powerDNSManager    *dns.PowerDNSManager
@@ -117,6 +124,12 @@ type Server struct {
 	setupHandlers      *setup.Handlers
 	certRenewer        *ssl.Renewer
 	planStore          *plan.Store
+	deploysStore       *deploys.Store
+	builders           *build.Registry
+	webhooks           *webhook.Registry
+	runInBackground    func(func())
+	sleeper            *sleep.Controller
+	sleepCancel        context.CancelFunc
 	aiProvider         ai.Provider
 	triageBudget       *triageBudget
 	aiSessions         *ai.SessionStore
@@ -165,7 +178,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	if cfg.API.EnableCORS {
 		corsConfig := cors.Config{
 			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-			AllowHeaders:     []string{"Content-Type", "Authorization", "Accept", "Origin", "Cache-Control", "X-Requested-With", "X-FlatRun-Deployment"},
+			AllowHeaders:     []string{"Content-Type", "Authorization", "Accept", "Origin", "Cache-Control", "X-Requested-With", "X-FlatRun-Deployment", workspaceHeader},
 			AllowCredentials: true,
 			MaxAge:           12 * time.Hour,
 		}
@@ -270,6 +283,12 @@ func New(cfg *config.Config, configPath string) *Server {
 	databaseManager := database.NewManager()
 	infraManager := infra.NewManager(cfg)
 	credentialsManager := credentials.NewManager(cfg.DeploymentsPath)
+	secretKeyring, secretStore, secretErr := openSecretStore(cfg.DeploymentsPath)
+	if secretErr != nil {
+		log.Printf("Warning: secret store unavailable, saved credentials stay unencrypted: %v", secretErr)
+	} else if err := credentialsManager.SetSealer(secretKeyring); err != nil {
+		log.Printf("Warning: failed to encrypt saved credentials: %v", err)
+	}
 
 	var securityManager *security.Manager
 	if cfg.Security.Enabled {
@@ -374,6 +393,8 @@ func New(cfg *config.Config, configPath string) *Server {
 		pluginToken:        pluginToken,
 		authMiddleware:     authMiddleware,
 		authManager:        authManager,
+		secretStore:        secretStore,
+		secretRegistry:     secrets.DefaultRegistry(nil),
 		proxyOrchestrator:  proxyOrchestrator,
 		filesManager:       filesManager,
 		systemFilesManager: systemFilesManager,
@@ -395,6 +416,9 @@ func New(cfg *config.Config, configPath string) *Server {
 		setupManager:       setupManager,
 		setupHandlers:      setup.NewHandlers(setupManager, authManager),
 		planStore:          plan.NewStore(cfg.DeploymentsPath),
+		deploysStore:       deploys.NewStore(cfg.DeploymentsPath),
+		builders:           build.DefaultRegistry(),
+		webhooks:           webhook.DefaultRegistry(),
 		aiSessions:         ai.NewSessionStore(cfg.DeploymentsPath),
 		aiAgents:           ai.NewAgentStore(cfg.DeploymentsPath),
 		jobs:               newJobRegistry(),
@@ -405,6 +429,11 @@ func New(cfg *config.Config, configPath string) *Server {
 	if err := s.reconcileClusterPeerPolicies(); err != nil {
 		log.Printf("Warning: Failed to reconcile Fleet peer access: %v", err)
 	}
+	s.sleeper = s.newSleepController()
+	sleepContext, cancelSleep := context.WithCancel(context.Background())
+	s.sleepCancel = cancelSleep
+	go s.runSleepLoop(sleepContext)
+
 	if s.autoscaleStore != nil {
 		autoscaleContext, cancelAutoscale := context.WithCancel(context.Background())
 		s.autoscaleCancel = cancelAutoscale
@@ -442,6 +471,7 @@ func New(cfg *config.Config, configPath string) *Server {
 
 		executor := scheduler.NewExecutor(backupManager, manager)
 		executor.SetAgentRunner(s.runAgentHeadless)
+		executor.SetSecretRotator(s.runScheduledRotation)
 		schedulerManager, err := scheduler.NewManager(cfg.DeploymentsPath, executor)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize scheduler manager: %v", err)
@@ -469,6 +499,10 @@ func (s *Server) setupRoutes() {
 		api.POST("/access/request", s.requestApplicationAccess)
 		api.GET("/access/verify", s.verifyApplicationAccess)
 		api.POST("/access/verify", s.confirmApplicationAccess)
+		// Authenticated by the deployment's webhook secret, not a session.
+		api.POST("/hooks/:provider/:deployment", s.receiveWebhook)
+		// Reached through nginx's fallback when a sleeping deployment is down.
+		api.Any("/hooks/wake/:deployment", s.wakeDeployment)
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
@@ -498,9 +532,15 @@ func (s *Server) setupRoutes() {
 		protected := api.Group("")
 		protected.Use(s.authMiddleware.RequireAuth())
 		protected.Use(restrictClusterServiceResources)
+		// gin copies a group's middleware into each route as it is registered,
+		// so every route below is added after its audit middleware.
+		bodiless := protected.Group("")
 		if s.auditMiddleware != nil {
 			protected.Use(s.auditMiddleware.Capture())
+			bodiless.Use(s.auditMiddleware.CaptureWithoutBody())
 		}
+		s.registerWorkspaceRoutes(bodiless)
+		s.registerSecretRoutes(bodiless)
 		{
 			// Deployment endpoints
 			protected.GET("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listDeployments)
@@ -515,6 +555,20 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.stopDeployment)
 			protected.POST("/deployments/:name/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.restartDeployment)
 			protected.POST("/deployments/:name/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rebuildDeployment)
+			protected.POST("/deployments/:name/redeploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.redeployDeployment)
+			protected.PUT("/deployments/:name/source", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentSource)
+			protected.GET("/deployments/:name/webhook", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentWebhook)
+			protected.POST("/deployments/:name/webhook/rotate", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rotateDeploymentWebhook)
+			protected.PUT("/deployments/:name/sleep", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDeploymentSleep)
+			protected.GET("/deployments/:name/environments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listEnvironments)
+			protected.POST("/deployments/:name/environments", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.createEnvironmentHandler)
+			protected.GET("/deployments/:name/deploys", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDeploymentDeploys)
+			protected.GET("/deployments/:name/deploys/:id/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeployLogs)
+			protected.POST("/deployments/:name/deploys/:id/rollback", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rollbackDeployment)
+			protected.GET("/deployments/:name/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listProjectDeployments)
+			protected.GET("/deployments/:name/deployments/:id", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getProjectDeployment)
+			protected.GET("/deployments/:name/deployments/:id/logs", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeployLogs)
+			protected.POST("/deployments/:name/deployments/:id/rollback", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.rollbackDeployment)
 			protected.POST("/deployments/:name/deploy", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deployDeployment)
 			protected.POST("/deployments/:name/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.pullDeploymentImage)
 			protected.GET("/deployments/:name/images", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getDeploymentImages)
@@ -998,7 +1052,7 @@ func (s *Server) Start() error {
 
 	s.server = &http.Server{
 		Addr:    addr,
-		Handler: s.router,
+		Handler: s.Handler(),
 	}
 
 	go func() {
@@ -1035,6 +1089,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	if s.sleepCancel != nil {
+		s.sleepCancel()
+	}
 	if s.autoscaleCancel != nil {
 		s.autoscaleCancel()
 	}
@@ -1083,6 +1140,22 @@ func (s *Server) listDeployments(c *gin.Context) {
 		deployments = filtered
 	}
 
+	scope, ok := s.requestWorkspace(c)
+	if !ok {
+		return
+	}
+	if owners := s.deploymentOwners(deployments); owners != nil {
+		var scoped []models.Deployment
+		for _, d := range deployments {
+			if scope != nil && owners[d.Name] != scope.Slug {
+				continue
+			}
+			d.Workspace = owners[d.Name]
+			scoped = append(scoped, d)
+		}
+		deployments = scoped
+	}
+
 	c.JSON(http.StatusOK, NewList(deployments, "deployments").Also("path", s.manager.BasePath()))
 }
 
@@ -1097,6 +1170,9 @@ func (s *Server) getDeployment(c *gin.Context) {
 		return
 	}
 
+	if owners := s.deploymentOwners([]models.Deployment{*deployment}); owners != nil {
+		deployment.Workspace = owners[name]
+	}
 	composeContent, composeFilename, _ := s.manager.GetComposeFile(name)
 	proxyStatus := s.proxyOrchestrator.GetDeploymentProxyStatus(deployment)
 
@@ -1221,6 +1297,10 @@ func (s *Server) createDeployment(c *gin.Context) {
 		})
 		return
 	}
+	ownerWorkspace, ok := s.creationWorkspace(c)
+	if !ok {
+		return
+	}
 
 	var fetched *fetchedSource
 	if req.Source != nil {
@@ -1234,7 +1314,18 @@ func (s *Server) createDeployment(c *gin.Context) {
 		defer f.cleanup()
 		fetched = f
 		req.ComposeContent = f.composeContent
+		if f.builder != build.KindCompose {
+			// The image is built by a redeploy job after creation; the compose
+			// file only needs to name the tag that job will produce.
+			generated, err := s.sourceImageCompose(req.Name, build.ImageTag(req.Name, f.revision), req.ContainerPort)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to prepare compose for source: " + err.Error()})
+				return
+			}
+			req.ComposeContent = generated
+		}
 	}
+	needsBuild := fetched != nil && fetched.builder != build.KindCompose
 
 	if req.ComposeContent == "" {
 		generated, err := s.generateDeploymentCompose(req.Name, req.Image, req.TemplateID, req.ContainerPort, req.MapPorts, req.HostPort, req.Ports)
@@ -1350,6 +1441,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 			_ = s.authManager.AssignDeployment(actor.User.ID, req.Name, auth.AccessLevelAdmin, actor.User.ID)
 		}
 	}
+	s.assignDeploymentWorkspace(ownerWorkspace, req.Name)
 
 	var dbEnvVars []EnvVar
 	var databaseConfigs []models.DatabaseConfig
@@ -1392,7 +1484,8 @@ func (s *Server) createDeployment(c *gin.Context) {
 	}
 
 	allEnvVars := append(req.EnvVars, dbEnvVars...)
-	if len(allEnvVars) > 0 {
+	// A built image's compose file always loads .env.flatrun, so it must exist.
+	if len(allEnvVars) > 0 || needsBuild {
 		if err := s.writeEnvFile(req.Name, allEnvVars); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "Deployment created but failed to write .env file: " + err.Error(),
@@ -1510,9 +1603,17 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 	}
 
+	if fetched != nil {
+		cfg := req.Source.sourceConfig(fetched.revision)
+		cfg.Builder = string(fetched.builder)
+		if err := s.recordDeploymentSource(req.Name, cfg); err != nil {
+			log.Printf("Warning: failed to record source for %s: %v", req.Name, err)
+		}
+	}
+
 	var startOutput string
 	var startError string
-	if req.AutoStart {
+	if req.AutoStart && !needsBuild {
 		var credIDs []string
 		if credentialID != "" {
 			credIDs = append(credIDs, credentialID)
@@ -1572,9 +1673,16 @@ func (s *Server) createDeployment(c *gin.Context) {
 		}
 	}
 
+	var buildJobID string
+	if needsBuild && req.AutoStart {
+		job, _ := s.startDeploymentJob(req.Name, "redeploy", actionOptions{Revision: fetched.revision})
+		buildJobID = job.ID()
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message":              "Deployment created",
 		"name":                 req.Name,
+		"build_job_id":         buildJobID,
 		"proxy_result":         proxyResult,
 		"auto_started":         req.AutoStart,
 		"start_output":         startOutput,
@@ -1812,6 +1920,11 @@ func (s *Server) generateDatabaseEnvVars(prefix string, host string, port int, d
 func (s *Server) writeEnvFile(deploymentName string, envVars []EnvVar) error {
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, deploymentName)
 
+	envVars, err := s.resolveEnvVars(deploymentName, envVars)
+	if err != nil {
+		return err
+	}
+
 	var content strings.Builder
 	for _, env := range envVars {
 		if env.Key != "" {
@@ -1905,6 +2018,9 @@ func (s *Server) getDeploymentEnv(c *gin.Context) {
 	files := make([]environmentFile, 0, len(paths))
 	var principalVars []EnvVar
 	for _, envPath := range paths {
+		if filepath.Base(envPath) == envReferencesFile {
+			continue
+		}
 		info, statErr := os.Stat(envPath)
 		if statErr != nil || !info.Mode().IsRegular() {
 			continue
@@ -1916,11 +2032,38 @@ func (s *Server) getDeploymentEnv(c *gin.Context) {
 		}
 		file := environmentFile{Path: filepath.Base(envPath), Principal: filepath.Base(envPath) == principal, EnvVars: parseEnvContent(string(content))}
 		if file.Principal {
-			principalVars = file.EnvVars
+			principalVars = append([]EnvVar(nil), file.EnvVars...)
 		}
 		files = append(files, file)
 	}
-	c.JSON(http.StatusOK, gin.H{"env_vars": principalVars, "principal_file": principal, "env_files": files})
+	refs, err := s.readEnvReferences(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resolved := make(map[string]string, len(refs))
+	for i, env := range principalVars {
+		if ref, ok := refs[env.Key]; ok {
+			resolved[env.Key] = env.Value
+			principalVars[i] = EnvVar{Key: env.Key, Value: ref}
+		}
+	}
+	// A reference can pull in a secret or another deployment's variable, so
+	// only actors who could write that reference themselves see its value.
+	actor := auth.GetActorFromContext(c)
+	if actor == nil || !actor.HasPermission(auth.PermDeploymentsWrite) || !actor.CanAccessDeployment(name, auth.AccessLevelWrite) {
+		for k := range resolved {
+			resolved[k] = models.CredentialMask
+		}
+		for i := range files {
+			for j, env := range files[i].EnvVars {
+				if _, ok := refs[env.Key]; ok {
+					files[i].EnvVars[j].Value = models.CredentialMask
+				}
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"env_vars": principalVars, "principal_file": principal, "env_files": files, "resolved": resolved})
 }
 
 func (s *Server) updateDeploymentEnv(c *gin.Context) {
@@ -1946,7 +2089,7 @@ func (s *Server) updateDeploymentEnv(c *gin.Context) {
 	}
 
 	if err := s.writeEnvFile(name, req.EnvVars); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(envWriteStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -2012,18 +2155,30 @@ func (s *Server) patchDeploymentEnv(c *gin.Context) {
 		return
 	}
 	if err := s.writeEnvFile(name, merged); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(envWriteStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Environment variables updated", "env_vars": merged})
 }
 
+// readPrincipalEnv returns a deployment's variables as written, with any
+// reference shown in its unresolved form.
 func (s *Server) readPrincipalEnv(name string) ([]EnvVar, error) {
 	deploymentPath := filepath.Join(s.config.DeploymentsPath, name)
+	refs, err := s.readEnvReferences(name)
+	if err != nil {
+		return nil, err
+	}
 	for _, filename := range []string{".env", ".env.flatrun"} {
 		content, err := os.ReadFile(filepath.Join(deploymentPath, filename))
 		if err == nil {
-			return parseEnvContent(string(content)), nil
+			vars := parseEnvContent(string(content))
+			for i := range vars {
+				if ref, ok := refs[vars[i].Key]; ok {
+					vars[i].Value = ref
+				}
+			}
+			return vars, nil
 		}
 		if !os.IsNotExist(err) {
 			return nil, err
@@ -2424,11 +2579,24 @@ func (s *Server) rebuildDeployment(c *gin.Context) {
 // returns its id immediately. A second action while one is in flight for the
 // same deployment is rejected with the active job's id.
 func (s *Server) enqueueDeploymentAction(c *gin.Context, action string) {
-	name := c.Param("name")
-
 	// The options body is optional; an empty or non-JSON body simply means no flags.
 	var opts actionOptions
 	_ = c.ShouldBindJSON(&opts)
+	s.enqueueDeploymentActionWith(c, action, opts)
+}
+
+// startDeploymentJob launches an action job outside a request, for callers such
+// as webhooks. It reports false with the active job when one is already running.
+func (s *Server) startDeploymentJob(name, action string, opts actionOptions) (*ActionJob, bool) {
+	job, created := s.jobs.create(name, action, opts)
+	if created {
+		go s.runActionJob(job)
+	}
+	return job, created
+}
+
+func (s *Server) enqueueDeploymentActionWith(c *gin.Context, action string, opts actionOptions) {
+	name := c.Param("name")
 
 	job, created := s.jobs.create(name, action, opts)
 	if !created {
@@ -2451,8 +2619,18 @@ func (s *Server) enqueueDeploymentAction(c *gin.Context, action string) {
 
 func (s *Server) runActionJob(job *ActionJob) {
 	job.setRunning()
-	err := s.runDeploymentAction(job.action, job.deployment, job.opts, job.appendLine)
+	emit, opts, finishRecord := job.appendLine, job.opts, func(error) {}
+	if recordedActions[job.action] && job.service == "" && s.deploysStore != nil {
+		emit, opts, finishRecord = s.recordDeploy(job)
+	}
+	err := s.runDeploymentAction(job.action, job.deployment, opts, emit)
+	finishRecord(err)
 	if err != nil {
+		if job.opts.putToSleep {
+			if wakeErr := s.setSleeping(job.deployment, false); wakeErr != nil {
+				log.Printf("Warning: failed to clear sleep on %s after its stop failed: %v", job.deployment, wakeErr)
+			}
+		}
 		s.jobs.finish(job, JobFailed, err.Error())
 		return
 	}
@@ -2466,6 +2644,15 @@ type actionOptions struct {
 	ForceRecreate bool `json:"force_recreate"`
 	NoCache       bool `json:"no_cache"`
 	FreshPull     bool `json:"fresh_pull"`
+	// Revision pins a redeploy to one commit of the deployment's source.
+	Revision string `json:"revision,omitempty"`
+	// Trigger records what started the action; set by the agent, never the body.
+	Trigger string `json:"-"`
+	// progress receives a recorded deploy's phase and fetched commit.
+	progress *deployProgress
+	// putToSleep marks a stop started by the idle sweep. If the stop fails the
+	// deployment is still running, so it is no longer marked sleeping.
+	putToSleep bool
 }
 
 func (o actionOptions) runOptions() []docker.RunOption {
@@ -2491,6 +2678,12 @@ func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionO
 	opts = append(opts, docker.WithLineSink(emit), docker.WithContext(ctx))
 	opts = append(opts, actOpts.runOptions()...)
 
+	if action != "stop" {
+		if err := s.refreshEnvReferences(name); err != nil {
+			emit("Warning: could not refresh variable references: " + err.Error())
+		}
+	}
+
 	var err error
 	switch action {
 	case "start":
@@ -2500,9 +2693,15 @@ func (s *Server) defaultRunDeploymentAction(action, name string, actOpts actionO
 	case "restart":
 		_, err = s.manager.RestartDeployment(name, opts...)
 	case "rebuild":
+		actOpts.progress.phase(deploys.PhaseBuilding)
 		_, err = s.manager.RebuildDeployment(name, opts...)
+	case "redeploy":
+		err = s.redeployFromSource(ctx, name, actOpts, opts, emit)
 	default:
 		err = fmt.Errorf("unsupported deployment action: %s", action)
+	}
+	if err == nil && action != "stop" {
+		s.markAwake(name)
 	}
 	return err
 }
@@ -4044,6 +4243,10 @@ func (s *Server) createPluginDeployment(c *gin.Context) {
 		})
 		return
 	}
+	ownerWorkspace, ok := s.creationWorkspace(c)
+	if !ok {
+		return
+	}
 
 	result, err := deploymentPlugin.CreateDeployment(req.Name, req.Config)
 	if err != nil {
@@ -4059,6 +4262,7 @@ func (s *Server) createPluginDeployment(c *gin.Context) {
 			_ = s.authManager.AssignDeployment(actor.User.ID, req.Name, auth.AccessLevelAdmin, actor.User.ID)
 		}
 	}
+	s.assignDeploymentWorkspace(ownerWorkspace, req.Name)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":    "Deployment created",
@@ -4941,6 +5145,9 @@ func (s *Server) validateNewComposeContent(content, name string, envVars []EnvVa
 			return fmt.Errorf("create compose validation directory: %w", err)
 		}
 		defer os.RemoveAll(dir)
+		if err := stubEnvFiles(content, dir); err != nil {
+			return err
+		}
 	}
 
 	if len(envVars) > 0 {
@@ -4955,6 +5162,59 @@ func (s *Server) validateNewComposeContent(content, name string, envVars []EnvVa
 		}
 	}
 	return s.validateComposeContentIn(content, name, dir)
+}
+
+// stubEnvFiles creates an empty file in dir for each relative env_file the
+// compose names. A new project's env files are added after it is created, so
+// validation checks the compose and leaves a missing file for start-up to report.
+func stubEnvFiles(content, dir string) error {
+	var compose struct {
+		Services map[string]struct {
+			EnvFile any `yaml:"env_file"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return nil
+	}
+	for _, svc := range compose.Services {
+		for _, ref := range envFilePaths(svc.EnvFile) {
+			if filepath.IsAbs(ref) {
+				continue
+			}
+			path := filepath.Join(dir, ref)
+			if !strings.HasPrefix(path, dir+string(filepath.Separator)) {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return fmt.Errorf("prepare env file %s: %w", ref, err)
+			}
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				return fmt.Errorf("prepare env file %s: %w", ref, err)
+			}
+		}
+	}
+	return nil
+}
+
+func envFilePaths(v any) []string {
+	switch t := v.(type) {
+	case string:
+		return []string{t}
+	case []any:
+		var out []string
+		for _, item := range t {
+			switch e := item.(type) {
+			case string:
+				out = append(out, e)
+			case map[string]any:
+				if p, ok := e["path"].(string); ok {
+					out = append(out, p)
+				}
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func (s *Server) validateComposeContentIn(content, name, workingDir string) error {
@@ -6174,13 +6434,13 @@ func (s *Server) setupProxyWithRetry(deployment *models.Deployment, maxRetries i
 
 func (s *Server) listDeploymentServices(c *gin.Context) {
 	name := c.Param("name")
-	services, err := s.manager.GetComposeServices(name)
+	deployment, err := s.manager.GetDeployment(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
 		return
 	}
-
-	if deployment, err := s.manager.GetDeployment(name); err == nil && deployment.Metadata != nil {
+	services := deployment.Services
+	if deployment.Metadata != nil {
 		primary := deployment.Metadata.EffectivePrimaryService()
 		for i := range services {
 			services[i].IsPrimary = primary != "" && services[i].Name == primary
@@ -8139,4 +8399,11 @@ func (s *Server) requireWriteForMethods(permission auth.Permission, methods ...s
 		}
 		c.Next()
 	}
+}
+
+func envWriteStatus(err error) int {
+	if isEnvReferenceError(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }

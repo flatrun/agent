@@ -2,12 +2,19 @@ package api
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/flatrun/agent/internal/build"
+	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/source"
+	"github.com/flatrun/agent/pkg/config"
+	"github.com/gin-gonic/gin"
 )
 
 func gitRepoWithCompose(t *testing.T) string {
@@ -52,7 +59,7 @@ func TestResolveSourceAuth(t *testing.T) {
 }
 
 func TestFetchDeploymentSource_UnknownType(t *testing.T) {
-	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{})}
+	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{}), builders: build.DefaultRegistry()}
 
 	_, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{Type: "svn", Ref: "x"})
 	if err == nil {
@@ -62,7 +69,7 @@ func TestFetchDeploymentSource_UnknownType(t *testing.T) {
 
 func TestFetchDeploymentSource_Git(t *testing.T) {
 	repo := gitRepoWithCompose(t)
-	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{})}
+	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{}), builders: build.DefaultRegistry()}
 
 	fetched, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{
 		Type:   "git",
@@ -82,8 +89,8 @@ func TestFetchDeploymentSource_Git(t *testing.T) {
 	}
 }
 
-func TestFetchDeploymentSource_NoCompose(t *testing.T) {
-	// A repo with no compose file must be rejected, not deployed empty.
+func TestFetchDeploymentSource_NoComposeIsBuilt(t *testing.T) {
+	// A repo with no compose file and no Dockerfile is built with Railpack.
 	dir := t.TempDir()
 	run := func(args ...string) {
 		cmd := exec.Command("git", args...)
@@ -103,11 +110,50 @@ func TestFetchDeploymentSource_NoCompose(t *testing.T) {
 	run("add", "-A")
 	run("commit", "-m", "init")
 
-	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{})}
-	_, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{
+	s := &Server{sourceRegistry: source.NewRegistry(source.GitProvider{}), builders: build.DefaultRegistry()}
+	fetched, err := s.fetchDeploymentSource(context.Background(), &deploymentSource{
 		Type: "git", Ref: "file://" + dir, Branch: "main",
 	})
-	if err == nil {
-		t.Fatal("expected an error when the source has no compose file")
+	if err != nil {
+		t.Fatalf("fetch without compose: %v", err)
+	}
+	defer fetched.cleanup()
+	if fetched.builder != build.KindRailpack || fetched.composeContent != "" {
+		t.Errorf("builder = %q, compose = %q; want railpack and no compose", fetched.builder, fetched.composeContent)
+	}
+}
+
+func TestCreateDeploymentFromGit_RecordsSource(t *testing.T) {
+	repo := gitRepoWithCompose(t)
+	base := t.TempDir()
+	s := &Server{
+		config:         &config.Config{Infrastructure: config.InfrastructureConfig{DefaultProxyNetwork: "proxy"}},
+		manager:        docker.NewManager(base),
+		sourceRegistry: source.NewRegistry(source.GitProvider{}),
+		builders:       build.DefaultRegistry(),
+	}
+	router := gin.New()
+	router.POST("/deployments", s.createDeployment)
+
+	body := `{"name":"gitapp","source":{"type":"git","ref":"file://` + repo + `","branch":"main","auto_deploy":true}}`
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/deployments", strings.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	deployment, err := s.manager.GetDeployment("gitapp")
+	if err != nil {
+		t.Fatalf("GetDeployment: %v", err)
+	}
+	src := deployment.Metadata.Source
+	if src == nil {
+		t.Fatal("source was not recorded on the deployment")
+	}
+	if src.Ref != "file://"+repo || src.Branch != "main" || !src.AutoDeploy {
+		t.Errorf("recorded source = %+v", src)
+	}
+	if len(src.LastRevision) != 40 {
+		t.Errorf("last revision = %q, want a full commit sha", src.LastRevision)
 	}
 }

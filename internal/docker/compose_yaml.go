@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -253,22 +254,63 @@ func ContainerNameForService(content, deploymentName, service string) string {
 		if cn, ok := svc["container_name"].(string); ok && cn != "" {
 			return cn
 		}
+		if replicated(svc) {
+			return service
+		}
 	}
 
-	var primaryService string
-	for name := range services {
-		if name == "app" {
-			primaryService = "app"
-			break
-		}
-		if primaryService == "" {
-			primaryService = name
-		}
-	}
+	primaryService := primaryServiceName(services)
 	if service == primaryService {
 		return deploymentName
 	}
 	return scoped
+}
+
+// primaryServiceName picks the service that is named after the deployment:
+// "app" when there is one, otherwise the first name in sorted order, so the
+// choice is the same on every deploy. Replicated services cannot be named.
+func primaryServiceName(services map[string]interface{}) string {
+	names := make([]string, 0, len(services))
+	for name, raw := range services {
+		if svc, ok := raw.(map[string]interface{}); ok && replicated(svc) {
+			continue
+		}
+		if name == "app" {
+			return name
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return names[0]
+}
+
+// replicated reports whether a service asks for more than one container.
+// Compose refuses a fixed container_name on such a service, and its replicas
+// are reached through the service name instead.
+func replicated(service map[string]interface{}) bool {
+	count := func(v interface{}) int {
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		}
+		return 1
+	}
+	if deploy, ok := service["deploy"].(map[string]interface{}); ok {
+		if r, ok := deploy["replicas"]; ok {
+			return count(r) > 1
+		}
+	}
+	if s, ok := service["scale"]; ok {
+		return count(s) > 1
+	}
+	return false
 }
 
 // EnsureContainerNames ensures all services have explicit container_name set.
@@ -290,17 +332,7 @@ func EnsureContainerNames(content string, deploymentName string) (string, error)
 		return content, nil
 	}
 
-	// Find the primary service (prefer "app" if exists, otherwise take first)
-	var primaryService string
-	for name := range services {
-		if name == "app" {
-			primaryService = "app"
-			break
-		}
-		if primaryService == "" {
-			primaryService = name
-		}
-	}
+	primaryService := primaryServiceName(services)
 
 	for name := range services {
 		service, ok := services[name].(map[string]interface{})
@@ -309,6 +341,9 @@ func EnsureContainerNames(content string, deploymentName string) (string, error)
 		}
 
 		if _, hasContainerName := service["container_name"]; hasContainerName {
+			continue
+		}
+		if replicated(service) {
 			continue
 		}
 
@@ -585,4 +620,112 @@ func addNetworkToComposeServices(content string, networkName string, selected ma
 	}
 
 	return strings.TrimSpace(string(result)), nil
+}
+
+// CarryExternalNetworks re-attaches the external networks that services in prev
+// joined to the same-named services in next. A refetched compose file lacks the
+// proxy and database networks the agent added when the deployment was created.
+func CarryExternalNetworks(prev, next string) (string, error) {
+	compose, err := ParseComposeYAML(prev)
+	if err != nil {
+		return next, err
+	}
+	external := make(map[string]bool)
+	if networks, ok := compose["networks"].(map[string]interface{}); ok {
+		for name, def := range networks {
+			if spec, ok := def.(map[string]interface{}); ok && spec["external"] == true {
+				external[name] = true
+			}
+		}
+	}
+	if len(external) == 0 {
+		return next, nil
+	}
+
+	nextCompose, err := ParseComposeYAML(next)
+	if err != nil {
+		return next, err
+	}
+	nextServices, _ := nextCompose["services"].(map[string]interface{})
+
+	services, _ := compose["services"].(map[string]interface{})
+	result := next
+	for serviceName, serviceData := range services {
+		if _, ok := nextServices[serviceName]; !ok {
+			continue
+		}
+		service, ok := serviceData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		var joined []string
+		switch n := service["networks"].(type) {
+		case []interface{}:
+			for _, net := range n {
+				if s, ok := net.(string); ok {
+					joined = append(joined, s)
+				}
+			}
+		case map[string]interface{}:
+			for net := range n {
+				joined = append(joined, net)
+			}
+		}
+		for _, net := range joined {
+			if !external[net] {
+				continue
+			}
+			if result, err = AddNetworkToComposeService(result, net, serviceName); err != nil {
+				return next, err
+			}
+		}
+	}
+	return result, nil
+}
+
+// SetServiceImage points one service at a different image.
+func SetServiceImage(content, serviceName, image string) (string, error) {
+	return updateService(content, serviceName, func(service map[string]interface{}) {
+		service["image"] = image
+	})
+}
+
+// SetServiceEnv sets one environment variable on a service, accepting both the
+// list and the map form of the environment key.
+func SetServiceEnv(content, serviceName, key, value string) (string, error) {
+	return updateService(content, serviceName, func(service map[string]interface{}) {
+		switch env := service["environment"].(type) {
+		case map[string]interface{}:
+			env[key] = value
+		case []interface{}:
+			kept := make([]interface{}, 0, len(env)+1)
+			for _, entry := range env {
+				if s, ok := entry.(string); ok && (s == key || strings.HasPrefix(s, key+"=")) {
+					continue
+				}
+				kept = append(kept, entry)
+			}
+			service["environment"] = append(kept, key+"="+value)
+		default:
+			service["environment"] = map[string]interface{}{key: value}
+		}
+	})
+}
+
+func updateService(content, serviceName string, mutate func(map[string]interface{})) (string, error) {
+	compose, err := ParseComposeYAML(content)
+	if err != nil {
+		return content, err
+	}
+	services, _ := compose["services"].(map[string]interface{})
+	service, ok := services[serviceName].(map[string]interface{})
+	if !ok {
+		return content, fmt.Errorf("service %q not found in compose", serviceName)
+	}
+	mutate(service)
+	result, err := MarshalComposeYAML(compose)
+	if err != nil {
+		return content, err
+	}
+	return strings.TrimSpace(string(result)) + "\n", nil
 }

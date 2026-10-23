@@ -595,6 +595,7 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 
 	data := templateData{
 		DeploymentName:       deployment.Name,
+		SleepEnabled:         sleepEnabled(deployment.Metadata),
 		Domain:               net.Domain,
 		ContainerPort:        net.ContainerPort,
 		Protocol:             net.Protocol,
@@ -627,9 +628,9 @@ func (m *Manager) generateConfig(deployment *models.Deployment) (string, error) 
 	var err error
 
 	if data.SSLEnabled {
-		tmpl, err = template.New("nginx").Parse(sslTemplate)
+		tmpl, err = template.New("nginx").Parse(sleepTemplates + sslTemplate)
 	} else {
-		tmpl, err = template.New("nginx").Parse(httpTemplate)
+		tmpl, err = template.New("nginx").Parse(sleepTemplates + httpTemplate)
 	}
 
 	if err != nil {
@@ -692,6 +693,7 @@ func (m *Manager) renderMultiDomainConfigWithBackends(deployment *models.Deploym
 
 	data := multiRouteTemplateData{
 		DeploymentName:       deployment.Name,
+		SleepEnabled:         sleepEnabled(deployment.Metadata),
 		ContainerWebrootPath: m.containerWebrootPath,
 		SecurityEnabled:      securityEnabled,
 		BlockedIPs:           blockedIPs,
@@ -954,6 +956,7 @@ const defaultProxyTimeout = 60
 
 type templateData struct {
 	DeploymentName       string
+	SleepEnabled         bool
 	Domain               string
 	ContainerPort        int
 	Protocol             string
@@ -970,6 +973,7 @@ type templateData struct {
 
 type multiRouteTemplateData struct {
 	DeploymentName       string
+	SleepEnabled         bool
 	ContainerWebrootPath string
 	SecurityEnabled      bool
 	BlockedIPs           []string
@@ -1030,6 +1034,7 @@ const httpTemplate = `server {
 {{- range .BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "sleepWake" $}}
 
     location / {
         set $upstream {{.DeploymentName}}:{{.ContainerPort}};
@@ -1103,6 +1108,7 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/{{.Domain}}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{.Domain}}/privkey.pem;
+{{template "sleepWake" $}}
 
     location /.well-known/acme-challenge/ {
         root {{.ContainerWebrootPath}};
@@ -1196,7 +1202,21 @@ upstream {{.Name}} {
 {{end -}}
 `
 
-const accessTemplates = `{{define "accessPortal"}}{{if .HasAccess}}
+// sleepTemplates sends requests that find a sleeping deployment's containers
+// gone (nginx answers 502 when the upstream name no longer resolves) to the
+// agent, which starts the deployment and serves a waiting page.
+const sleepTemplates = `{{define "sleepWake"}}{{if .SleepEnabled}}
+    error_page 502 503 504 = @flatrun_wake;
+
+    location @flatrun_wake {
+        rewrite ^ /api/hooks/wake/{{.DeploymentName}} break;
+        proxy_pass http://host.docker.internal:8090;
+        proxy_set_header X-Original-Host $host;
+        proxy_set_header X-Original-URI $request_uri;
+    }
+{{end}}{{end}}`
+
+const accessTemplates = sleepTemplates + `{{define "accessPortal"}}{{if .HasAccess}}
 
     location = /_flatrun/access/check {
         internal;
@@ -1233,6 +1253,7 @@ server {
     deny {{.}};
 {{- end}}
 {{template "accessPortal" .}}
+{{template "sleepWake" $}}
 {{- range .Locations}}
 
     location {{.Path}} {
@@ -1335,6 +1356,7 @@ server {
     deny {{.}};
 {{- end}}
 {{template "accessPortal" .}}
+{{template "sleepWake" $}}
 {{- range .Locations}}
 
     location {{.Path}} {
@@ -1426,6 +1448,7 @@ server {
     deny {{.}};
 {{- end}}
 {{template "accessPortal" .}}
+{{template "sleepWake" $}}
 {{- range .Locations}}
 
     location {{.Path}} {
@@ -1483,6 +1506,7 @@ server {
     deny {{.}};
 {{- end}}
 {{template "accessPortal" .}}
+{{template "sleepWake" $}}
 {{- range .Locations}}
 
     location {{.Path}} {
@@ -1746,4 +1770,8 @@ func (m *Manager) GetSecurityHookStatus(deploymentName string) (*SecurityHookSta
 	status.ProperlyConfigured = status.HasHooks && len(status.HookLocations) > 0
 
 	return status, nil
+}
+
+func sleepEnabled(meta *models.ServiceMetadata) bool {
+	return meta != nil && meta.Sleep != nil && meta.Sleep.Enabled
 }

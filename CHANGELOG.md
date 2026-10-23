@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+- Project paths for every deployment endpoint; the deployment paths keep working
+- A project's deploy history under its deployments path
+- Workspace logos; one Default workspace per instance that can be renamed
+
+### Fixed
+- The deployment list reports each service's state and running replicas
+
+### Upgrading
+- Existing projects, containers, compose and env files are left as they are; projects join the Default workspace on first start
+- Saved credentials are encrypted on first start with a key in `.flatrun/secrets.key`; back up `.flatrun/` before upgrading if you may need to return to beta.11
+
 ## [0.4.0-beta.11] - 2026-10-09
 
 ### Fixed

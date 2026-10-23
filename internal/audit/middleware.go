@@ -22,6 +22,16 @@ func NewMiddleware(manager *Manager) *Middleware {
 }
 
 func (m *Middleware) Capture() gin.HandlerFunc {
+	return m.capture(true)
+}
+
+// CaptureWithoutBody records requests but never their bodies, for routes whose
+// bodies carry values the body redaction does not recognise.
+func (m *Middleware) CaptureWithoutBody() gin.HandlerFunc {
+	return m.capture(false)
+}
+
+func (m *Middleware) capture(withBody bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !m.manager.IsEnabled() {
 			c.Next()
@@ -38,7 +48,7 @@ func (m *Middleware) Capture() gin.HandlerFunc {
 		c.Set(contextkeys.RequestID, requestID)
 
 		var requestBody string
-		if m.manager.ShouldCaptureBody() && c.Request.Body != nil {
+		if withBody && m.manager.ShouldCaptureBody() && c.Request.Body != nil {
 			bodyBytes, _ := io.ReadAll(c.Request.Body)
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			requestBody = string(bodyBytes)

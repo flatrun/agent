@@ -167,7 +167,7 @@ func TestOpenAPISpecNamesPermissionsAndPathsExactly(t *testing.T) {
 	}
 
 	// The wildcard segment carries the rest of the path, and a caller has to be told about it.
-	files, ok := spec["paths"].(map[string]any)["/api/deployments/{name}/files/{path}"].(map[string]any)
+	files, ok := spec["paths"].(map[string]any)["/api/projects/{name}/files/{path}"].(map[string]any)
 	if !ok {
 		t.Fatal("the file endpoint is missing, so wildcards are not being translated")
 	}

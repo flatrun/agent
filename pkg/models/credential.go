@@ -10,12 +10,21 @@ type CredentialKind string
 const (
 	CredentialKindS3  CredentialKind = "s3"
 	CredentialKindGit CredentialKind = "git"
+	// CredentialKindWebhook holds the secret that authenticates a deployment's
+	// incoming push webhooks.
+	CredentialKindWebhook CredentialKind = "webhook"
+
+	// Connections to external secret managers.
+	CredentialKindInfisical   CredentialKind = "infisical"
+	CredentialKindVault       CredentialKind = "vault"
+	CredentialKindDoppler     CredentialKind = "doppler"
+	CredentialKindOnePassword CredentialKind = "onepassword"
 )
 
 // Credential is a generic, kind-tagged secret held by the credential manager,
 // separate from the registry-specific RegistryCredential. Secret-bearing keys
-// in Data are masked when marshaled to JSON but written verbatim to the 0600
-// on-disk store.
+// in Data are masked when marshaled to JSON, and sealed in the 0600 on-disk
+// store once the credential manager has a sealer.
 type Credential struct {
 	ID        string            `json:"id" yaml:"id"`
 	Name      string            `json:"name" yaml:"name"`
@@ -33,8 +42,14 @@ const CredentialMask = "********"
 // credentialSecretKeys lists the Data keys whose values must never leave the
 // agent in a JSON response, per credential kind.
 var credentialSecretKeys = map[CredentialKind]map[string]bool{
-	CredentialKindS3:  {"secret_access_key": true},
-	CredentialKindGit: {"token": true},
+	CredentialKindS3:      {"secret_access_key": true},
+	CredentialKindGit:     {"token": true},
+	CredentialKindWebhook: {"secret": true},
+
+	CredentialKindInfisical:   {"client_secret": true},
+	CredentialKindVault:       {"token": true},
+	CredentialKindDoppler:     {"token": true},
+	CredentialKindOnePassword: {"token": true},
 }
 
 // IsSecretKey reports whether a Data key holds a secret for the given kind.

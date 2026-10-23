@@ -2,6 +2,7 @@ package traffic
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -501,4 +502,21 @@ func splitString(s, sep string) []string {
 	}
 	result = append(result, s[start:])
 	return result
+}
+
+// LastSeen returns when the deployment last received a logged request, or the
+// zero time when it never has.
+func (db *DB) LastSeen(deploymentName string) (time.Time, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var last time.Time
+	err := db.conn.QueryRow(
+		`SELECT created_at FROM traffic_logs WHERE deployment_name = ? ORDER BY created_at DESC LIMIT 1`,
+		deploymentName,
+	).Scan(&last)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	return last, err
 }

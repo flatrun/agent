@@ -32,6 +32,25 @@ type composeService struct {
 	Expose   []interface{}   `yaml:"expose"`
 	Networks composeNetworks `yaml:"networks"`
 	Volumes  []composeMount  `yaml:"volumes"`
+	Scale    *int            `yaml:"scale"`
+	// depends_on is a list or a map keyed by service, the same two shapes
+	// networks take.
+	DependsOn composeNetworks `yaml:"depends_on"`
+	Deploy    struct {
+		Replicas *int `yaml:"replicas"`
+	} `yaml:"deploy"`
+}
+
+// replicas is the number of containers the service asks for: deploy.replicas,
+// else scale, else one.
+func (s composeService) replicas() int {
+	if s.Deploy.Replicas != nil {
+		return *s.Deploy.Replicas
+	}
+	if s.Scale != nil {
+		return *s.Scale
+	}
+	return 1
 }
 
 type composeNetworks []string
@@ -54,28 +73,52 @@ func (n *composeNetworks) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// composeMount is one entry of a service's volumes. Source and Target are set
+// only for bind mounts; Mount describes every entry.
 type composeMount struct {
 	Source string
 	Target string
+	Mount  models.ServiceMount
+}
+
+func mountType(source string) string {
+	if source == "" || strings.HasPrefix(source, ".") || strings.HasPrefix(source, "/") || strings.HasPrefix(source, "~") || strings.HasPrefix(source, "$") {
+		return "bind"
+	}
+	return "volume"
 }
 
 func (m *composeMount) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		parts := strings.Split(node.Value, ":")
 		if len(parts) >= 2 {
-			m.Source = parts[0]
-			m.Target = parts[1]
+			m.Mount = models.ServiceMount{Type: mountType(parts[0]), Source: parts[0], Target: parts[1]}
+			if len(parts) >= 3 && strings.Contains(parts[2], "ro") {
+				m.Mount.ReadOnly = true
+			}
+			if m.Mount.Type == "bind" {
+				m.Source = parts[0]
+				m.Target = parts[1]
+			}
+		} else if len(parts) == 1 {
+			m.Mount = models.ServiceMount{Type: "volume", Target: parts[0]}
 		}
 		return nil
 	}
 	var value struct {
-		Type   string `yaml:"type"`
-		Source string `yaml:"source"`
-		Target string `yaml:"target"`
+		Type     string `yaml:"type"`
+		Source   string `yaml:"source"`
+		Target   string `yaml:"target"`
+		ReadOnly bool   `yaml:"read_only"`
 	}
 	if err := node.Decode(&value); err != nil {
 		return err
 	}
+	typ := value.Type
+	if typ == "" {
+		typ = mountType(value.Source)
+	}
+	m.Mount = models.ServiceMount{Type: typ, Source: value.Source, Target: value.Target, ReadOnly: value.ReadOnly}
 	if value.Type == "" || value.Type == "bind" {
 		m.Source = value.Source
 		m.Target = value.Target
@@ -138,6 +181,7 @@ func (d *Discovery) findDeploymentsWithFilter(infraOnly bool) ([]models.Deployme
 		}
 
 		if services, err := d.parseComposeServices(composePath); err == nil {
+			models.ApplyServiceDomains(services, deployment.Metadata)
 			deployment.Services = services
 		}
 
@@ -183,6 +227,7 @@ func (d *Discovery) GetDeployment(name string) (*models.Deployment, error) {
 	deployment.Metadata = metadata
 
 	if services, err := d.parseComposeServices(composePath); err == nil {
+		models.ApplyServiceDomains(services, deployment.Metadata)
 		deployment.Services = services
 	}
 
@@ -245,6 +290,16 @@ func (d *Discovery) parseComposeServices(composePath string) ([]models.Service, 
 			Image:    svc.Image,
 			Status:   "unknown",
 			Networks: []string(svc.Networks),
+			Replicas: svc.replicas(),
+		}
+		if len(svc.DependsOn) > 0 {
+			service.DependsOn = append([]string(nil), svc.DependsOn...)
+			sort.Strings(service.DependsOn)
+		}
+		for _, v := range svc.Volumes {
+			if v.Mount.Target != "" {
+				service.Mounts = append(service.Mounts, v.Mount)
+			}
 		}
 
 		for _, p := range svc.Ports {
@@ -262,6 +317,7 @@ func (d *Discovery) parseComposeServices(composePath string) ([]models.Service, 
 
 		services = append(services, service)
 	}
+	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 
 	return services, nil
 }
@@ -911,4 +967,65 @@ func (d *Discovery) extractContainerPort(portStr string) int {
 		return 0
 	}
 	return port
+}
+
+// SyncSourceTree copies a refetched source tree over an existing deployment.
+// Files are added or overwritten, never deleted. Environment files, service
+// metadata, compose files and bind-mounted paths are left untouched so local
+// state and data survive a redeploy.
+func (d *Discovery) SyncSourceTree(name, srcDir string) error {
+	dirPath := filepath.Join(d.basePath, name)
+	var protected []string
+	if composePath := d.findComposeFile(dirPath); composePath != "" {
+		if data, err := os.ReadFile(composePath); err == nil {
+			for _, hostPath := range ExtractBindMounts(string(data)) {
+				protected = append(protected, filepath.Clean(hostPath))
+			}
+		}
+	}
+
+	srcCompose := FindComposeFile(srcDir)
+	skip := func(rel string) bool {
+		top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
+		if strings.HasPrefix(top, ".env") || top == "service.yml" || top == ".flatrun" {
+			return true
+		}
+		if filepath.Join(srcDir, rel) == srcCompose {
+			return true
+		}
+		for _, p := range protected {
+			if rel == p || strings.HasPrefix(rel, p+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		if skip(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		target := filepath.Join(dirPath, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm()|0700)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
 }
