@@ -5118,6 +5118,9 @@ func (s *Server) validateNewComposeContent(content, name string, envVars []EnvVa
 			return fmt.Errorf("create compose validation directory: %w", err)
 		}
 		defer os.RemoveAll(dir)
+		if err := stubEnvFiles(content, dir); err != nil {
+			return err
+		}
 	}
 
 	if len(envVars) > 0 {
@@ -5132,6 +5135,59 @@ func (s *Server) validateNewComposeContent(content, name string, envVars []EnvVa
 		}
 	}
 	return s.validateComposeContentIn(content, name, dir)
+}
+
+// stubEnvFiles creates an empty file in dir for each relative env_file the
+// compose names. A new project's env files are added after it is created, so
+// validation checks the compose and leaves a missing file for start-up to report.
+func stubEnvFiles(content, dir string) error {
+	var compose struct {
+		Services map[string]struct {
+			EnvFile any `yaml:"env_file"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		return nil
+	}
+	for _, svc := range compose.Services {
+		for _, ref := range envFilePaths(svc.EnvFile) {
+			if filepath.IsAbs(ref) {
+				continue
+			}
+			path := filepath.Join(dir, ref)
+			if !strings.HasPrefix(path, dir+string(filepath.Separator)) {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return fmt.Errorf("prepare env file %s: %w", ref, err)
+			}
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				return fmt.Errorf("prepare env file %s: %w", ref, err)
+			}
+		}
+	}
+	return nil
+}
+
+func envFilePaths(v any) []string {
+	switch t := v.(type) {
+	case string:
+		return []string{t}
+	case []any:
+		var out []string
+		for _, item := range t {
+			switch e := item.(type) {
+			case string:
+				out = append(out, e)
+			case map[string]any:
+				if p, ok := e["path"].(string); ok {
+					out = append(out, p)
+				}
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func (s *Server) validateComposeContentIn(content, name, workingDir string) error {
