@@ -1,10 +1,6 @@
 <p align="center">
-  <a href="https://flatrun.dev">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://flatrun.dev/flatrun-logo-white.svg">
-      <img src="https://flatrun.dev/flatrun-logo.svg" alt="FlatRun" width="360">
-    </picture>
-  </a>
+  <a href="https://flatrun.dev#gh-light-mode-only"><img src="docs/assets/flatrun-logo.svg" alt="FlatRun" width="360"></a>
+  <a href="https://flatrun.dev#gh-dark-mode-only"><img src="docs/assets/flatrun-logo-white.svg" alt="FlatRun" width="360"></a>
 </p>
 
 <p align="center">
@@ -17,10 +13,8 @@ FlatRun 把 Railway 的工作方式带到你掌控的服务器上：由服务组
 
 从一台服务器开始。在需要时连接更多服务器，并通过 Docker Swarm 或 k3s 扩展符合条件的服务。
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-architecture-dark.png">
-  <img alt="以图的形式展示一个项目的服务" src="docs/screenshots/project-architecture-light.png">
-</picture>
+![以图的形式展示一个项目的服务](docs/screenshots/project-architecture-light.png#gh-light-mode-only)
+![以图的形式展示一个项目的服务](docs/screenshots/project-architecture-dark.png#gh-dark-mode-only)
 
 ## 部署第一个应用
 
