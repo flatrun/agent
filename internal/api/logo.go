@@ -43,8 +43,7 @@ func logoContentType(data []byte) string {
 	if _, ok := logoExtensions[detected]; ok {
 		return detected
 	}
-	head := bytes.TrimSpace(data[:min(len(data), 512)])
-	if bytes.HasPrefix(head, []byte("<svg")) || (bytes.HasPrefix(head, []byte("<?xml")) && bytes.Contains(head, []byte("<svg"))) {
+	if bytes.Contains(data[:min(len(data), 512)], []byte("<svg")) {
 		return "image/svg+xml"
 	}
 	return ""
@@ -73,18 +72,43 @@ func saveLogo(c *gin.Context, dir string) bool {
 		c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "a logo must be PNG, WebP or SVG"})
 		return false
 	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return false
-	}
-	for _, ext := range logoExtensions {
-		_ = os.Remove(filepath.Join(dir, "logo"+ext))
-	}
-	if err := os.WriteFile(filepath.Join(dir, "logo"+logoExtensions[contentType]), data, 0644); err != nil {
+	if err := writeLogo(dir, logoExtensions[contentType], data); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return false
 	}
 	return true
+}
+
+// writeLogo replaces the logo only once the new file is complete, so a failed write keeps the
+// old one.
+func writeLogo(dir, ext string, data []byte) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "logo-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), filepath.Join(dir, "logo"+ext)); err != nil {
+		return err
+	}
+	for _, other := range logoExtensions {
+		if other != ext {
+			_ = os.Remove(filepath.Join(dir, "logo"+other))
+		}
+	}
+	return nil
 }
 
 func serveLogo(c *gin.Context, dir, missing string) {
@@ -98,13 +122,18 @@ func serveLogo(c *gin.Context, dir, missing string) {
 
 // serveLogoFile sends an image only when it is one a logo may be.
 func serveLogoFile(c *gin.Context, path string) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxLogoBytes {
+		c.JSON(http.StatusNotFound, gin.H{"error": "logo not found"})
+		return
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "logo not found"})
 		return
 	}
 	contentType := logoContentType(data)
-	if contentType == "" || len(data) > maxLogoBytes {
+	if contentType == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "logo not found"})
 		return
 	}

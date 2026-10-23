@@ -46,6 +46,18 @@ func TestProjectLogo(t *testing.T) {
 		t.Fatalf("logo not stored with the project: %v", err)
 	}
 
+	commented := []byte("<!-- exported -->\n<!DOCTYPE svg>\n<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 4 4\"/>")
+	if status := uploadLogo(t, admin, "/projects/shop/logo", commented); status != http.StatusOK {
+		t.Fatalf("SVG starting with a comment = %d", status)
+	}
+	stored, _ := filepath.Glob(filepath.Join(s.manager.BasePath(), "shop", ".flatrun", "logo*"))
+	if len(stored) != 1 || filepath.Base(stored[0]) != "logo.svg" {
+		t.Fatalf("files after replacing the logo = %v", stored)
+	}
+	if status := uploadLogo(t, admin, "/projects/shop/logo", logo); status != http.StatusOK {
+		t.Fatalf("upload = %d", status)
+	}
+
 	status, body := admin.do(http.MethodGet, "/projects", "", nil)
 	items, _ := body["items"].([]any)
 	if status != http.StatusOK || len(items) != 1 || items[0].(map[string]any)["logo_version"] == nil {
@@ -145,6 +157,15 @@ func TestTemplateLogo(t *testing.T) {
 	status, contentType, data := fetchLogo(t, anonymous, "/templates/trakli/logo")
 	if status != http.StatusOK || contentType != "image/svg+xml" || !bytes.Equal(data, logo) {
 		t.Fatalf("template logo = %d %s %q", status, contentType, data)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "logo.svg"), append(logo, make([]byte, 600<<10)...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if status, _, _ := fetchLogo(t, anonymous, "/templates/trakli/logo"); status != http.StatusNotFound {
+		t.Fatalf("oversized template logo = %d", status)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "logo.svg"), logo, 0644); err != nil {
+		t.Fatal(err)
 	}
 	if status, _, _ := fetchLogo(t, anonymous, "/templates/..%2F..%2Fconfig.yml/logo"); status != http.StatusNotFound {
 		t.Fatalf("template outside the catalog = %d", status)
