@@ -147,8 +147,9 @@ func setupWorkspaceTestServer(t *testing.T, existing ...string) (*Server, worksp
 		t.Fatal(err)
 	}
 	s.schedulerManager = schedulerManager
+	s.runDeploymentAction = func(string, string, actionOptions, func(string)) error { return nil }
 	s.setupRoutes()
-	ts := httptest.NewServer(s.router)
+	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return s, workspaceClient{t: t, url: ts.URL}
 }
