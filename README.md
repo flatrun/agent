@@ -16,8 +16,6 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
-# FlatRun
-
 **Open source, self-hosted alternative to Railway and Render.** Deploy Docker Compose projects on your own servers.
 
 FlatRun brings the Railway workflow to a server you control: projects made of services, environments, deployments you can roll back, variables shared between projects, and templates for common apps. Each project is a directory with a standard Compose file, so it keeps running under plain `docker compose` if you stop using FlatRun.

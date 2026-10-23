@@ -11,8 +11,6 @@
   <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · Português do Brasil · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-# FlatRun
-
 **Alternativa de código aberto e auto-hospedada ao Railway e ao Render.** Implante projetos Docker Compose nos seus próprios servidores.
 
 O FlatRun leva o fluxo de trabalho do Railway para um servidor que você controla: projetos formados por serviços, ambientes, implantações que você pode reverter, variáveis compartilhadas entre projetos e modelos para aplicações comuns. Cada projeto é uma pasta com um arquivo Compose padrão, então continua rodando com `docker compose` se você parar de usar o FlatRun.
