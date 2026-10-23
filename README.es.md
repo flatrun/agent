@@ -21,7 +21,7 @@ Empieza con un servidor. Conecta más y escala los servicios compatibles con Doc
 Instala FlatRun en Ubuntu o Debian:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/flatrun/installer/main/scripts/install.sh | sudo bash
+curl -fsSL https://get.flatrun.dev/install.sh | sudo bash
 ```
 
 Abre `http://<tu-servidor>:8080`, completa la configuración y crea un despliegue

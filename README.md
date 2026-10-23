@@ -28,7 +28,7 @@ This repository is the **agent**: the Go service that runs deployments and serve
 Install FlatRun on an Ubuntu or Debian server:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/flatrun/installer/main/scripts/install.sh | sudo bash
+curl -fsSL https://get.flatrun.dev/install.sh | sudo bash
 ```
 
 Open `http://<your-server>:8080`, finish setup, and create a deployment from a

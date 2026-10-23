@@ -21,7 +21,7 @@ Comece com um servidor. Conecte outros e escale os serviços compatíveis com Do
 Instale o FlatRun no Ubuntu ou Debian:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/flatrun/installer/main/scripts/install.sh | sudo bash
+curl -fsSL https://get.flatrun.dev/install.sh | sudo bash
 ```
 
 Abra `http://<seu-servidor>:8080`, conclua a configuração e crie uma implantação
