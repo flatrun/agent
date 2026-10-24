@@ -24,6 +24,7 @@ type recordingAccessSender struct {
 	targetID  string
 	recipient string
 	message   string
+	code      string
 }
 
 func (s *recordingAccessSender) SendEmailTo(targetID, recipient string, message notify.Notification) error {
@@ -31,6 +32,9 @@ func (s *recordingAccessSender) SendEmailTo(targetID, recipient string, message 
 	s.targetID = targetID
 	s.recipient = recipient
 	s.message = message.Message
+	for _, panel := range message.Panels {
+		s.code = panel.Value
+	}
 	return nil
 }
 
@@ -340,5 +344,63 @@ func TestApplicationAccessDenialUsesFlatRunBranding(t *testing.T) {
 		if !strings.Contains(response.Body.String(), expected) {
 			t.Fatalf("confirmation page is missing %q", expected)
 		}
+	}
+}
+
+func TestApplicationAccessCodeSignsInTheVisitor(t *testing.T) {
+	base := t.TempDir()
+	createTestDeployment(t, base, "protected-site", &models.ServiceMetadata{
+		Name: "protected-site", Type: "web", Domains: []models.DomainConfig{{
+			ID: "login", Service: "web", ContainerPort: 80, Domain: "protected.example.com",
+			Access: &models.DomainAccessConfig{Enabled: true, Mode: "allowlist", AllowedEmails: []string{"person@example.com"}, EmailTargetID: "smtp"},
+		}},
+	})
+	service, err := access.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &recordingAccessSender{}
+	server := &Server{manager: docker.NewManager(base), access: service, accessEmailSender: sender}
+	router := gin.New()
+	router.POST("/api/access/request", server.requestApplicationAccess)
+	router.POST("/api/access/code", server.redeemApplicationAccessCode)
+	router.GET("/api/access/check", server.checkApplicationAccess)
+	post := func(path string, form url.Values) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		request.Host = "protected.example.com"
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+	response := post("/api/access/request", url.Values{"email": {"person@example.com"}, "return": {"/reports"}})
+	if response.Code != http.StatusAccepted || len(sender.code) != 6 || !strings.Contains(response.Body.String(), `action="/_flatrun/access/code"`) {
+		t.Fatalf("request = %d, code = %q: %s", response.Code, sender.code, response.Body.String())
+	}
+	wrong := "000000"
+	if sender.code == wrong {
+		wrong = "111111"
+	}
+	response = post("/api/access/code", url.Values{"email": {"person@example.com"}, "code": {wrong}})
+	if response.Code != http.StatusUnauthorized || len(response.Result().Cookies()) != 0 || !strings.Contains(response.Body.String(), "wrong or has expired") {
+		t.Fatalf("wrong code = %d, cookies = %v", response.Code, response.Result().Cookies())
+	}
+	spaced := sender.code[:3] + " " + sender.code[3:]
+	response = post("/api/access/code", url.Values{"email": {"Person@Example.com"}, "code": {spaced}})
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/reports" || len(response.Result().Cookies()) != 1 {
+		t.Fatalf("right code = %d, location = %q, cookies = %v", response.Code, response.Header().Get("Location"), response.Result().Cookies())
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/access/check", nil)
+	request.Header.Set("X-Original-Host", "protected.example.com")
+	request.Header.Set("X-Original-URI", "/reports")
+	request.AddCookie(response.Result().Cookies()[0])
+	check := httptest.NewRecorder()
+	router.ServeHTTP(check, request)
+	if check.Code != http.StatusNoContent {
+		t.Fatalf("session from code = %d", check.Code)
+	}
+	if again := post("/api/access/code", url.Values{"email": {"person@example.com"}, "code": {sender.code}}); again.Code != http.StatusUnauthorized {
+		t.Fatalf("reused code = %d", again.Code)
 	}
 }

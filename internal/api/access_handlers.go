@@ -27,6 +27,8 @@ const accessPageStyles = `<style>
 h1{font-size:25px;line-height:1.25;letter-spacing:-.025em;margin:0 0 10px;color:#0f172a}p{color:#64748b;line-height:1.6;margin:0 0 26px}label{display:block;font-size:14px;font-weight:650;margin-bottom:8px;color:#334155}
 input{width:100%;padding:12px 13px;border:1px solid #cbd5e1;border-radius:var(--radius-sm);background:#fff;color:#0f172a;font:inherit;outline:0;transition:border-color .15s,box-shadow .15s}input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.16)}
 button{width:100%;margin-top:16px;padding:8px 16px;border:0;border-radius:var(--radius-sm);background:var(--accent);color:var(--accent-contrast);font:inherit;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s,transform .15s}button:hover{background:var(--accent-hover)}button:active{transform:translateY(1px)}
+.spinner{width:28px;height:28px;margin:0 0 20px;border:3px solid #dbeafe;border-top-color:var(--accent);border-radius:50%;animation:spin .9s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation-duration:3s}}
+.code{font-size:24px;letter-spacing:.4em;text-align:center;font-variant-numeric:tabular-nums}.error{color:#b91c1c}.hint{margin:16px 0 0;font-size:13px}
 .note{margin:22px 0 0;text-align:center;font-size:12px;color:#94a3b8}@media(max-width:480px){body{padding:16px}.card{padding:25px 22px}}
 </style>`
 
@@ -34,7 +36,17 @@ button{width:100%;margin-top:16px;padding:8px 16px;border:0;border-radius:var(--
 var accessLogo string
 
 func accessPage(title, content string) string {
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>` + title + ` | FlatRun</title>` + accessPageStyles + `</head><body><main class="shell"><div class="brand"><a href="https://flatrun.dev" aria-label="FlatRun website">` + accessLogo + `</a></div><section class="card">` + content + `</section><p class="note">Protected by FlatRun</p></main></body></html>`
+	return brandPage(title, "", content, "Protected by FlatRun")
+}
+
+func brandPage(title, head, content, note string) string {
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` + head + `<title>` + title + ` | FlatRun</title>` + accessPageStyles + `</head><body><main class="shell"><div class="brand"><a href="https://flatrun.dev" aria-label="FlatRun website">` + accessLogo + `</a></div><section class="card">` + content + `</section><p class="note">` + note + `</p></main></body></html>`
+}
+
+func accessCodePage(email, returnPath, message string) string {
+	content := fmt.Sprintf(`<h1>Check your email</h1>%s<form method="post" action="/_flatrun/access/code"><input type="hidden" name="email" value="%s"><input type="hidden" name="return" value="%s"><label for="code">Sign-in code</label><input id="code" class="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" placeholder="000000" required autofocus><button type="submit">Continue</button></form><p class="hint">You can also open the link in the email.</p>`,
+		message, html.EscapeString(email), html.EscapeString(returnPath))
+	return accessPage("Check your email", content)
 }
 
 func (s *Server) checkApplicationAccess(c *gin.Context) {
@@ -54,7 +66,7 @@ func (s *Server) checkApplicationAccess(c *gin.Context) {
 func (s *Server) applicationAccessLogin(c *gin.Context) {
 	returnPath := access.SafeReturn(c.Query("return"))
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	content := fmt.Sprintf(`<h1>Verify your email</h1><p>Enter your email address to receive a secure sign-in link.</p><form method="post" action="/_flatrun/access/request"><input type="hidden" name="return" value="%s"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required autofocus><button type="submit">Email me a sign-in link</button></form>`, html.EscapeString(returnPath))
+	content := fmt.Sprintf(`<h1>Verify your email</h1><p>Enter your email address and we will send you a sign-in code and link.</p><form method="post" action="/_flatrun/access/request"><input type="hidden" name="return" value="%s"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required autofocus><button type="submit">Email me a code</button></form>`, html.EscapeString(returnPath))
 	c.String(http.StatusOK, accessPage("Sign in", content))
 }
 
@@ -69,6 +81,10 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 	}
 	if s.access != nil && s.accessEmailSender != nil && s.access.AllowEmailRequest(c.Request.Host, email) {
 		token, err := s.access.MagicLink(email, c.Request.Host, returnPath)
+		var code string
+		if err == nil {
+			code, err = s.access.IssueCode(email, c.Request.Host, returnPath)
+		}
 		if err == nil {
 			scheme := c.GetHeader("X-Forwarded-Proto")
 			if scheme != "https" {
@@ -76,7 +92,9 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 			}
 			link := fmt.Sprintf("%s://%s/_flatrun/access/verify?token=%s", scheme, c.Request.Host, url.QueryEscape(token))
 			err = s.accessEmailSender.SendEmailTo(policy.EmailTargetID, email, notify.Notification{
-				Title: "Your FlatRun access link", Message: "Open this link to continue: " + link,
+				Title:   "Your sign-in code is " + code,
+				Message: "Open this link to continue: " + link,
+				Panels:  []notify.Panel{{Title: "Sign-in code", Value: code, Detail: "Expires in 15 minutes"}},
 			})
 		}
 		if err != nil {
@@ -84,7 +102,32 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 		}
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusAccepted, accessPage("Check your email", `<h1>Check your email</h1><p>If this address is allowed, a secure sign-in link is on its way.</p>`))
+	c.String(http.StatusAccepted, accessCodePage(email, returnPath, `<p>If this address is allowed, a 6-digit code is on its way. Enter it below.</p>`))
+}
+
+func (s *Server) redeemApplicationAccessCode(c *gin.Context) {
+	email := strings.TrimSpace(c.PostForm("email"))
+	formReturn := access.SafeReturn(c.PostForm("return"))
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	invalid := func() {
+		c.String(http.StatusUnauthorized, accessCodePage(email, formReturn, `<p class="error">That code is wrong or has expired. Check the latest email, or go back and request a new one.</p>`))
+	}
+	if s.access == nil {
+		invalid()
+		return
+	}
+	returnPath, err := s.access.RedeemCode(email, c.Request.Host, strings.ReplaceAll(c.PostForm("code"), " ", ""))
+	if err != nil {
+		invalid()
+		return
+	}
+	policy, ok := s.applicationAccessPolicy(c.Request.Host, returnPath)
+	if !ok || !access.Allows(policy, email) {
+		invalid()
+		return
+	}
+	s.startApplicationAccessSession(c, email, c.Request.Host, returnPath, policy)
 }
 
 func (s *Server) getAccessEmailTargets(c *gin.Context) {
@@ -145,6 +188,10 @@ func (s *Server) handleApplicationAccessVerification(c *gin.Context, token strin
 		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
 		return
 	}
+	s.startApplicationAccessSession(c, email, host, returnPath, policy)
+}
+
+func (s *Server) startApplicationAccessSession(c *gin.Context, email, host, returnPath string, policy *models.DomainAccessConfig) {
 	session, err := s.access.Session(email, host, policy.SessionHours)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Could not create an access session")

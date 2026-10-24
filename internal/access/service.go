@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net"
 	"net/mail"
 	"os"
@@ -19,7 +20,20 @@ import (
 	"github.com/flatrun/agent/pkg/models"
 )
 
-const CookieName = "flatrun_access"
+const (
+	CookieName      = "flatrun_access"
+	codeTTL         = 15 * time.Minute
+	maxCodeAttempts = 5
+)
+
+var ErrInvalidCode = fmt.Errorf("code is invalid or expired")
+
+type pendingCode struct {
+	digest     []byte
+	returnPath string
+	expiry     time.Time
+	attempts   int
+}
 
 type Service struct {
 	secret       []byte
@@ -28,6 +42,7 @@ type Service struct {
 	mu           sync.Mutex
 	lastRequests map[string]time.Time
 	lastPrune    time.Time
+	codes        map[string]*pendingCode
 }
 
 type tokenPayload struct {
@@ -160,8 +175,61 @@ func (s *Service) pruneUsedLinks() {
 	}
 }
 
+// Codes live in memory, so an agent restart voids them; links keep working.
+func (s *Service) IssueCode(email, host, returnPath string) (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		return "", fmt.Errorf("generate access code: %w", err)
+	}
+	code := fmt.Sprintf("%06d", n.Int64())
+	key := codeKey(email, host)
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for existing, pending := range s.codes {
+		if now.After(pending.expiry) {
+			delete(s.codes, existing)
+		}
+	}
+	s.codes[key] = &pendingCode{digest: s.codeDigest(key, code), returnPath: SafeReturn(returnPath), expiry: now.Add(codeTTL)}
+	return code, nil
+}
+
+func (s *Service) RedeemCode(email, host, code string) (string, error) {
+	key := codeKey(email, host)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending, ok := s.codes[key]
+	if !ok {
+		return "", ErrInvalidCode
+	}
+	if s.now().After(pending.expiry) {
+		delete(s.codes, key)
+		return "", ErrInvalidCode
+	}
+	if !hmac.Equal(pending.digest, s.codeDigest(key, strings.TrimSpace(code))) {
+		pending.attempts++
+		if pending.attempts >= maxCodeAttempts {
+			delete(s.codes, key)
+		}
+		return "", ErrInvalidCode
+	}
+	delete(s.codes, key)
+	return pending.returnPath, nil
+}
+
+func codeKey(email, host string) string {
+	return Hostname(host) + "\x00" + normalizeEmail(email)
+}
+
+func (s *Service) codeDigest(key, code string) []byte {
+	mac := hmac.New(sha256.New, s.secret)
+	_, _ = mac.Write([]byte("code\x00" + key + "\x00" + code))
+	return mac.Sum(nil)
+}
+
 func (s *Service) AllowEmailRequest(host, email string) bool {
-	key := Hostname(host) + "\x00" + normalizeEmail(email)
+	key := codeKey(email, host)
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -300,6 +368,6 @@ func SafeReturn(value string) string {
 
 func newService(secret []byte, usedLinksDir string) *Service {
 	return &Service{
-		secret: secret, usedLinksDir: usedLinksDir, now: time.Now, lastRequests: make(map[string]time.Time),
+		secret: secret, usedLinksDir: usedLinksDir, now: time.Now, lastRequests: make(map[string]time.Time), codes: make(map[string]*pendingCode),
 	}
 }

@@ -2,12 +2,12 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"html"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/flatrun/agent/internal/access"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/sleep"
 	"github.com/flatrun/agent/pkg/models"
@@ -127,28 +127,36 @@ func (s *Server) markAwake(name string) {
 	}
 }
 
-const wakePage = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="3"><title>Starting up</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px system-ui,sans-serif;background:#0f1115;color:#e8eaf0}
-main{text-align:center;padding:24px}p{color:#9aa3b2}</style></head>
-<body><main><h1>Waking up</h1><p>%s was asleep and is starting. This page reloads on its own.</p></main></body></html>`
+func wakePage(host string) string {
+	site := "This site"
+	if host != "" {
+		site = "<strong>" + html.EscapeString(host) + "</strong>"
+	}
+	content := `<div class="spinner" role="status" aria-label="Starting"></div><h1>Waking up</h1><p>` + site +
+		` was asleep to save resources and is starting now. This usually takes a few seconds. Keep this page open and it will load on its own.</p>`
+	return brandPage("Waking up", `<meta http-equiv="refresh" content="3">`, content, "Served by FlatRun")
+}
+
+func unavailablePage() string {
+	return brandPage("Unavailable", "", `<h1>Not available right now</h1><p>This site is stopped. Try again later.</p>`, "Served by FlatRun")
+}
 
 // wakeDeployment is reached through nginx when a sleeping deployment's
 // containers are gone. It starts the deployment and serves a page that
 // reloads until the app answers.
 func (s *Server) wakeDeployment(c *gin.Context) {
 	name := c.Param("deployment")
+	c.Header("Cache-Control", "no-store")
 	deployment, err := s.manager.GetDeployment(name)
 	if err != nil || sleepConfigOf(deployment.Metadata) == nil {
-		c.String(http.StatusBadGateway, "Service unavailable")
+		c.Data(http.StatusBadGateway, "text/html; charset=utf-8", []byte(unavailablePage()))
 		return
 	}
 	// Only a deployment the agent put to sleep is woken; one a person stopped
 	// stays stopped.
 	recentlyWoken := s.sleeper != nil && time.Since(s.sleeper.AwakeSince(name)) < wakeGracePeriod
 	if !deployment.Metadata.Sleep.Sleeping && !recentlyWoken {
-		c.String(http.StatusBadGateway, "Service unavailable")
+		c.Data(http.StatusBadGateway, "text/html; charset=utf-8", []byte(unavailablePage()))
 		return
 	}
 	if deployment.Metadata.Sleep.Sleeping && deployment.Status != "running" {
@@ -157,9 +165,7 @@ func (s *Server) wakeDeployment(c *gin.Context) {
 		}
 	}
 	c.Header("Retry-After", "3")
-	c.Header("Cache-Control", "no-store")
-	c.Data(http.StatusServiceUnavailable, "text/html; charset=utf-8",
-		[]byte(fmt.Sprintf(wakePage, html.EscapeString(name))))
+	c.Data(http.StatusServiceUnavailable, "text/html; charset=utf-8", []byte(wakePage(access.Hostname(c.GetHeader("X-Original-Host")))))
 }
 
 // updateDeploymentSleep turns sleeping on or off and regenerates the virtual

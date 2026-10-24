@@ -146,3 +146,50 @@ func TestCanonicalAccessValues(t *testing.T) {
 		t.Fatal("unsafe return path was accepted")
 	}
 }
+
+func TestCodeWorksOnceForTheSameHostAndEmail(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := service.IssueCode("Person@Example.com", "app.example.com", "/private")
+	if err != nil || len(code) != 6 {
+		t.Fatalf("IssueCode() = %q, %v", code, err)
+	}
+	if _, err := service.RedeemCode("person@example.com", "other.example.com", code); err == nil {
+		t.Fatal("code was accepted on another host")
+	}
+	returnPath, err := service.RedeemCode("person@example.com", "app.example.com", " "+code+" ")
+	if err != nil || returnPath != "/private" {
+		t.Fatalf("RedeemCode() = %q, %v", returnPath, err)
+	}
+	if _, err := service.RedeemCode("person@example.com", "app.example.com", code); err == nil {
+		t.Fatal("code was accepted twice")
+	}
+}
+
+func TestCodeIsVoidAfterTooManyWrongTriesOrWhenExpired(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	service.now = func() time.Time { return now }
+	code, _ := service.IssueCode("person@example.com", "app.example.com", "/")
+	wrong := "000000"
+	if code == wrong {
+		wrong = "111111"
+	}
+	for i := 0; i < maxCodeAttempts; i++ {
+		_, _ = service.RedeemCode("person@example.com", "app.example.com", wrong)
+	}
+	if _, err := service.RedeemCode("person@example.com", "app.example.com", code); err == nil {
+		t.Fatal("code still worked after too many wrong tries")
+	}
+
+	code, _ = service.IssueCode("person@example.com", "app.example.com", "/")
+	now = now.Add(codeTTL + time.Second)
+	if _, err := service.RedeemCode("person@example.com", "app.example.com", code); err == nil {
+		t.Fatal("expired code was accepted")
+	}
+}

@@ -499,6 +499,7 @@ func (s *Server) setupRoutes() {
 		api.POST("/access/request", s.requestApplicationAccess)
 		api.GET("/access/verify", s.verifyApplicationAccess)
 		api.POST("/access/verify", s.confirmApplicationAccess)
+		api.POST("/access/code", s.redeemApplicationAccessCode)
 		// Authenticated by the deployment's webhook secret, not a session.
 		api.POST("/hooks/:provider/:deployment", s.receiveWebhook)
 		// Reached through nginx's fallback when a sleeping deployment is down.
