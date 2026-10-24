@@ -151,8 +151,9 @@ backup:
     #     use_path_style: false
     #     enabled: true
 templates:
-    # Background resync period in seconds; 0 disables the resync loop.
-    sync_interval: 3600
+    # Background check period in seconds; 0 disables it. A check downloads the
+    # catalog only when it changed upstream.
+    sync_interval: 900
     github:
         enabled: true
         repo: flatrun/templates

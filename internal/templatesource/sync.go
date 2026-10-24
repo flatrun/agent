@@ -2,6 +2,7 @@ package templatesource
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -18,13 +19,33 @@ type Syncer struct {
 	CacheDir string
 }
 
+// versionFile records which source and version the cache holds. The listing
+// only reads directories, so the file never shows up as a template.
+const versionFile = ".catalog-version"
+
 // Sync resolves the catalog and materializes it into CacheDir. It returns the
-// source used and the number of templates written. When no source is available
-// it leaves the cache untouched and returns ("", 0, nil) so a previously synced
+// source used and the number of templates written. When the source reports
+// that the cache already holds its current version, nothing is downloaded or
+// written and it returns (source, 0, nil). When no source is available it
+// leaves the cache untouched and returns ("", 0, nil) so a previously synced
 // catalog survives an outage. Per-template write failures are skipped rather
 // than aborting the whole sync.
 func (s *Syncer) Sync(ctx context.Context) (string, int, error) {
-	templates, src, err := s.Resolver.Resolve(ctx)
+	known, version := s.readVersion()
+	return s.sync(ctx, known, version)
+}
+
+// Refresh downloads and writes the catalog even when it has not changed, for an
+// operator who wants the cache rebuilt now.
+func (s *Syncer) Refresh(ctx context.Context) (string, int, error) {
+	return s.sync(ctx, "", "")
+}
+
+func (s *Syncer) sync(ctx context.Context, known, version string) (string, int, error) {
+	templates, src, next, err := s.Resolver.ResolveSince(ctx, known, version)
+	if errors.Is(err, ErrUnchanged) {
+		return src, 0, nil
+	}
 	if err != nil {
 		return src, 0, err
 	}
@@ -43,7 +64,34 @@ func (s *Syncer) Sync(ctx context.Context) (string, int, error) {
 		}
 		written++
 	}
+	// A partial write must not be recorded as current, or the failed templates
+	// would never be retried while upstream stays the same.
+	if written == len(templates) && next != "" {
+		s.writeVersion(src, next)
+	} else {
+		s.writeVersion("", "")
+	}
 	return src, written, nil
+}
+
+func (s *Syncer) readVersion() (string, string) {
+	data, err := os.ReadFile(filepath.Join(s.CacheDir, versionFile))
+	if err != nil {
+		return "", ""
+	}
+	source, version, _ := strings.Cut(strings.TrimSpace(string(data)), "\n")
+	return source, version
+}
+
+func (s *Syncer) writeVersion(source, version string) {
+	path := filepath.Join(s.CacheDir, versionFile)
+	if source == "" {
+		_ = os.Remove(path)
+		return
+	}
+	if err := os.WriteFile(path, []byte(source+"\n"+version+"\n"), 0o644); err != nil {
+		log.Printf("templatesource: record catalog version: %v", err)
+	}
 }
 
 func (s *Syncer) write(t Template) error {

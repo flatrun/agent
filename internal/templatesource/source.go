@@ -10,6 +10,7 @@ package templatesource
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -35,6 +36,18 @@ type Source interface {
 	List(ctx context.Context) ([]Template, error)
 }
 
+// ErrUnchanged reports that a source's catalog is the version the cache
+// already holds, so there is nothing to download or write.
+var ErrUnchanged = errors.New("catalog unchanged")
+
+// ConditionalSource is a Source that can tell whether its catalog changed since
+// a version it returned earlier. ListSince returns ErrUnchanged when it did not,
+// and otherwise the catalog with its new version.
+type ConditionalSource interface {
+	Source
+	ListSince(ctx context.Context, version string) ([]Template, string, error)
+}
+
 // Resolver holds sources in priority order (authoritative first, fallbacks
 // after) and returns the catalog from the first one that succeeds.
 type Resolver struct {
@@ -53,19 +66,43 @@ func NewResolver(sources ...Source) *Resolver {
 // no source is available it returns (nil, "", nil) so the caller can keep
 // whatever is already cached.
 func (r *Resolver) Resolve(ctx context.Context) ([]Template, string, error) {
+	templates, name, _, err := r.ResolveSince(ctx, "", "")
+	return templates, name, err
+}
+
+// ResolveSince is Resolve for a cache that holds version of source known. When
+// that source answers first and reports no change, it returns ErrUnchanged.
+// The returned version is empty for sources that do not report one.
+func (r *Resolver) ResolveSince(ctx context.Context, known, version string) ([]Template, string, string, error) {
 	var firstErr error
 	for _, s := range r.sources {
 		if !s.Available(ctx) {
 			continue
 		}
-		templates, err := s.List(ctx)
+		var (
+			templates []Template
+			next      string
+			err       error
+		)
+		if conditional, ok := s.(ConditionalSource); ok {
+			since := ""
+			if s.Name() == known {
+				since = version
+			}
+			templates, next, err = conditional.ListSince(ctx, since)
+			if errors.Is(err, ErrUnchanged) {
+				return nil, s.Name(), version, err
+			}
+		} else {
+			templates, err = s.List(ctx)
+		}
 		if err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("%s: %w", s.Name(), err)
 			}
 			continue
 		}
-		return templates, s.Name(), nil
+		return templates, s.Name(), next, nil
 	}
-	return nil, "", firstErr
+	return nil, "", "", firstErr
 }

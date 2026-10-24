@@ -487,7 +487,7 @@ func setDefaults(cfg *Config) {
 		cfg.Templates.GitHub.Ref = "main"
 	}
 	if cfg.Templates.SyncInterval == nil {
-		defaultInterval := 3600
+		defaultInterval := 900
 		cfg.Templates.SyncInterval = &defaultInterval
 	}
 	if cfg.Nginx.Image == "" {

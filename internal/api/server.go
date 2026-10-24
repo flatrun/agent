@@ -451,7 +451,7 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
 
-	syncInterval := 3600
+	syncInterval := 900
 	if cfg.Templates.SyncInterval != nil {
 		syncInterval = *cfg.Templates.SyncInterval
 	}
@@ -4490,7 +4490,7 @@ func (s *Server) refreshTemplates(c *gin.Context) {
 		}
 	}
 
-	src, synced, err := s.templateSyncer.Sync(c.Request.Context())
+	src, synced, err := s.templateSyncer.Refresh(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": fmt.Sprintf("template sync failed: %v", err),
