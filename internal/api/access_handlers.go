@@ -54,9 +54,13 @@ func (s *Server) accessError(c *gin.Context, status int, title, message, returnP
 	c.String(status, accessPage(title, content))
 }
 
-func accessCodePage(email, returnPath, message string) string {
-	content := fmt.Sprintf(`<h1>Check your email</h1>%s<form method="post" action="/_flatrun/access/code"><input type="hidden" name="email" value="%s"><input type="hidden" name="return" value="%s"><label for="code">Sign-in code</label><input id="code" class="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" placeholder="000000" required autofocus><button type="submit">Continue</button></form><p class="hint">You can also open the link in the email. No email? <a href="%s">Try again</a>.</p>`,
-		message, html.EscapeString(email), html.EscapeString(returnPath), html.EscapeString(loginPath(returnPath)))
+func accessCodePage(email, returnPath, message string, linkToo bool) string {
+	hint := "No email?"
+	if linkToo {
+		hint = "You can also open the link in the email. No email?"
+	}
+	content := fmt.Sprintf(`<h1>Check your email</h1>%s<form method="post" action="/_flatrun/access/code"><input type="hidden" name="email" value="%s"><input type="hidden" name="return" value="%s"><label for="code">Sign-in code</label><input id="code" class="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" placeholder="000000" required autofocus><button type="submit">Continue</button></form><p class="hint">%s <a href="%s">Try again</a>.</p>`,
+		message, html.EscapeString(email), html.EscapeString(returnPath), hint, html.EscapeString(loginPath(returnPath)))
 	return accessPage("Check your email", content)
 }
 
@@ -76,8 +80,15 @@ func (s *Server) checkApplicationAccess(c *gin.Context) {
 
 func (s *Server) applicationAccessLogin(c *gin.Context) {
 	returnPath := access.SafeReturn(c.Query("return"))
+	policy, ok := s.applicationAccessPolicy(c.Request.Host, returnPath)
+	sends, button := "a sign-in code and link", "Email me a code"
+	if ok && !access.SendsCode(policy) {
+		sends, button = "a sign-in link", "Email me a link"
+	} else if ok && !access.SendsLink(policy) {
+		sends = "a sign-in code"
+	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	content := fmt.Sprintf(`<h1>Verify your email</h1><p>Enter your email address and we will send you a sign-in code and link.</p><form method="post" action="/_flatrun/access/request"><input type="hidden" name="return" value="%s"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required autofocus><button type="submit">Email me a code</button></form>`, html.EscapeString(returnPath))
+	content := fmt.Sprintf(`<h1>Verify your email</h1><p>Enter your email address and we will send you %s.</p><form method="post" action="/_flatrun/access/request"><input type="hidden" name="return" value="%s"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required autofocus><button type="submit">%s</button></form>`, sends, html.EscapeString(returnPath), button)
 	c.String(http.StatusOK, accessPage("Sign in", content))
 }
 
@@ -92,29 +103,50 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 		return
 	}
 	if s.access != nil && s.accessEmailSender != nil && s.access.AllowEmailRequest(c.Request.Host, email) {
-		token, err := s.access.MagicLink(email, c.Request.Host, returnPath)
-		var code string
+		message, err := s.accessEmail(c, policy, email, returnPath)
 		if err == nil {
-			code, err = s.access.IssueCode(email, c.Request.Host, returnPath)
-		}
-		if err == nil {
-			scheme := c.GetHeader("X-Forwarded-Proto")
-			if scheme != "https" {
-				scheme = "http"
-			}
-			link := fmt.Sprintf("%s://%s/_flatrun/access/verify?token=%s", scheme, c.Request.Host, url.QueryEscape(token))
-			err = s.accessEmailSender.SendEmailTo(policy.EmailTargetID, email, notify.Notification{
-				Title:   "Your sign-in code is " + code,
-				Message: "Open this link to continue: " + link,
-				Panels:  []notify.Panel{{Title: "Sign-in code", Value: code, Detail: "Expires in 15 minutes"}},
-			})
+			err = s.accessEmailSender.SendEmailTo(policy.EmailTargetID, email, message)
 		}
 		if err != nil {
 			log.Printf("application access email failed for host %q: %v", c.Request.Host, err)
 		}
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusAccepted, accessCodePage(email, returnPath, `<p>If this address is allowed, a 6-digit code is on its way. Enter it below.</p>`))
+	if !access.SendsCode(policy) {
+		content := fmt.Sprintf(`<h1>Check your email</h1><p>If this address is allowed, a sign-in link is on its way. Open it on this device to continue.</p><p class="hint">No email? <a href="%s">Try again</a>.</p>`, html.EscapeString(loginPath(returnPath)))
+		c.String(http.StatusAccepted, accessPage("Check your email", content))
+		return
+	}
+	c.String(http.StatusAccepted, accessCodePage(email, returnPath, `<p>If this address is allowed, a 6-digit code is on its way. Enter it below.</p>`, access.SendsLink(policy)))
+}
+
+func (s *Server) accessEmail(c *gin.Context, policy *models.DomainAccessConfig, email, returnPath string) (notify.Notification, error) {
+	var message notify.Notification
+	if access.SendsLink(policy) {
+		token, err := s.access.MagicLink(email, c.Request.Host, returnPath)
+		if err != nil {
+			return message, err
+		}
+		scheme := c.GetHeader("X-Forwarded-Proto")
+		if scheme != "https" {
+			scheme = "http"
+		}
+		link := fmt.Sprintf("%s://%s/_flatrun/access/verify?token=%s", scheme, c.Request.Host, url.QueryEscape(token))
+		message.Title = "Your sign-in link"
+		message.Message = "Open this link to continue: " + link
+	}
+	if access.SendsCode(policy) {
+		code, err := s.access.IssueCode(email, c.Request.Host, returnPath)
+		if err != nil {
+			return message, err
+		}
+		message.Title = "Your sign-in code is " + code
+		if message.Message == "" {
+			message.Message = "Enter this code on the sign-in page."
+		}
+		message.Panels = []notify.Panel{{Title: "Sign-in code", Value: code, Detail: "Expires in 15 minutes"}}
+	}
+	return message, nil
 }
 
 func (s *Server) redeemApplicationAccessCode(c *gin.Context) {
@@ -123,7 +155,7 @@ func (s *Server) redeemApplicationAccessCode(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	invalid := func() {
-		c.String(http.StatusUnauthorized, accessCodePage(email, formReturn, `<p class="error">That code is wrong or has expired. Check the latest email, or request a new code.</p>`))
+		c.String(http.StatusUnauthorized, accessCodePage(email, formReturn, `<p class="error">That code is wrong or has expired. Check the latest email, or request a new code.</p>`, false))
 	}
 	if s.access == nil {
 		invalid()
@@ -135,7 +167,7 @@ func (s *Server) redeemApplicationAccessCode(c *gin.Context) {
 		return
 	}
 	policy, ok := s.applicationAccessPolicy(c.Request.Host, returnPath)
-	if !ok || !access.Allows(policy, email) {
+	if !ok || !access.SendsCode(policy) || !access.Allows(policy, email) {
 		invalid()
 		return
 	}
@@ -186,7 +218,7 @@ func (s *Server) handleApplicationAccessVerification(c *gin.Context, token strin
 		return
 	}
 	policy, ok := s.applicationAccessPolicy(host, returnPath)
-	if !ok || !access.Allows(policy, email) || access.Hostname(c.Request.Host) != access.Hostname(host) {
+	if !ok || !access.SendsLink(policy) || !access.Allows(policy, email) || access.Hostname(c.Request.Host) != access.Hostname(host) {
 		s.accessError(c, http.StatusUnauthorized, "Link expired", "This sign-in link has expired or was already used. Each link works once, for 15 minutes.", returnPath)
 		return
 	}

@@ -404,3 +404,79 @@ func TestApplicationAccessCodeSignsInTheVisitor(t *testing.T) {
 		t.Fatalf("reused code = %d", again.Code)
 	}
 }
+
+func TestApplicationAccessSendsOnlyTheChosenMethod(t *testing.T) {
+	for _, test := range []struct {
+		method          string
+		link, code      bool
+		page, emailWord string
+	}{
+		{"", true, true, `action="/_flatrun/access/code"`, "Open this link"},
+		{"link", true, false, "a sign-in link is on its way", "Open this link"},
+		{"code", false, true, `action="/_flatrun/access/code"`, "Enter this code"},
+	} {
+		t.Run("method "+test.method, func(t *testing.T) {
+			base := t.TempDir()
+			createTestDeployment(t, base, "site", &models.ServiceMetadata{
+				Name: "site", Type: "web", Domains: []models.DomainConfig{{
+					ID: "d", Service: "web", ContainerPort: 80, Domain: "site.example.com",
+					Access: &models.DomainAccessConfig{Enabled: true, Mode: "any_verified", EmailTargetID: "smtp", Method: test.method},
+				}},
+			})
+			service, err := access.New(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sender := &recordingAccessSender{}
+			server := &Server{manager: docker.NewManager(base), access: service, accessEmailSender: sender}
+			router := gin.New()
+			router.POST("/api/access/request", server.requestApplicationAccess)
+			router.POST("/api/access/code", server.redeemApplicationAccessCode)
+			router.GET("/api/access/verify", server.verifyApplicationAccess)
+			request := httptest.NewRequest(http.MethodPost, "/api/access/request", strings.NewReader(url.Values{"email": {"person@example.com"}, "return": {"/"}}.Encode()))
+			request.Host = "site.example.com"
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), test.page) || !strings.Contains(sender.message, test.emailWord) {
+				t.Fatalf("request = %d, message = %q: %s", response.Code, sender.message, response.Body.String())
+			}
+			if hasLink := strings.Contains(sender.message, "/_flatrun/access/verify?token="); hasLink != test.link {
+				t.Errorf("email has a link = %v, want %v", hasLink, test.link)
+			}
+			if hasCode := sender.code != ""; hasCode != test.code {
+				t.Errorf("email has a code = %v, want %v", hasCode, test.code)
+			}
+
+			// The other method stays refused even with a valid credential for it.
+			if !test.code {
+				code, _ := service.IssueCode("person@example.com", "site.example.com", "/")
+				request = httptest.NewRequest(http.MethodPost, "/api/access/code", strings.NewReader(url.Values{"email": {"person@example.com"}, "code": {code}}.Encode()))
+				request.Host = "site.example.com"
+				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				response = httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				if response.Code != http.StatusUnauthorized {
+					t.Errorf("code on a link-only gate = %d", response.Code)
+				}
+			}
+			if !test.link {
+				token, _ := service.MagicLink("person@example.com", "site.example.com", "/")
+				request = httptest.NewRequest(http.MethodGet, "/api/access/verify?token="+url.QueryEscape(token), nil)
+				request.Host = "site.example.com"
+				response = httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				if response.Code != http.StatusUnauthorized {
+					t.Errorf("link on a code-only gate = %d", response.Code)
+				}
+			}
+		})
+	}
+}
+
+func TestDomainAccessRejectsAnUnknownSignInMethod(t *testing.T) {
+	err := (&Server{}).validateDomainAccess(&models.DomainAccessConfig{Enabled: true, Mode: "any_verified", Method: "sms"})
+	if err == nil || !strings.Contains(err.Error(), "Sign-in method") {
+		t.Fatalf("validateDomainAccess() = %v", err)
+	}
+}

@@ -274,6 +274,23 @@ func Allows(policy *models.DomainAccessConfig, email string) bool {
 	return false
 }
 
+const (
+	MethodLink = "link"
+	MethodCode = "code"
+)
+
+func ValidMethod(method string) bool {
+	return method == "" || method == MethodLink || method == MethodCode
+}
+
+func SendsLink(policy *models.DomainAccessConfig) bool {
+	return policy != nil && policy.Method != MethodCode
+}
+
+func SendsCode(policy *models.DomainAccessConfig) bool {
+	return policy != nil && policy.Method != MethodLink
+}
+
 func ValidEmail(value string) bool {
 	value = strings.TrimSpace(value)
 	address, err := mail.ParseAddress(value)

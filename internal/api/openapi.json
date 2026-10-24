@@ -16575,6 +16575,9 @@
           "enabled": {
             "type": "boolean"
           },
+          "method": {
+            "type": "string"
+          },
           "mode": {
             "type": "string"
           },
@@ -16587,13 +16590,15 @@
           "mode",
           "allowed_emails",
           "email_target_id",
-          "session_hours"
+          "session_hours",
+          "method"
         ],
         "x-columns": [
           "enabled",
           "mode",
           "email_target_id",
-          "session_hours"
+          "session_hours",
+          "method"
         ]
       },
       "models.DomainConfig": {

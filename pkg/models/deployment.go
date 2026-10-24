@@ -190,6 +190,8 @@ type DomainAccessConfig struct {
 	AllowedEmails []string `yaml:"allowed_emails,omitempty" json:"allowed_emails,omitempty"`
 	EmailTargetID string   `yaml:"email_target_id" json:"email_target_id"`
 	SessionHours  int      `yaml:"session_hours,omitempty" json:"session_hours,omitempty"`
+	// Method is how visitors prove their email: "link", "code", or empty for both.
+	Method string `yaml:"method,omitempty" json:"method,omitempty"`
 }
 
 type DatabaseConfig struct {
