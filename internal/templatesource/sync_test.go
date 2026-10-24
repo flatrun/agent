@@ -219,3 +219,34 @@ func TestSyncerRetriesAfterAPartialWrite(t *testing.T) {
 		t.Fatalf("downloads = %d: a sync that skipped a template was recorded as complete", stub.downloads)
 	}
 }
+
+func TestSyncerRestoresAFileRemovedFromTheCache(t *testing.T) {
+	stub := &codeloadStub{
+		archive: tarball(t, "templates-main", map[string]string{
+			"static/docker-compose.yml": "services:\n  web:\n",
+			"static/html/index.html":    "<h1>hi</h1>",
+		}),
+		etag: `"a1"`,
+	}
+	srv := httptest.NewServer(stub)
+	defer srv.Close()
+	cache := t.TempDir()
+	s := &Syncer{Resolver: NewResolver(GitHubSource{Repo: "flatrun/templates", Enabled: true, BaseURL: srv.URL}), CacheDir: cache}
+	page := filepath.Join(cache, "static", "html", "index.html")
+
+	if _, _, err := s.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(page); err != nil {
+		t.Fatal(err)
+	}
+	if _, n, err := s.Sync(context.Background()); err != nil || n != 1 || stub.downloads != 2 {
+		t.Fatalf("sync after a removed file = %d, %v, downloads %d", n, err, stub.downloads)
+	}
+	if got, _ := os.ReadFile(page); string(got) != "<h1>hi</h1>" {
+		t.Fatalf("removed file not restored: %q", got)
+	}
+	if _, _, _ = s.Sync(context.Background()); stub.downloads != 2 {
+		t.Fatalf("downloads = %d after the cache was whole again", stub.downloads)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -19,8 +20,9 @@ type Syncer struct {
 	CacheDir string
 }
 
-// versionFile records which source and version the cache holds. The listing
-// only reads directories, so the file never shows up as a template.
+// versionFile records which source and version the cache holds, followed by
+// the files that sync wrote. The listing only reads directories, so the file
+// never shows up as a template.
 const versionFile = ".catalog-version"
 
 // Sync resolves the catalog and materializes it into CacheDir. It returns the
@@ -31,7 +33,15 @@ const versionFile = ".catalog-version"
 // catalog survives an outage. Per-template write failures are skipped rather
 // than aborting the whole sync.
 func (s *Syncer) Sync(ctx context.Context) (string, int, error) {
-	known, version := s.readVersion()
+	known, version, files := s.readVersion()
+	// A file removed from the cache by hand would otherwise stay missing until
+	// upstream changes, so any gap forces a full download.
+	for _, name := range files {
+		if _, err := os.Stat(filepath.Join(s.CacheDir, filepath.FromSlash(name))); err != nil {
+			known, version = "", ""
+			break
+		}
+	}
 	return s.sync(ctx, known, version)
 }
 
@@ -57,39 +67,56 @@ func (s *Syncer) sync(ctx context.Context, known, version string) (string, int, 
 	}
 
 	written := 0
+	var files []string
 	for _, t := range templates {
 		if err := s.write(t); err != nil {
 			log.Printf("templatesource: skipping template %q: %v", t.ID, err)
 			continue
 		}
 		written++
+		files = append(files, templateFiles(t)...)
 	}
 	// A partial write must not be recorded as current, or the failed templates
 	// would never be retried while upstream stays the same.
 	if written == len(templates) && next != "" {
-		s.writeVersion(src, next)
+		s.writeVersion(src, next, files)
 	} else {
-		s.writeVersion("", "")
+		s.writeVersion("", "", nil)
 	}
 	return src, written, nil
 }
 
-func (s *Syncer) readVersion() (string, string) {
+func (s *Syncer) readVersion() (string, string, []string) {
 	data, err := os.ReadFile(filepath.Join(s.CacheDir, versionFile))
 	if err != nil {
-		return "", ""
+		return "", "", nil
 	}
-	source, version, _ := strings.Cut(strings.TrimSpace(string(data)), "\n")
-	return source, version
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		return "", "", nil
+	}
+	return lines[0], lines[1], lines[2:]
 }
 
-func (s *Syncer) writeVersion(source, version string) {
-	path := filepath.Join(s.CacheDir, versionFile)
+func templateFiles(t Template) []string {
+	files := []string{path.Join(t.ID, "docker-compose.yml")}
+	if len(t.Metadata) > 0 {
+		files = append(files, path.Join(t.ID, "metadata.yml"))
+	}
+	for name := range t.Files {
+		files = append(files, path.Join(t.ID, name))
+	}
+	return files
+}
+
+func (s *Syncer) writeVersion(source, version string, files []string) {
+	target := filepath.Join(s.CacheDir, versionFile)
 	if source == "" {
-		_ = os.Remove(path)
+		_ = os.Remove(target)
 		return
 	}
-	if err := os.WriteFile(path, []byte(source+"\n"+version+"\n"), 0o644); err != nil {
+	content := strings.Join(append([]string{source, version}, files...), "\n") + "\n"
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 		log.Printf("templatesource: record catalog version: %v", err)
 	}
 }
