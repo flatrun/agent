@@ -153,3 +153,53 @@ func TestPublishUsesExplicitEventTargets(t *testing.T) {
 		t.Fatalf("targets = %#v", targets)
 	}
 }
+
+func TestEventPanelsComeFromTheEventAttributes(t *testing.T) {
+	event := events.Event{Attributes: map[string]any{"panels": []any{
+		map[string]any{"title": "Last hour", "chart": map[string]any{"points": []any{1.0, 2.0}, "threshold": 1.5}},
+		map[string]any{"title": "Top containers", "rows": []any{map[string]any{"label": "web", "value": "60%", "share": 1.0}}},
+	}}}
+	panels := eventPanels(event)
+	if len(panels) != 2 || panels[0].Chart == nil || len(panels[0].Chart.Points) != 2 || *panels[0].Chart.Threshold != 1.5 || panels[1].Rows[0].Label != "web" {
+		t.Fatalf("panels = %+v", panels)
+	}
+	if eventPanels(events.Event{Attributes: map[string]any{"panels": "nonsense"}}) != nil {
+		t.Error("malformed panels were accepted")
+	}
+}
+
+func TestEventEmailsTakeTheirColourFromSeverity(t *testing.T) {
+	for _, test := range []struct {
+		severity events.Severity
+		resolved bool
+		colour   string
+	}{
+		{events.SeverityCritical, false, "#b91c1c"},
+		{events.SeverityWarning, false, "#ca8a04"},
+		{events.SeverityInfo, false, "#1d4ed8"},
+		{events.SeverityWarning, true, "#15803d"},
+	} {
+		service := NewService(t.TempDir())
+		if err := service.Save(Config{Targets: []Target{{ID: "mail", URL: "smtp://mail.example.test/?from=a%40example.test&to=b%40example.test", Enabled: true}}}); err != nil {
+			t.Fatal(err)
+		}
+		var bodies []string
+		service.send = func(_, body string) error {
+			bodies = append(bodies, body)
+			return nil
+		}
+		event := events.Event{Source: "observability", Type: "metric.alert", Severity: test.severity, Title: "CPU", CorrelationKey: "cpu", TargetIDs: []string{"mail"}, OccurredAt: time.Now()}
+		if _, err := service.Publish(event); err != nil {
+			t.Fatal(err)
+		}
+		if test.resolved {
+			event.Resolved = true
+			if _, err := service.Publish(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(bodies) == 0 || !strings.Contains(bodies[len(bodies)-1], `bgcolor="`+test.colour+`"`) {
+			t.Errorf("%s (resolved %v) email lacks the %s strip", test.severity, test.resolved, test.colour)
+		}
+	}
+}

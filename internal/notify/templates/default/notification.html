@@ -1,19 +1,28 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title></head>
-<body style="margin:0;background:#f8fafc;color:#1e293b;font-family:Ubuntu,'Segoe UI',Arial,sans-serif;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8fafc;padding:32px 16px;"><tr><td align="center">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>{{.Title}}</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Ubuntu,Arial,sans-serif;-webkit-text-size-adjust:100%;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" bgcolor="#f1f5f9" style="background:#f1f5f9;"><tr><td align="center" style="padding:32px 12px;">
+{{.OutlookOpen}}
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;table-layout:fixed;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
 {{template "header" .}}
-<tr><td style="padding:24px 28px;">
-{{if .Status}}<span style="display:inline-block;margin-bottom:12px;padding:4px 10px;border-radius:999px;background:{{.AccentSoft}};color:{{.Accent}};font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;">{{.Status}}</span>{{end}}
-{{if .Title}}<h1 style="margin:0 0 12px;font-size:18px;line-height:1.35;font-weight:600;color:#1f2937;">{{.Title}}</h1>{{end}}
-<div style="font-size:13px;line-height:1.6;color:#4b5563;white-space:pre-wrap;">{{.Message}}</div>
-{{range .Panels}}<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;"><tr><td style="padding:18px;">
-{{if .Title}}<div style="font-size:13px;font-weight:700;color:#6b7280;">{{.Title}}</div>{{end}}
-{{if .Value}}<div style="margin-top:4px;font-size:26px;font-weight:700;color:#111827;">{{.Value}}</div>{{end}}
-{{if .Detail}}<div style="margin-top:8px;font-size:14px;line-height:1.5;color:#4b5563;">{{.Detail}}</div>{{end}}
-{{if .ImageURL}}<img src="{{.ImageURL}}" alt="{{.Title}}" width="100%" style="display:block;margin-top:16px;max-width:100%;height:auto;border-radius:8px;">{{end}}
+<tr><td style="padding:32px;">
+{{if .Status}}<div style="margin:0 0 14px;"><span style="display:inline-block;padding:5px 12px;border-radius:999px;background:{{.AccentSoft}};color:{{.Accent}};font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">{{.Status}}</span></div>{{end}}
+{{if .Title}}<h1 style="margin:0 0 14px;font-size:24px;line-height:1.3;font-weight:700;color:#0f172a;">{{.Title}}</h1>{{end}}
+{{if .Message}}<div style="font-size:16px;line-height:1.6;color:#334155;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;">{{.Message}}</div>{{end}}
+{{if .ActionURL}}<table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:24px;"><tr><td bgcolor="{{.Accent}}" style="border-radius:8px;background:{{.Accent}};"><a href="{{.ActionURL}}" style="display:inline-block;padding:13px 24px;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">{{.ActionLabel}}</a></td></tr></table>{{end}}
+{{range .Panels}}<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:24px;table-layout:fixed;border:1px solid #e2e8f0;border-radius:10px;"><tr><td style="padding:20px;">
+{{if .Title}}<div style="font-size:14px;font-weight:600;color:#64748b;">{{.Title}}</div>{{end}}
+{{if .Value}}<div style="margin-top:6px;font-size:32px;line-height:1.2;font-weight:700;color:#0f172a;letter-spacing:.02em;overflow-wrap:anywhere;">{{.Value}}</div>{{end}}
+{{if .Detail}}<div style="margin-top:8px;font-size:15px;line-height:1.5;color:#475569;overflow-wrap:anywhere;">{{.Detail}}</div>{{end}}
+{{if .ImageURL}}<img src="{{.ImageURL}}" alt="{{.Title}}" width="536" style="display:block;margin-top:16px;width:100%;max-width:536px;height:auto;border-radius:8px;">{{end}}
+{{range .Rows}}<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:14px;table-layout:fixed;"><tr><td style="font-size:15px;color:#0f172a;overflow-wrap:anywhere;">{{.Label}}</td><td align="right" width="110" style="font-size:15px;font-weight:600;color:#0f172a;">{{.Value}}</td></tr>
+{{if .Percent}}<tr><td colspan="2" style="padding-top:6px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" bgcolor="#e2e8f0" style="background:#e2e8f0;border-radius:4px;"><tr><td width="{{.Percent}}%" bgcolor="{{$.Accent}}" style="height:8px;line-height:8px;font-size:0;background:{{$.Accent}};border-radius:4px;">&nbsp;</td><td style="font-size:0;line-height:8px;">&nbsp;</td></tr></table></td></tr>{{end}}
+</table>{{end}}
 </td></tr></table>{{end}}
-</td></tr>{{template "footer" .}}
-</table></td></tr></table></body></html>
+</td></tr>
+{{template "footer" .}}
+</table>
+{{.OutlookClose}}
+</td></tr></table>
+</body></html>

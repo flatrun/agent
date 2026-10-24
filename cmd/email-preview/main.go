@@ -1,14 +1,9 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
 	"flag"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -23,24 +18,22 @@ func main() {
 	}
 
 	previews := map[string]notify.Notification{
-		"generic.html": {
-			Title: "Deployment update", Message: "The production deployment finished successfully.",
-		},
 		"positive.html": {
-			Kind: notify.KindPositive, Title: "Service recovered",
-			Message: "The API is healthy again and traffic has returned to normal.",
+			Kind: notify.KindPositive, Title: "High CPU resolved",
+			Message: "Resolved after 3 related events. High CPU is back to normal: shop-web in shop is 41.2%.",
+			Panels:  []notify.Panel{{Title: "Incident ID", Value: "inc_4f2a91", Detail: "Source: observability"}},
 		},
 		"negative.html": {
-			Kind: notify.KindNegative, Title: "High CPU usage",
-			Message: "The API has remained above its configured threshold for five minutes.",
+			Kind: notify.KindNegative, Title: "Deployment failed",
+			Message: "shop failed to start: container shop-web exited with code 1 during its health check.",
+			Panels:  []notify.Panel{{Title: "Incident ID", Value: "inc_9b03c2", Detail: "Source: deployments"}},
 		},
-		"panels.html": {
-			Kind: notify.KindNegative, Title: "Resource pressure detected",
-			Message: "Review the affected service and its recent resource usage.",
-			Panels: []notify.Panel{
-				{Title: "CPU", Value: "92%", Detail: "Threshold: 80%"},
-				{Title: "Last 15 minutes", Detail: "PNG graph preview", ImageURL: sampleGraph()},
-			},
+		"alert.html": alertSample(),
+		"sign-in.html": {
+			Title:   "Your sign-in code is 481962",
+			Message: "Use this code to open shop.example.com. It works once.",
+			Action:  &notify.Action{Label: "Sign in", URL: "https://shop.example.com/_flatrun/access/verify?token=eyJraW5kIjoidmVyaWZ5IiwiZW1haWwiOiJwZXJzb25AZXhhbXBsZS5jb20iLCJob3N0Ijoic2hvcC5leGFtcGxlLmNvbSJ9.y3Vp99EZ"},
+			Panels:  []notify.Panel{{Title: "Sign-in code", Value: "481962", Detail: "Expires in 15 minutes"}},
 		},
 	}
 
@@ -57,24 +50,24 @@ func main() {
 	}
 }
 
-func sampleGraph() string {
-	canvas := image.NewRGBA(image.Rect(0, 0, 520, 160))
-	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: color.RGBA{R: 248, G: 250, B: 252, A: 255}}, image.Point{}, draw.Src)
-	values := []int{42, 55, 49, 68, 74, 70, 83, 92, 87, 94, 89, 92}
-	line := color.RGBA{R: 185, G: 28, B: 28, A: 255}
-	for i := 1; i < len(values); i++ {
-		x0, y0 := 20+(i-1)*43, 140-values[i-1]
-		x1, y1 := 20+i*43, 140-values[i]
-		steps := x1 - x0
-		for step := 0; step <= steps; step++ {
-			x := x0 + step
-			y := y0 + (y1-y0)*step/steps
-			draw.Draw(canvas, image.Rect(x-1, y-1, x+2, y+2), &image.Uniform{C: line}, image.Point{}, draw.Src)
-		}
+func alertSample() notify.Notification {
+	threshold := 80.0
+	points := make([]float64, 120)
+	for i := range points {
+		points[i] = 38 + 14*math.Sin(float64(i)/9) + float64(i*i)/320
 	}
-	var encoded bytes.Buffer
-	if err := png.Encode(&encoded, canvas); err != nil {
-		panic(err)
+	return notify.Notification{
+		Kind: notify.KindWarning, Title: "High CPU",
+		Message: "High CPU: shop-web in shop is 92.4%, above 80.0%.",
+		Panels: []notify.Panel{
+			{Title: "Now", Value: "92.4%", Detail: "Alerts when above 80.0%"},
+			{Title: "Last hour", Detail: "The dashed line is the alert threshold.", Chart: &notify.Chart{Points: points, Threshold: &threshold}},
+			{Title: "Top containers", Rows: []notify.PanelRow{
+				{Label: "shop-web", Value: "61.2%", Share: 1},
+				{Label: "shop-worker-1", Value: "18.7%", Share: 0.31},
+				{Label: "shop-postgres", Value: "7.9%", Share: 0.13},
+			}},
+			{Title: "Incident ID", Value: "inc_4f2a91", Detail: "Source: observability"},
+		},
 	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes())
 }
