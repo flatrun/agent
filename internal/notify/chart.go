@@ -90,24 +90,29 @@ func chartPNG(chart Chart, accent color.RGBA) (string, bool) {
 func stroke(dst draw.Image, points [][2]float32, width float32, c color.RGBA) {
 	half := width / 2
 	src := image.NewUniform(c)
+	w, h := dst.Bounds().Dx(), dst.Bounds().Dy()
+	r := vector.NewRasterizer(w, h)
+	drawPiece := func(path func()) {
+		r.Reset(w, h)
+		path()
+		r.Draw(dst, dst.Bounds(), src, image.Point{})
+	}
 	for i, p := range points {
-		r := vector.NewRasterizer(dst.Bounds().Dx(), dst.Bounds().Dy())
-		circle(r, p[0], p[1], half)
 		if i > 0 {
 			a := points[i-1]
 			dx, dy := p[0]-a[0], p[1]-a[1]
 			if length := float32(math.Hypot(float64(dx), float64(dy))); length > 0 {
 				nx, ny := -dy/length*half, dx/length*half
-				segment := vector.NewRasterizer(dst.Bounds().Dx(), dst.Bounds().Dy())
-				segment.MoveTo(a[0]+nx, a[1]+ny)
-				segment.LineTo(p[0]+nx, p[1]+ny)
-				segment.LineTo(p[0]-nx, p[1]-ny)
-				segment.LineTo(a[0]-nx, a[1]-ny)
-				segment.ClosePath()
-				segment.Draw(dst, dst.Bounds(), src, image.Point{})
+				drawPiece(func() {
+					r.MoveTo(a[0]+nx, a[1]+ny)
+					r.LineTo(p[0]+nx, p[1]+ny)
+					r.LineTo(p[0]-nx, p[1]-ny)
+					r.LineTo(a[0]-nx, a[1]-ny)
+					r.ClosePath()
+				})
 			}
 		}
-		r.Draw(dst, dst.Bounds(), src, image.Point{})
+		drawPiece(func() { circle(r, p[0], p[1], half) })
 	}
 }
 
