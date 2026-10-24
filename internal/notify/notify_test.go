@@ -325,8 +325,12 @@ func TestEmailKeepsLongLinksInsideTheColumn(t *testing.T) {
 			t.Errorf("email is missing %q", expected)
 		}
 	}
-	if strings.Contains(body, ">"+link) {
-		t.Error("the raw link is printed as text, which widens the email")
+	printed := strings.Index(body, ">"+link+"</a>")
+	if printed < 0 {
+		t.Fatal("the raw link is not printed under the button")
+	}
+	if block := body[strings.LastIndex(body[:printed], "<div"):printed]; !strings.Contains(block, "word-break:break-all") {
+		t.Errorf("the printed link can widen the email: %s", block)
 	}
 	unsafe, _ := RenderEmail(Notification{Title: "x", Action: &Action{Label: "Go", URL: "javascript:alert(1)"}})
 	if strings.Contains(unsafe, "javascript:") {
