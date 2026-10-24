@@ -9,6 +9,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Syncer resolves the catalog and writes it into the on-disk template cache the
@@ -18,6 +20,9 @@ import (
 type Syncer struct {
 	Resolver *Resolver
 	CacheDir string
+
+	mu        sync.Mutex
+	lastCheck time.Time
 }
 
 // versionFile records which source and version the cache holds, followed by
@@ -33,6 +38,28 @@ const versionFile = ".catalog-version"
 // catalog survives an outage. Per-template write failures are skipped rather
 // than aborting the whole sync.
 func (s *Syncer) Sync(ctx context.Context) (string, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.check(ctx)
+}
+
+// SyncIfStale runs Sync when the last check is older than maxAge. It returns
+// at once when another sync holds the cache, so a caller waiting on it is
+// never stuck behind a slow download.
+func (s *Syncer) SyncIfStale(ctx context.Context, maxAge time.Duration) {
+	if !s.mu.TryLock() {
+		return
+	}
+	defer s.mu.Unlock()
+	if time.Since(s.lastCheck) < maxAge {
+		return
+	}
+	if _, _, err := s.check(ctx); err != nil {
+		log.Printf("templatesource: check for catalog changes: %v", err)
+	}
+}
+
+func (s *Syncer) check(ctx context.Context) (string, int, error) {
 	known, version, files := s.readVersion()
 	// A file removed from the cache by hand would otherwise stay missing until
 	// upstream changes, so any gap forces a full download.
@@ -48,11 +75,16 @@ func (s *Syncer) Sync(ctx context.Context) (string, int, error) {
 // Refresh downloads and writes the catalog even when it has not changed, for an
 // operator who wants the cache rebuilt now.
 func (s *Syncer) Refresh(ctx context.Context) (string, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.sync(ctx, "", "")
 }
 
 func (s *Syncer) sync(ctx context.Context, known, version string) (string, int, error) {
 	templates, src, next, err := s.Resolver.ResolveSince(ctx, known, version)
+	if err == nil || errors.Is(err, ErrUnchanged) {
+		s.lastCheck = time.Now()
+	}
 	if errors.Is(err, ErrUnchanged) {
 		return src, 0, nil
 	}

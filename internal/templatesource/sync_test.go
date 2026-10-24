@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSyncerWritesCatalogToCache(t *testing.T) {
@@ -248,5 +249,35 @@ func TestSyncerRestoresAFileRemovedFromTheCache(t *testing.T) {
 	}
 	if _, _, _ = s.Sync(context.Background()); stub.downloads != 2 {
 		t.Fatalf("downloads = %d after the cache was whole again", stub.downloads)
+	}
+}
+
+func TestSyncIfStaleChecksAtMostOncePerWindow(t *testing.T) {
+	stub := &codeloadStub{archive: tarball(t, "templates-main", map[string]string{"static/docker-compose.yml": "services:\n  web:\n"}), etag: `"a1"`}
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		stub.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	s := &Syncer{Resolver: NewResolver(GitHubSource{Repo: "flatrun/templates", Enabled: true, BaseURL: srv.URL}), CacheDir: t.TempDir()}
+
+	s.SyncIfStale(context.Background(), time.Minute)
+	s.SyncIfStale(context.Background(), time.Minute)
+	if requests != 1 {
+		t.Fatalf("requests within the window = %d, want 1", requests)
+	}
+	s.lastCheck = time.Now().Add(-2 * time.Minute)
+	s.SyncIfStale(context.Background(), time.Minute)
+	if requests != 2 || stub.downloads != 1 {
+		t.Fatalf("after the window: requests %d, downloads %d", requests, stub.downloads)
+	}
+
+	s.mu.Lock()
+	s.lastCheck = time.Time{}
+	s.SyncIfStale(context.Background(), time.Minute)
+	s.mu.Unlock()
+	if requests != 2 {
+		t.Fatal("SyncIfStale waited for a sync already in progress")
 	}
 }

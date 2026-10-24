@@ -4363,6 +4363,11 @@ type Template struct {
 
 func (s *Server) listTemplates(c *gin.Context) {
 	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+	if s.templateSyncer != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+		s.templateSyncer.SyncIfStale(ctx, time.Minute)
+		cancel()
+	}
 
 	if err := os.MkdirAll(templatesDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

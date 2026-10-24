@@ -1,6 +1,9 @@
 package api
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +14,7 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/networks"
+	"github.com/flatrun/agent/internal/templatesource"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
@@ -259,4 +263,36 @@ func TestGetTemplateCompose_DirectoryTraversal(t *testing.T) {
 			t.Errorf("Path %s should not return 200", p)
 		}
 	}
+}
+
+func TestListTemplatesPicksUpUpstreamChanges(t *testing.T) {
+	s, tmpDir := setupTemplateTestServer(t)
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, content := range map[string]string{
+		"templates-main/ghost/metadata.yml":       "name: Ghost\ncategory: cms",
+		"templates-main/ghost/docker-compose.yml": "name: ${NAME}\nservices:\n  ghost:\n    image: ghost:5\n",
+	} {
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg})
+		_, _ = tw.Write([]byte(content))
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"g1"`)
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer upstream.Close()
+	s.templateSyncer = &templatesource.Syncer{
+		Resolver: templatesource.NewResolver(templatesource.GitHubSource{Repo: "flatrun/templates", Enabled: true, BaseURL: upstream.URL}),
+		CacheDir: filepath.Join(tmpDir, ".flatrun", "templates"),
+	}
+
+	for _, tmpl := range getTemplates(t, s, "") {
+		if tmpl.ID == "ghost" {
+			return
+		}
+	}
+	t.Fatal("listing did not include the template published upstream")
 }
