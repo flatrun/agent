@@ -250,3 +250,21 @@ func wrongCode(code string) string {
 	}
 	return "000000"
 }
+
+func TestOneClientCannotLockAVisitorOut(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	service.now = func() time.Time { return now }
+	for i := 0; i < maxAddressFailures; i++ {
+		code, _ := service.IssueCode("person@example.com", "app.example.com", "/")
+		_, _ = service.RedeemCode("person@example.com", "app.example.com", "198.51.100.7", wrongCode(code))
+		now = now.Add(time.Minute)
+	}
+	code, _ := service.IssueCode("person@example.com", "app.example.com", "/private")
+	if returnPath, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", code); err != nil || returnPath != "/private" {
+		t.Fatalf("visitor's own code after one client's attempts = %q, %v", returnPath, err)
+	}
+}

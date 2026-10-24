@@ -26,7 +26,9 @@ const (
 	maxCodeAttempts = 5
 	// Wrong codes are also counted per address and per client over a window
 	// that a new code does not reset, so requesting codes cannot buy more guesses.
-	maxAddressFailures = 10
+	// The address limit stays above the client limit so one client alone cannot
+	// lock a visitor out.
+	maxAddressFailures = 25
 	maxClientFailures  = 10
 	failureWindow      = time.Hour
 )
