@@ -24,9 +24,22 @@ const (
 	CookieName      = "flatrun_access"
 	codeTTL         = 15 * time.Minute
 	maxCodeAttempts = 5
+	// Wrong codes are also counted per address and per client over a window
+	// that a new code does not reset, so requesting codes cannot buy more guesses.
+	maxAddressFailures = 10
+	maxClientFailures  = 10
+	failureWindow      = time.Hour
 )
 
-var ErrInvalidCode = fmt.Errorf("code is invalid or expired")
+var (
+	ErrInvalidCode     = fmt.Errorf("code is invalid or expired")
+	ErrTooManyAttempts = fmt.Errorf("too many wrong codes")
+)
+
+type failureCount struct {
+	count int
+	since time.Time
+}
 
 type pendingCode struct {
 	digest     []byte
@@ -43,6 +56,7 @@ type Service struct {
 	lastRequests map[string]time.Time
 	lastPrune    time.Time
 	codes        map[string]*pendingCode
+	failures     map[string]*failureCount
 }
 
 type tokenPayload struct {
@@ -195,16 +209,26 @@ func (s *Service) IssueCode(email, host, returnPath string) (string, error) {
 	return code, nil
 }
 
-func (s *Service) RedeemCode(email, host, code string) (string, error) {
+// RedeemCode checks the client's limit before touching the pending code, so a
+// client over its limit cannot spend another visitor's tries.
+func (s *Service) RedeemCode(email, host, client, code string) (string, error) {
 	key := codeKey(email, host)
+	addressKey, clientKey := "address\x00"+key, "client\x00"+client
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	pending, ok := s.codes[key]
-	if !ok {
-		return "", ErrInvalidCode
+	for existing, failed := range s.failures {
+		if now.Sub(failed.since) >= failureWindow {
+			delete(s.failures, existing)
+		}
 	}
-	if s.now().After(pending.expiry) {
+	if s.failedTimes(clientKey) >= maxClientFailures || s.failedTimes(addressKey) >= maxAddressFailures {
+		return "", ErrTooManyAttempts
+	}
+	pending, ok := s.codes[key]
+	if !ok || now.After(pending.expiry) {
 		delete(s.codes, key)
+		s.recordFailure(clientKey, now)
 		return "", ErrInvalidCode
 	}
 	if !hmac.Equal(pending.digest, s.codeDigest(key, strings.TrimSpace(code))) {
@@ -212,10 +236,28 @@ func (s *Service) RedeemCode(email, host, code string) (string, error) {
 		if pending.attempts >= maxCodeAttempts {
 			delete(s.codes, key)
 		}
+		s.recordFailure(clientKey, now)
+		s.recordFailure(addressKey, now)
 		return "", ErrInvalidCode
 	}
 	delete(s.codes, key)
 	return pending.returnPath, nil
+}
+
+func (s *Service) failedTimes(key string) int {
+	if failed, ok := s.failures[key]; ok {
+		return failed.count
+	}
+	return 0
+}
+
+func (s *Service) recordFailure(key string, now time.Time) {
+	failed, ok := s.failures[key]
+	if !ok {
+		failed = &failureCount{since: now}
+		s.failures[key] = failed
+	}
+	failed.count++
 }
 
 func codeKey(email, host string) string {
@@ -385,6 +427,6 @@ func SafeReturn(value string) string {
 
 func newService(secret []byte, usedLinksDir string) *Service {
 	return &Service{
-		secret: secret, usedLinksDir: usedLinksDir, now: time.Now, lastRequests: make(map[string]time.Time), codes: make(map[string]*pendingCode),
+		secret: secret, usedLinksDir: usedLinksDir, now: time.Now, lastRequests: make(map[string]time.Time), codes: make(map[string]*pendingCode), failures: make(map[string]*failureCount),
 	}
 }

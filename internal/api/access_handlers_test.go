@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -478,5 +479,57 @@ func TestDomainAccessRejectsAnUnknownSignInMethod(t *testing.T) {
 	err := (&Server{}).validateDomainAccess(&models.DomainAccessConfig{Enabled: true, Mode: "any_verified", Method: "sms"})
 	if err == nil || !strings.Contains(err.Error(), "Sign-in method") {
 		t.Fatalf("validateDomainAccess() = %v", err)
+	}
+}
+
+func TestApplicationAccessCodeLimitsAClientWithoutLockingOutTheVisitor(t *testing.T) {
+	base := t.TempDir()
+	createTestDeployment(t, base, "protected-site", &models.ServiceMetadata{
+		Name: "protected-site", Type: "web", Domains: []models.DomainConfig{{
+			ID: "login", Service: "web", ContainerPort: 80, Domain: "protected.example.com",
+			Access: &models.DomainAccessConfig{Enabled: true, Mode: "any_verified", EmailTargetID: "smtp"},
+		}},
+	})
+	service, err := access.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &recordingAccessSender{}
+	server := &Server{manager: docker.NewManager(base), access: service, accessEmailSender: sender}
+	router := gin.New()
+	router.POST("/api/access/request", server.requestApplicationAccess)
+	router.POST("/api/access/code", server.redeemApplicationAccessCode)
+	post := func(path, realIP, forwardedFor string, form url.Values) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		request.Host = "protected.example.com"
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("X-Real-IP", realIP)
+		request.Header.Set("X-Forwarded-For", forwardedFor)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+	if response := post("/api/access/request", "203.0.113.1", "", url.Values{"email": {"person@example.com"}, "return": {"/reports"}}); response.Code != http.StatusAccepted {
+		t.Fatalf("request = %d", response.Code)
+	}
+	wrong := "000000"
+	if sender.code == wrong {
+		wrong = "111111"
+	}
+	var response *httptest.ResponseRecorder
+	for i := 0; i < 15; i++ {
+		email := "person@example.com"
+		if i < 10 {
+			email = fmt.Sprintf("guess%d@example.com", i)
+		}
+		response = post("/api/access/code", "198.51.100.7", fmt.Sprintf("192.0.2.%d", i), url.Values{"email": {email}, "code": {wrong}})
+	}
+	if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "Too many wrong codes") {
+		t.Fatalf("client over its limit = %d: %s", response.Code, response.Body.String())
+	}
+	response = post("/api/access/code", "203.0.113.1", "", url.Values{"email": {"person@example.com"}, "code": {sender.code}})
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/reports" {
+		t.Fatalf("visitor's own code = %d, location = %q", response.Code, response.Header().Get("Location"))
 	}
 }

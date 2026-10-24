@@ -2,9 +2,11 @@ package api
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"html"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -161,7 +163,11 @@ func (s *Server) redeemApplicationAccessCode(c *gin.Context) {
 		invalid()
 		return
 	}
-	returnPath, err := s.access.RedeemCode(email, c.Request.Host, strings.ReplaceAll(c.PostForm("code"), " ", ""))
+	returnPath, err := s.access.RedeemCode(email, c.Request.Host, accessClient(c), strings.ReplaceAll(c.PostForm("code"), " ", ""))
+	if errors.Is(err, access.ErrTooManyAttempts) {
+		c.String(http.StatusTooManyRequests, accessCodePage(email, formReturn, `<p class="error">Too many wrong codes. Wait an hour, then request a new code.</p>`, false))
+		return
+	}
 	if err != nil {
 		invalid()
 		return
@@ -260,4 +266,17 @@ func (s *Server) applicationAccessPolicy(host, requestPath string) (*models.Doma
 		return nil, false
 	}
 	return access.Resolve(deployments, host, requestPath)
+}
+
+// The gate's nginx location overwrites X-Real-IP with the connecting address;
+// X-Forwarded-For passes through from the visitor, so gin's ClientIP could be forged.
+func accessClient(c *gin.Context) string {
+	if ip := strings.TrimSpace(c.GetHeader("X-Real-IP")); ip != "" {
+		return ip
+	}
+	host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+	if err != nil {
+		return c.Request.RemoteAddr
+	}
+	return host
 }
