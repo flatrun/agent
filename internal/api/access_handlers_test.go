@@ -25,6 +25,7 @@ type recordingAccessSender struct {
 	targetID  string
 	recipient string
 	message   string
+	link      string
 	code      string
 }
 
@@ -33,6 +34,10 @@ func (s *recordingAccessSender) SendEmailTo(targetID, recipient string, message 
 	s.targetID = targetID
 	s.recipient = recipient
 	s.message = message.Message
+	s.link = ""
+	if message.Action != nil {
+		s.link = message.Action.URL
+	}
 	for _, panel := range message.Panels {
 		s.code = panel.Value
 	}
@@ -98,7 +103,7 @@ domains:
 	if response.Code != http.StatusAccepted || sender.targetID != "smtp" || sender.recipient != "person@example.com" {
 		t.Fatalf("access request = %d, target = %q, recipient = %q", response.Code, sender.targetID, sender.recipient)
 	}
-	link := strings.TrimPrefix(sender.message, "Open this link to continue: ")
+	link := sender.link
 	parsed, err := url.Parse(link)
 	if err != nil || parsed.Scheme != "https" || parsed.Host != "private.example.com" {
 		t.Fatalf("access link = %q, error = %v", link, err)
@@ -412,8 +417,8 @@ func TestApplicationAccessSendsOnlyTheChosenMethod(t *testing.T) {
 		link, code      bool
 		page, emailWord string
 	}{
-		{"", true, true, `action="/_flatrun/access/code"`, "Open this link"},
-		{"link", true, false, "a sign-in link is on its way", "Open this link"},
+		{"", true, true, `action="/_flatrun/access/code"`, "Select Sign in, or enter this code"},
+		{"link", true, false, "a sign-in link is on its way", "Select Sign in to open site.example.com"},
 		{"code", false, true, `action="/_flatrun/access/code"`, "Enter this code"},
 	} {
 		t.Run("method "+test.method, func(t *testing.T) {
@@ -442,7 +447,7 @@ func TestApplicationAccessSendsOnlyTheChosenMethod(t *testing.T) {
 			if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), test.page) || !strings.Contains(sender.message, test.emailWord) {
 				t.Fatalf("request = %d, message = %q: %s", response.Code, sender.message, response.Body.String())
 			}
-			if hasLink := strings.Contains(sender.message, "/_flatrun/access/verify?token="); hasLink != test.link {
+			if hasLink := strings.Contains(sender.link, "/_flatrun/access/verify?token="); hasLink != test.link {
 				t.Errorf("email has a link = %v, want %v", hasLink, test.link)
 			}
 			if hasCode := sender.code != ""; hasCode != test.code {

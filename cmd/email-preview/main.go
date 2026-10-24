@@ -31,7 +31,7 @@ func main() {
 		"alert.html": alertSample(),
 		"sign-in.html": {
 			Title:   "Your sign-in code is 481962",
-			Message: "Use this code to open shop.example.com. It works once.",
+			Message: "Select Sign in, or enter this code on the sign-in page.",
 			Action:  &notify.Action{Label: "Sign in", URL: "https://shop.example.com/_flatrun/access/verify?token=eyJraW5kIjoidmVyaWZ5IiwiZW1haWwiOiJwZXJzb25AZXhhbXBsZS5jb20iLCJob3N0Ijoic2hvcC5leGFtcGxlLmNvbSJ9.y3Vp99EZ"},
 			Panels:  []notify.Panel{{Title: "Sign-in code", Value: "481962", Detail: "Expires in 15 minutes"}},
 		},
