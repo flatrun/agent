@@ -18,16 +18,15 @@ func main() {
 	}
 
 	previews := map[string]notify.Notification{
-		"generic.html": {
-			Title: "Deployment update", Message: "The production deployment finished successfully.",
-		},
 		"positive.html": {
-			Kind: notify.KindPositive, Title: "Service recovered",
-			Message: "The API is healthy again and traffic has returned to normal.",
+			Kind: notify.KindPositive, Title: "High CPU resolved",
+			Message: "Resolved after 3 related events. High CPU is back to normal: shop-web in shop is 41.2%.",
+			Panels:  []notify.Panel{{Title: "Incident ID", Value: "inc_4f2a91", Detail: "Source: observability"}},
 		},
 		"negative.html": {
-			Kind: notify.KindNegative, Title: "High CPU usage",
-			Message: "The API has remained above its configured threshold for five minutes.",
+			Kind: notify.KindNegative, Title: "Deployment failed",
+			Message: "shop failed to start: container shop-web exited with code 1 during its health check.",
+			Panels:  []notify.Panel{{Title: "Incident ID", Value: "inc_9b03c2", Detail: "Source: deployments"}},
 		},
 		"alert.html": alertSample(),
 		"sign-in.html": {
@@ -58,7 +57,7 @@ func alertSample() notify.Notification {
 		points[i] = 38 + 14*math.Sin(float64(i)/9) + float64(i*i)/320
 	}
 	return notify.Notification{
-		Kind: notify.KindNegative, Title: "High CPU",
+		Kind: notify.KindWarning, Title: "High CPU",
 		Message: "High CPU: shop-web in shop is 92.4%, above 80.0%.",
 		Panels: []notify.Panel{
 			{Title: "Now", Value: "92.4%", Detail: "Alerts when above 80.0%"},

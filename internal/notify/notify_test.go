@@ -263,6 +263,7 @@ func TestEmailVariantsAndPanels(t *testing.T) {
 		{KindGeneric, "", "", false},
 		{KindPositive, "Resolved", "#15803d", true},
 		{KindNegative, "Attention required", "#b91c1c", true},
+		{KindWarning, "Warning", "#ca8a04", true},
 	}
 	for _, tc := range cases {
 		body, err := RenderEmail(Notification{

@@ -17,6 +17,7 @@ const (
 	KindGeneric  Kind = "generic"
 	KindPositive Kind = "positive"
 	KindNegative Kind = "negative"
+	KindWarning  Kind = "warning"
 )
 
 type Panel struct {
@@ -90,7 +91,7 @@ type renderedEmail struct {
 
 func normalizeKind(kind Kind) Kind {
 	switch kind {
-	case KindPositive, KindNegative:
+	case KindPositive, KindNegative, KindWarning:
 		return kind
 	default:
 		return KindGeneric
@@ -135,6 +136,8 @@ func palette(kind Kind) (string, string, string) {
 		return "#15803d", "#dcfce7", "Resolved"
 	case KindNegative:
 		return "#b91c1c", "#fee2e2", "Attention required"
+	case KindWarning:
+		return "#ca8a04", "#fef9c3", "Warning"
 	default:
 		return "#1d4ed8", "#dbeafe", ""
 	}

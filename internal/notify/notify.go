@@ -130,8 +130,13 @@ func (s *Service) Publish(event events.Event) (events.IngestResult, error) {
 	case events.NotificationUpdated:
 		message = fmt.Sprintf("%d related events are grouped in this incident. %s", result.Incident.EventCount, event.Message)
 	}
-	if event.Severity == events.SeverityInfo && result.Notification != events.NotificationResolved {
-		kind = KindGeneric
+	if result.Notification != events.NotificationResolved {
+		switch event.Severity {
+		case events.SeverityInfo:
+			kind = KindGeneric
+		case events.SeverityWarning:
+			kind = KindWarning
+		}
 	}
 
 	notification := Notification{

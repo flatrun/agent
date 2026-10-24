@@ -167,3 +167,39 @@ func TestEventPanelsComeFromTheEventAttributes(t *testing.T) {
 		t.Error("malformed panels were accepted")
 	}
 }
+
+func TestEventEmailsTakeTheirColourFromSeverity(t *testing.T) {
+	for _, test := range []struct {
+		severity events.Severity
+		resolved bool
+		colour   string
+	}{
+		{events.SeverityCritical, false, "#b91c1c"},
+		{events.SeverityWarning, false, "#ca8a04"},
+		{events.SeverityInfo, false, "#1d4ed8"},
+		{events.SeverityWarning, true, "#15803d"},
+	} {
+		service := NewService(t.TempDir())
+		if err := service.Save(Config{Targets: []Target{{ID: "mail", URL: "smtp://mail.example.test/?from=a%40example.test&to=b%40example.test", Enabled: true}}}); err != nil {
+			t.Fatal(err)
+		}
+		var bodies []string
+		service.send = func(_, body string) error {
+			bodies = append(bodies, body)
+			return nil
+		}
+		event := events.Event{Source: "observability", Type: "metric.alert", Severity: test.severity, Title: "CPU", CorrelationKey: "cpu", TargetIDs: []string{"mail"}, OccurredAt: time.Now()}
+		if _, err := service.Publish(event); err != nil {
+			t.Fatal(err)
+		}
+		if test.resolved {
+			event.Resolved = true
+			if _, err := service.Publish(event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(bodies) == 0 || !strings.Contains(bodies[len(bodies)-1], `bgcolor="`+test.colour+`"`) {
+			t.Errorf("%s (resolved %v) email lacks the %s strip", test.severity, test.resolved, test.colour)
+		}
+	}
+}
