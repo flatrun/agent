@@ -1,6 +1,8 @@
 package access
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -144,5 +146,125 @@ func TestCanonicalAccessValues(t *testing.T) {
 	}
 	if SafeReturn("//other.example.com") != "/" {
 		t.Fatal("unsafe return path was accepted")
+	}
+}
+
+func TestCodeWorksOnceForTheSameHostAndEmail(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := service.IssueCode("Person@Example.com", "app.example.com", "/private")
+	if err != nil || len(code) != 6 {
+		t.Fatalf("IssueCode() = %q, %v", code, err)
+	}
+	if _, err := service.RedeemCode("person@example.com", "other.example.com", "203.0.113.1", code); err == nil {
+		t.Fatal("code was accepted on another host")
+	}
+	returnPath, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", " "+code+" ")
+	if err != nil || returnPath != "/private" {
+		t.Fatalf("RedeemCode() = %q, %v", returnPath, err)
+	}
+	if _, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", code); err == nil {
+		t.Fatal("code was accepted twice")
+	}
+}
+
+func TestCodeIsVoidAfterTooManyWrongTriesOrWhenExpired(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	service.now = func() time.Time { return now }
+	code, _ := service.IssueCode("person@example.com", "app.example.com", "/")
+	wrong := "000000"
+	if code == wrong {
+		wrong = "111111"
+	}
+	for i := 0; i < maxCodeAttempts; i++ {
+		_, _ = service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", wrong)
+	}
+	if _, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", code); err == nil {
+		t.Fatal("code still worked after too many wrong tries")
+	}
+
+	code, _ = service.IssueCode("person@example.com", "app.example.com", "/")
+	now = now.Add(codeTTL + time.Second)
+	if _, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", code); err == nil {
+		t.Fatal("expired code was accepted")
+	}
+}
+
+func TestNewCodesDoNotResetWrongTriesForAnAddress(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	service.now = func() time.Time { return now }
+	guesses := 0
+	var code string
+	for guesses < maxAddressFailures {
+		code, _ = service.IssueCode("person@example.com", "app.example.com", "/")
+		for i := 0; i < maxCodeAttempts && guesses < maxAddressFailures; i++ {
+			client := fmt.Sprintf("198.51.100.%d", guesses)
+			_, _ = service.RedeemCode("person@example.com", "app.example.com", client, wrongCode(code))
+			guesses++
+		}
+		now = now.Add(time.Minute)
+	}
+	code, _ = service.IssueCode("person@example.com", "app.example.com", "/")
+	if _, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", code); !errors.Is(err, ErrTooManyAttempts) {
+		t.Fatalf("right code after %d wrong tries across new codes = %v", guesses, err)
+	}
+	now = now.Add(failureWindow)
+	code, _ = service.IssueCode("person@example.com", "app.example.com", "/")
+	if _, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", code); err != nil {
+		t.Fatalf("right code after the window = %v", err)
+	}
+}
+
+func TestClientOverItsLimitCannotSpendAnotherVisitorsTries(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := service.IssueCode("person@example.com", "app.example.com", "/private")
+	for i := 0; i < maxClientFailures; i++ {
+		_, _ = service.RedeemCode(fmt.Sprintf("guess%d@example.com", i), "app.example.com", "198.51.100.7", "123456")
+	}
+	for i := 0; i < maxCodeAttempts; i++ {
+		if _, err := service.RedeemCode("person@example.com", "app.example.com", "198.51.100.7", wrongCode(code)); !errors.Is(err, ErrTooManyAttempts) {
+			t.Fatalf("client over its limit got %v", err)
+		}
+	}
+	if returnPath, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", code); err != nil || returnPath != "/private" {
+		t.Fatalf("visitor's own code = %q, %v", returnPath, err)
+	}
+}
+
+func wrongCode(code string) string {
+	if code == "000000" {
+		return "111111"
+	}
+	return "000000"
+}
+
+func TestOneClientCannotLockAVisitorOut(t *testing.T) {
+	service, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	service.now = func() time.Time { return now }
+	for i := 0; i < maxAddressFailures; i++ {
+		code, _ := service.IssueCode("person@example.com", "app.example.com", "/")
+		_, _ = service.RedeemCode("person@example.com", "app.example.com", "198.51.100.7", wrongCode(code))
+		now = now.Add(time.Minute)
+	}
+	code, _ := service.IssueCode("person@example.com", "app.example.com", "/private")
+	if returnPath, err := service.RedeemCode("person@example.com", "app.example.com", "203.0.113.1", code); err != nil || returnPath != "/private" {
+		t.Fatalf("visitor's own code after one client's attempts = %q, %v", returnPath, err)
 	}
 }

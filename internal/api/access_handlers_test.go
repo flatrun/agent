@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,6 +25,7 @@ type recordingAccessSender struct {
 	targetID  string
 	recipient string
 	message   string
+	code      string
 }
 
 func (s *recordingAccessSender) SendEmailTo(targetID, recipient string, message notify.Notification) error {
@@ -31,6 +33,9 @@ func (s *recordingAccessSender) SendEmailTo(targetID, recipient string, message 
 	s.targetID = targetID
 	s.recipient = recipient
 	s.message = message.Message
+	for _, panel := range message.Panels {
+		s.code = panel.Value
+	}
 	return nil
 }
 
@@ -168,8 +173,8 @@ domains:
 	request.Host = "private.example.com"
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("replayed verification response = %d", response.Code)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "Link expired") || !strings.Contains(response.Body.String(), accessLogo) {
+		t.Fatalf("replayed verification response = %d: %s", response.Code, response.Body.String())
 	}
 	if err := os.WriteFile(filepath.Join(deploymentPath, "service.yml"), []byte("domains: [invalid"), 0644); err != nil {
 		t.Fatal(err)
@@ -340,5 +345,191 @@ func TestApplicationAccessDenialUsesFlatRunBranding(t *testing.T) {
 		if !strings.Contains(response.Body.String(), expected) {
 			t.Fatalf("confirmation page is missing %q", expected)
 		}
+	}
+}
+
+func TestApplicationAccessCodeSignsInTheVisitor(t *testing.T) {
+	base := t.TempDir()
+	createTestDeployment(t, base, "protected-site", &models.ServiceMetadata{
+		Name: "protected-site", Type: "web", Domains: []models.DomainConfig{{
+			ID: "login", Service: "web", ContainerPort: 80, Domain: "protected.example.com",
+			Access: &models.DomainAccessConfig{Enabled: true, Mode: "allowlist", AllowedEmails: []string{"person@example.com"}, EmailTargetID: "smtp"},
+		}},
+	})
+	service, err := access.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &recordingAccessSender{}
+	server := &Server{manager: docker.NewManager(base), access: service, accessEmailSender: sender}
+	router := gin.New()
+	router.POST("/api/access/request", server.requestApplicationAccess)
+	router.POST("/api/access/code", server.redeemApplicationAccessCode)
+	router.GET("/api/access/check", server.checkApplicationAccess)
+	post := func(path string, form url.Values) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		request.Host = "protected.example.com"
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+	response := post("/api/access/request", url.Values{"email": {"person@example.com"}, "return": {"/reports"}})
+	if response.Code != http.StatusAccepted || len(sender.code) != 6 || !strings.Contains(response.Body.String(), `action="/_flatrun/access/code"`) {
+		t.Fatalf("request = %d, code = %q: %s", response.Code, sender.code, response.Body.String())
+	}
+	wrong := "000000"
+	if sender.code == wrong {
+		wrong = "111111"
+	}
+	response = post("/api/access/code", url.Values{"email": {"person@example.com"}, "code": {wrong}})
+	if response.Code != http.StatusUnauthorized || len(response.Result().Cookies()) != 0 || !strings.Contains(response.Body.String(), "wrong or has expired") {
+		t.Fatalf("wrong code = %d, cookies = %v", response.Code, response.Result().Cookies())
+	}
+	spaced := sender.code[:3] + " " + sender.code[3:]
+	response = post("/api/access/code", url.Values{"email": {"Person@Example.com"}, "code": {spaced}})
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/reports" || len(response.Result().Cookies()) != 1 {
+		t.Fatalf("right code = %d, location = %q, cookies = %v", response.Code, response.Header().Get("Location"), response.Result().Cookies())
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/access/check", nil)
+	request.Header.Set("X-Original-Host", "protected.example.com")
+	request.Header.Set("X-Original-URI", "/reports")
+	request.AddCookie(response.Result().Cookies()[0])
+	check := httptest.NewRecorder()
+	router.ServeHTTP(check, request)
+	if check.Code != http.StatusNoContent {
+		t.Fatalf("session from code = %d", check.Code)
+	}
+	if again := post("/api/access/code", url.Values{"email": {"person@example.com"}, "code": {sender.code}}); again.Code != http.StatusUnauthorized {
+		t.Fatalf("reused code = %d", again.Code)
+	}
+}
+
+func TestApplicationAccessSendsOnlyTheChosenMethod(t *testing.T) {
+	for _, test := range []struct {
+		method          string
+		link, code      bool
+		page, emailWord string
+	}{
+		{"", true, true, `action="/_flatrun/access/code"`, "Open this link"},
+		{"link", true, false, "a sign-in link is on its way", "Open this link"},
+		{"code", false, true, `action="/_flatrun/access/code"`, "Enter this code"},
+	} {
+		t.Run("method "+test.method, func(t *testing.T) {
+			base := t.TempDir()
+			createTestDeployment(t, base, "site", &models.ServiceMetadata{
+				Name: "site", Type: "web", Domains: []models.DomainConfig{{
+					ID: "d", Service: "web", ContainerPort: 80, Domain: "site.example.com",
+					Access: &models.DomainAccessConfig{Enabled: true, Mode: "any_verified", EmailTargetID: "smtp", Method: test.method},
+				}},
+			})
+			service, err := access.New(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sender := &recordingAccessSender{}
+			server := &Server{manager: docker.NewManager(base), access: service, accessEmailSender: sender}
+			router := gin.New()
+			router.POST("/api/access/request", server.requestApplicationAccess)
+			router.POST("/api/access/code", server.redeemApplicationAccessCode)
+			router.GET("/api/access/verify", server.verifyApplicationAccess)
+			request := httptest.NewRequest(http.MethodPost, "/api/access/request", strings.NewReader(url.Values{"email": {"person@example.com"}, "return": {"/"}}.Encode()))
+			request.Host = "site.example.com"
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), test.page) || !strings.Contains(sender.message, test.emailWord) {
+				t.Fatalf("request = %d, message = %q: %s", response.Code, sender.message, response.Body.String())
+			}
+			if hasLink := strings.Contains(sender.message, "/_flatrun/access/verify?token="); hasLink != test.link {
+				t.Errorf("email has a link = %v, want %v", hasLink, test.link)
+			}
+			if hasCode := sender.code != ""; hasCode != test.code {
+				t.Errorf("email has a code = %v, want %v", hasCode, test.code)
+			}
+
+			// The other method stays refused even with a valid credential for it.
+			if !test.code {
+				code, _ := service.IssueCode("person@example.com", "site.example.com", "/")
+				request = httptest.NewRequest(http.MethodPost, "/api/access/code", strings.NewReader(url.Values{"email": {"person@example.com"}, "code": {code}}.Encode()))
+				request.Host = "site.example.com"
+				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				response = httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				if response.Code != http.StatusUnauthorized {
+					t.Errorf("code on a link-only gate = %d", response.Code)
+				}
+			}
+			if !test.link {
+				token, _ := service.MagicLink("person@example.com", "site.example.com", "/")
+				request = httptest.NewRequest(http.MethodGet, "/api/access/verify?token="+url.QueryEscape(token), nil)
+				request.Host = "site.example.com"
+				response = httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				if response.Code != http.StatusUnauthorized {
+					t.Errorf("link on a code-only gate = %d", response.Code)
+				}
+			}
+		})
+	}
+}
+
+func TestDomainAccessRejectsAnUnknownSignInMethod(t *testing.T) {
+	err := (&Server{}).validateDomainAccess(&models.DomainAccessConfig{Enabled: true, Mode: "any_verified", Method: "sms"})
+	if err == nil || !strings.Contains(err.Error(), "Sign-in method") {
+		t.Fatalf("validateDomainAccess() = %v", err)
+	}
+}
+
+func TestApplicationAccessCodeLimitsAClientWithoutLockingOutTheVisitor(t *testing.T) {
+	base := t.TempDir()
+	createTestDeployment(t, base, "protected-site", &models.ServiceMetadata{
+		Name: "protected-site", Type: "web", Domains: []models.DomainConfig{{
+			ID: "login", Service: "web", ContainerPort: 80, Domain: "protected.example.com",
+			Access: &models.DomainAccessConfig{Enabled: true, Mode: "any_verified", EmailTargetID: "smtp"},
+		}},
+	})
+	service, err := access.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &recordingAccessSender{}
+	server := &Server{manager: docker.NewManager(base), access: service, accessEmailSender: sender}
+	router := gin.New()
+	router.POST("/api/access/request", server.requestApplicationAccess)
+	router.POST("/api/access/code", server.redeemApplicationAccessCode)
+	post := func(path, realIP, forwardedFor string, form url.Values) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		request.Host = "protected.example.com"
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("X-Real-IP", realIP)
+		request.Header.Set("X-Forwarded-For", forwardedFor)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+
+	if response := post("/api/access/request", "203.0.113.1", "", url.Values{"email": {"person@example.com"}, "return": {"/reports"}}); response.Code != http.StatusAccepted {
+		t.Fatalf("request = %d", response.Code)
+	}
+	wrong := "000000"
+	if sender.code == wrong {
+		wrong = "111111"
+	}
+	var response *httptest.ResponseRecorder
+	for i := 0; i < 15; i++ {
+		email := "person@example.com"
+		if i < 10 {
+			email = fmt.Sprintf("guess%d@example.com", i)
+		}
+		response = post("/api/access/code", "198.51.100.7", fmt.Sprintf("192.0.2.%d", i), url.Values{"email": {email}, "code": {wrong}})
+	}
+	if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "Too many wrong codes") {
+		t.Fatalf("client over its limit = %d: %s", response.Code, response.Body.String())
+	}
+	response = post("/api/access/code", "203.0.113.1", "", url.Values{"email": {"person@example.com"}, "code": {sender.code}})
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/reports" {
+		t.Fatalf("visitor's own code = %d, location = %q", response.Code, response.Header().Get("Location"))
 	}
 }

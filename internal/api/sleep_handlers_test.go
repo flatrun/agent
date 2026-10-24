@@ -53,17 +53,24 @@ func TestWake_OnlyWakesSleepingDeployments(t *testing.T) {
 
 	stopped := httptest.NewRecorder()
 	r.ServeHTTP(stopped, httptest.NewRequest(http.MethodGet, "/api/hooks/wake/app", nil))
-	if stopped.Code != http.StatusBadGateway {
-		t.Errorf("a deployment stopped by a person = %d, want 502", stopped.Code)
+	if stopped.Code != http.StatusBadGateway || !strings.Contains(stopped.Body.String(), accessLogo) {
+		t.Errorf("a deployment stopped by a person = %d, want a branded 502", stopped.Code)
 	}
 
 	if err := s.setSleeping("app", true); err != nil {
 		t.Fatal(err)
 	}
 	asleep := httptest.NewRecorder()
-	r.ServeHTTP(asleep, httptest.NewRequest(http.MethodGet, "/api/hooks/wake/app", nil))
-	if asleep.Code != http.StatusServiceUnavailable || !strings.Contains(asleep.Body.String(), "Waking up") {
+	wake := httptest.NewRequest(http.MethodGet, "/api/hooks/wake/app", nil)
+	wake.Header.Set("X-Original-Host", "app.example.com")
+	r.ServeHTTP(asleep, wake)
+	if asleep.Code != http.StatusServiceUnavailable || asleep.Header().Get("Retry-After") == "" {
 		t.Errorf("sleeping deployment = %d: %s", asleep.Code, asleep.Body.String())
+	}
+	for _, expected := range []string{"Waking up", "<strong>app.example.com</strong>", accessLogo, `http-equiv="refresh"`} {
+		if !strings.Contains(asleep.Body.String(), expected) {
+			t.Errorf("wake page is missing %q", expected)
+		}
 	}
 	select {
 	case <-runner.optsCh:

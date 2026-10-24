@@ -688,6 +688,13 @@ func (m *Manager) renderMultiDomainConfigWithBackends(deployment *models.Deploym
 	}
 
 	servers := m.groupDomainsByHost(domains, deployment.Name, m.deploymentComposeContent(deployment))
+	if sleepEnabled(deployment.Metadata) {
+		for i := range servers {
+			for j := range servers[i].Locations {
+				servers[i].Locations[j].SleepEnabled = true
+			}
+		}
+	}
 
 	upstreams := assignUpstreams(servers, keepalive, backendOverrides)
 
@@ -1014,6 +1021,7 @@ type locationData struct {
 	ProxyTimeout  int
 	StaticCache   bool
 	Access        *models.DomainAccessConfig
+	SleepEnabled  bool
 	// Upstream is the value assigned to $upstream: an upstream block name when
 	// keepalive is supported, otherwise the literal service:port.
 	Upstream string
@@ -1240,6 +1248,9 @@ const accessTemplates = sleepTemplates + `{{define "accessPortal"}}{{if .HasAcce
 {{define "accessCheck"}}{{if and .Access .Access.Enabled}}
         auth_request /_flatrun/access/check;
         error_page 401 = @flatrun_access_login;
+{{- if .SleepEnabled}}
+        error_page 502 503 504 = @flatrun_wake;
+{{- end}}
 {{end}}{{end}}
 `
 

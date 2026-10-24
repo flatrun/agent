@@ -19,6 +19,19 @@
         }
       }
     },
+    "/api/access/code": {
+      "post": {
+        "operationId": "post-access-code",
+        "tags": [
+          "access"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
     "/api/access/login": {
       "get": {
         "operationId": "get-access-login",
@@ -16562,6 +16575,9 @@
           "enabled": {
             "type": "boolean"
           },
+          "method": {
+            "type": "string"
+          },
           "mode": {
             "type": "string"
           },
@@ -16574,13 +16590,15 @@
           "mode",
           "allowed_emails",
           "email_target_id",
-          "session_hours"
+          "session_hours",
+          "method"
         ],
         "x-columns": [
           "enabled",
           "mode",
           "email_target_id",
-          "session_hours"
+          "session_hours",
+          "method"
         ]
       },
       "models.DomainConfig": {

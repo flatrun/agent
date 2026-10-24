@@ -237,6 +237,9 @@ func (s *Server) validateDomainAccess(policy *models.DomainAccessConfig) error {
 			return apiErrf(http.StatusBadRequest, "Allowed email or domain %q is invalid", email)
 		}
 	}
+	if !access.ValidMethod(policy.Method) {
+		return apiErrf(http.StatusBadRequest, "Sign-in method must be link, code, or empty for both")
+	}
 	if policy.SessionHours < 0 || policy.SessionHours > 720 {
 		return apiErrf(http.StatusBadRequest, "Session hours must be between 0 and 720")
 	}
