@@ -135,7 +135,8 @@ func (s *Server) accessEmail(c *gin.Context, policy *models.DomainAccessConfig, 
 		}
 		link := fmt.Sprintf("%s://%s/_flatrun/access/verify?token=%s", scheme, c.Request.Host, url.QueryEscape(token))
 		message.Title = "Your sign-in link"
-		message.Message = "Open this link to continue: " + link
+		message.Message = "Select Sign in to open " + access.Hostname(c.Request.Host) + ". The link works once."
+		message.Action = &notify.Action{Label: "Sign in", URL: link}
 	}
 	if access.SendsCode(policy) {
 		code, err := s.access.IssueCode(email, c.Request.Host, returnPath)
@@ -143,8 +144,9 @@ func (s *Server) accessEmail(c *gin.Context, policy *models.DomainAccessConfig, 
 			return message, err
 		}
 		message.Title = "Your sign-in code is " + code
-		if message.Message == "" {
-			message.Message = "Enter this code on the sign-in page."
+		message.Message = "Enter this code on the sign-in page."
+		if message.Action != nil {
+			message.Message = "Select Sign in, or enter this code on the sign-in page."
 		}
 		message.Panels = []notify.Panel{{Title: "Sign-in code", Value: code, Detail: "Expires in 15 minutes"}}
 	}
