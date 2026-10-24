@@ -172,8 +172,8 @@ domains:
 	request.Host = "private.example.com"
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("replayed verification response = %d", response.Code)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "Link expired") || !strings.Contains(response.Body.String(), accessLogo) {
+		t.Fatalf("replayed verification response = %d: %s", response.Code, response.Body.String())
 	}
 	if err := os.WriteFile(filepath.Join(deploymentPath, "service.yml"), []byte("domains: [invalid"), 0644); err != nil {
 		t.Fatal(err)

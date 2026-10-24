@@ -28,6 +28,7 @@ h1{font-size:25px;line-height:1.25;letter-spacing:-.025em;margin:0 0 10px;color:
 input{width:100%;padding:12px 13px;border:1px solid #cbd5e1;border-radius:var(--radius-sm);background:#fff;color:#0f172a;font:inherit;outline:0;transition:border-color .15s,box-shadow .15s}input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.16)}
 button{width:100%;margin-top:16px;padding:8px 16px;border:0;border-radius:var(--radius-sm);background:var(--accent);color:var(--accent-contrast);font:inherit;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s,transform .15s}button:hover{background:var(--accent-hover)}button:active{transform:translateY(1px)}
 .spinner{width:28px;height:28px;margin:0 0 20px;border:3px solid #dbeafe;border-top-color:var(--accent);border-radius:50%;animation:spin .9s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation-duration:3s}}
+.action{display:block;margin-top:16px;padding:8px 16px;border-radius:var(--radius-sm);background:var(--accent);color:var(--accent-contrast);font-size:14px;font-weight:500;text-align:center;text-decoration:none}.action:hover{background:var(--accent-hover)}.hint a{color:var(--accent)}
 .code{font-size:24px;letter-spacing:.4em;text-align:center;font-variant-numeric:tabular-nums}.error{color:#b91c1c}.hint{margin:16px 0 0;font-size:13px}
 .note{margin:22px 0 0;text-align:center;font-size:12px;color:#94a3b8}@media(max-width:480px){body{padding:16px}.card{padding:25px 22px}}
 </style>`
@@ -43,9 +44,19 @@ func brandPage(title, head, content, note string) string {
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` + head + `<title>` + title + ` | FlatRun</title>` + accessPageStyles + `</head><body><main class="shell"><div class="brand"><a href="https://flatrun.dev" aria-label="FlatRun website">` + accessLogo + `</a></div><section class="card">` + content + `</section><p class="note">` + note + `</p></main></body></html>`
 }
 
+func loginPath(returnPath string) string {
+	return "/_flatrun/access/login?return=" + url.QueryEscape(access.SafeReturn(returnPath))
+}
+
+func (s *Server) accessError(c *gin.Context, status int, title, message, returnPath string) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	content := fmt.Sprintf(`<h1>%s</h1><p>%s</p><a class="action" href="%s">Request a new code</a>`, title, message, html.EscapeString(loginPath(returnPath)))
+	c.String(status, accessPage(title, content))
+}
+
 func accessCodePage(email, returnPath, message string) string {
-	content := fmt.Sprintf(`<h1>Check your email</h1>%s<form method="post" action="/_flatrun/access/code"><input type="hidden" name="email" value="%s"><input type="hidden" name="return" value="%s"><label for="code">Sign-in code</label><input id="code" class="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" placeholder="000000" required autofocus><button type="submit">Continue</button></form><p class="hint">You can also open the link in the email.</p>`,
-		message, html.EscapeString(email), html.EscapeString(returnPath))
+	content := fmt.Sprintf(`<h1>Check your email</h1>%s<form method="post" action="/_flatrun/access/code"><input type="hidden" name="email" value="%s"><input type="hidden" name="return" value="%s"><label for="code">Sign-in code</label><input id="code" class="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" placeholder="000000" required autofocus><button type="submit">Continue</button></form><p class="hint">You can also open the link in the email. No email? <a href="%s">Try again</a>.</p>`,
+		message, html.EscapeString(email), html.EscapeString(returnPath), html.EscapeString(loginPath(returnPath)))
 	return accessPage("Check your email", content)
 }
 
@@ -76,7 +87,8 @@ func (s *Server) requestApplicationAccess(c *gin.Context) {
 	policy, ok := s.applicationAccessPolicy(c.Request.Host, returnPath)
 	if !ok || !access.Allows(policy, email) {
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusForbidden, accessPage("Access denied", `<h1>Access denied</h1><p>This email address is not allowed to access this application.</p>`))
+		content := fmt.Sprintf(`<h1>Access denied</h1><p>This email address is not allowed to access this application.</p><a class="action" href="%s">Use a different email</a>`, html.EscapeString(loginPath(returnPath)))
+		c.String(http.StatusForbidden, accessPage("Access denied", content))
 		return
 	}
 	if s.access != nil && s.accessEmailSender != nil && s.access.AllowEmailRequest(c.Request.Host, email) {
@@ -111,7 +123,7 @@ func (s *Server) redeemApplicationAccessCode(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	invalid := func() {
-		c.String(http.StatusUnauthorized, accessCodePage(email, formReturn, `<p class="error">That code is wrong or has expired. Check the latest email, or go back and request a new one.</p>`))
+		c.String(http.StatusUnauthorized, accessCodePage(email, formReturn, `<p class="error">That code is wrong or has expired. Check the latest email, or request a new code.</p>`))
 	}
 	if s.access == nil {
 		invalid()
@@ -155,7 +167,7 @@ type applicationAccessConfirmationRequest struct {
 func (s *Server) confirmApplicationAccess(c *gin.Context) {
 	var request applicationAccessConfirmationRequest
 	if err := c.ShouldBind(&request); err != nil {
-		c.String(http.StatusBadRequest, "A sign-in token is required")
+		s.accessError(c, http.StatusBadRequest, "Link incomplete", "This sign-in link is missing part of its address. Open it again from the email, or request a new code.", "/")
 		return
 	}
 	s.handleApplicationAccessVerification(c, request.Token, true)
@@ -163,19 +175,19 @@ func (s *Server) confirmApplicationAccess(c *gin.Context) {
 
 func (s *Server) handleApplicationAccessVerification(c *gin.Context, token string, confirm bool) {
 	if s.access == nil {
-		c.String(http.StatusServiceUnavailable, "Access service is unavailable")
+		s.accessError(c, http.StatusServiceUnavailable, "Sign-in unavailable", "Sign-in is not working on this server right now. Try again in a few minutes.", "/")
 		return
 	}
 	c.Header("Cache-Control", "no-store")
 	c.Header("Referrer-Policy", "no-referrer")
 	email, host, returnPath, err := s.access.InspectMagicLink(token)
 	if err != nil {
-		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
+		s.accessError(c, http.StatusUnauthorized, "Link expired", "This sign-in link has expired or was already used. Each link works once, for 15 minutes.", returnPath)
 		return
 	}
 	policy, ok := s.applicationAccessPolicy(host, returnPath)
 	if !ok || !access.Allows(policy, email) || access.Hostname(c.Request.Host) != access.Hostname(host) {
-		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
+		s.accessError(c, http.StatusUnauthorized, "Link expired", "This sign-in link has expired or was already used. Each link works once, for 15 minutes.", returnPath)
 		return
 	}
 	if !confirm {
@@ -185,7 +197,7 @@ func (s *Server) handleApplicationAccessVerification(c *gin.Context, token strin
 		return
 	}
 	if _, _, _, err := s.access.VerifyMagicLink(token); err != nil {
-		c.String(http.StatusUnauthorized, "This sign-in link is invalid or expired")
+		s.accessError(c, http.StatusUnauthorized, "Link expired", "This sign-in link has expired or was already used. Each link works once, for 15 minutes.", returnPath)
 		return
 	}
 	s.startApplicationAccessSession(c, email, host, returnPath, policy)
@@ -194,7 +206,7 @@ func (s *Server) handleApplicationAccessVerification(c *gin.Context, token strin
 func (s *Server) startApplicationAccessSession(c *gin.Context, email, host, returnPath string, policy *models.DomainAccessConfig) {
 	session, err := s.access.Session(email, host, policy.SessionHours)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "Could not create an access session")
+		s.accessError(c, http.StatusInternalServerError, "Sign-in failed", "We could not sign you in. Try again.", returnPath)
 		return
 	}
 	https := c.GetHeader("X-Forwarded-Proto") == "https"
