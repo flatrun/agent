@@ -54,6 +54,9 @@ func (s *Syncer) SyncIfStale(ctx context.Context, maxAge time.Duration) {
 	if time.Since(s.lastCheck) < maxAge {
 		return
 	}
+	// A failed or timed-out check counts too, or an outage would make every
+	// listing wait out its timeout.
+	s.lastCheck = time.Now()
 	if _, _, err := s.check(ctx); err != nil {
 		log.Printf("templatesource: check for catalog changes: %v", err)
 	}

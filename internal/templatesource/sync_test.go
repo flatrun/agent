@@ -281,3 +281,19 @@ func TestSyncIfStaleChecksAtMostOncePerWindow(t *testing.T) {
 		t.Fatal("SyncIfStale waited for a sync already in progress")
 	}
 }
+
+func TestSyncIfStaleDoesNotRetryAFailedCheckWithinTheWindow(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	s := &Syncer{Resolver: NewResolver(GitHubSource{Repo: "flatrun/templates", Enabled: true, BaseURL: srv.URL}), CacheDir: t.TempDir()}
+
+	s.SyncIfStale(context.Background(), time.Minute)
+	s.SyncIfStale(context.Background(), time.Minute)
+	if requests != 1 {
+		t.Fatalf("requests during an outage = %d, want 1", requests)
+	}
+}
