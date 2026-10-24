@@ -138,11 +138,11 @@ func (s *Service) Publish(event events.Event) (events.IngestResult, error) {
 		Kind:    kind,
 		Title:   event.Title,
 		Message: message,
-		Panels: []Panel{{
+		Panels: append(eventPanels(event), Panel{
 			Title:  "Incident ID",
 			Value:  result.Incident.ID,
 			Detail: fmt.Sprintf("Source: %s", event.Source),
-		}},
+		}),
 	}
 	return result, s.deliverEvent(event, result.Notification, notification)
 }
@@ -413,6 +413,14 @@ func plainMessage(notification Notification) string {
 		body.WriteString("\n\n")
 	}
 	body.WriteString(notification.Message)
+	if notification.Action != nil && notification.Action.URL != "" {
+		body.WriteString("\n\n")
+		if notification.Action.Label != "" {
+			body.WriteString(notification.Action.Label)
+			body.WriteString(": ")
+		}
+		body.WriteString(notification.Action.URL)
+	}
 	for _, panel := range notification.Panels {
 		body.WriteString("\n\n")
 		body.WriteString(panel.Title)
@@ -424,6 +432,28 @@ func plainMessage(notification Notification) string {
 			body.WriteString("\n")
 			body.WriteString(panel.Detail)
 		}
+		for _, row := range panel.Rows {
+			body.WriteString("\n")
+			body.WriteString(row.Label)
+			body.WriteString(": ")
+			body.WriteString(row.Value)
+		}
 	}
 	return body.String()
+}
+
+func eventPanels(event events.Event) []Panel {
+	raw, ok := event.Attributes["panels"]
+	if !ok {
+		return nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var panels []Panel
+	if json.Unmarshal(data, &panels) != nil {
+		return nil
+	}
+	return panels
 }

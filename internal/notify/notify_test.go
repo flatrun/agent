@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"image/png"
 	"net/url"
 	"strings"
 	"testing"
@@ -289,7 +290,7 @@ func TestEmailVariantsAndPanels(t *testing.T) {
 		if !strings.Contains(body, "bgcolor=\"#111827\"") {
 			t.Errorf("%s template missing email-client-safe header background", tc.kind)
 		}
-		if !strings.Contains(body, ">FlatRun</td>") {
+		if !strings.Contains(body, ">Sent by FlatRun</td>") {
 			t.Errorf("%s template missing shared footer", tc.kind)
 		}
 	}
@@ -309,5 +310,54 @@ func TestNotifyReturnsFirstError(t *testing.T) {
 	}
 	if err := s.Notify("t", "m"); err == nil {
 		t.Error("expected first delivery error surfaced")
+	}
+}
+
+func TestEmailKeepsLongLinksInsideTheColumn(t *testing.T) {
+	link := "https://app.example.com/_flatrun/access/verify?token=" + strings.Repeat("x", 300)
+	body, err := RenderEmail(Notification{Title: "Sign in", Message: "Use the button below.", Action: &Action{Label: "Sign in", URL: link}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"max-width:600px", "table-layout:fixed", `<table role="presentation" width="600"`, `href="` + link + `"`, ">Sign in</a>"} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("email is missing %q", expected)
+		}
+	}
+	if strings.Contains(body, ">"+link) {
+		t.Error("the raw link is printed as text, which widens the email")
+	}
+	unsafe, _ := RenderEmail(Notification{Title: "x", Action: &Action{Label: "Go", URL: "javascript:alert(1)"}})
+	if strings.Contains(unsafe, "javascript:") {
+		t.Error("a script URL became a button")
+	}
+	if text := plainMessage(Notification{Message: "Hi", Action: &Action{Label: "Sign in", URL: link}}); !strings.Contains(text, "Sign in: "+link) {
+		t.Errorf("plain text lacks the link: %q", text)
+	}
+}
+
+func TestEmailDrawsChartsAndBars(t *testing.T) {
+	threshold := 80.0
+	notification := Notification{Kind: KindNegative, Title: "High CPU", Panels: []Panel{
+		{Title: "Last hour", Chart: &Chart{Points: []float64{40, 55, 70, 92, 88}, Threshold: &threshold}},
+		{Title: "Top containers", Rows: []PanelRow{{Label: "shop-web", Value: "61.0%", Share: 1}, {Label: "shop-worker", Value: "22.0%", Share: 0.36}}},
+	}}
+	rendered, err := renderEmailForDelivery(notification)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rendered.embeds) != 2 || rendered.embeds[1].name != "flatrun-panel-1.png" {
+		t.Fatalf("chart was not attached: %d embeds", len(rendered.embeds))
+	}
+	if _, err := png.Decode(bytes.NewReader(rendered.embeds[1].data)); err != nil {
+		t.Fatalf("chart is not a PNG: %v", err)
+	}
+	for _, expected := range []string{"cid:flatrun-panel-1.png", "shop-worker", `width="36%"`, `width="100%" bgcolor="#b91c1c"`} {
+		if !strings.Contains(rendered.html, expected) {
+			t.Errorf("email is missing %q", expected)
+		}
+	}
+	if _, ok := chartPNG(Chart{Points: []float64{1}}, accentRGBA(KindGeneric)); ok {
+		t.Error("a single reading was drawn as a chart")
 	}
 }

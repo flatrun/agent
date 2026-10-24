@@ -113,7 +113,9 @@ func RunPlugin() error {
 	engine := NewAlertEngine(store)
 	engine.SetRules(alertStore.Load())
 	engine.OnAlert(func(ev AlertEvent) {
-		emitAlertEvent(ev, ev.Message())
+		summary := ev
+		summary.Snapshot = nil
+		emitAlertEvent(ev, summary.Message(), alertPanels(store, ev)...)
 	})
 	// An opt-in rule action restarts the offending deployment when it fires,
 	// scoped to FlatRun-managed deployments and rate-limited so it cannot flap.
@@ -196,12 +198,15 @@ func emitTypedNotificationTo(kind, title, message string, targets []string) {
 	}
 }
 
-func emitAlertEvent(event AlertEvent, message string) {
+func emitAlertEvent(event AlertEvent, message string, panels ...alertPanel) {
 	base, token := pluginsdk.AgentCallback()
 	if base == "" || token == "" {
 		return
 	}
 	payload := alertCoreEvent(event, message)
+	if len(panels) > 0 {
+		payload.Attributes = map[string]any{"panels": panels}
+	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, base+"/internal/events", bytes.NewReader(body))
 	if err != nil {

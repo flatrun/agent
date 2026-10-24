@@ -153,3 +153,17 @@ func TestPublishUsesExplicitEventTargets(t *testing.T) {
 		t.Fatalf("targets = %#v", targets)
 	}
 }
+
+func TestEventPanelsComeFromTheEventAttributes(t *testing.T) {
+	event := events.Event{Attributes: map[string]any{"panels": []any{
+		map[string]any{"title": "Last hour", "chart": map[string]any{"points": []any{1.0, 2.0}, "threshold": 1.5}},
+		map[string]any{"title": "Top containers", "rows": []any{map[string]any{"label": "web", "value": "60%", "share": 1.0}}},
+	}}}
+	panels := eventPanels(event)
+	if len(panels) != 2 || panels[0].Chart == nil || len(panels[0].Chart.Points) != 2 || *panels[0].Chart.Threshold != 1.5 || panels[1].Rows[0].Label != "web" {
+		t.Fatalf("panels = %+v", panels)
+	}
+	if eventPanels(events.Event{Attributes: map[string]any{"panels": "nonsense"}}) != nil {
+		t.Error("malformed panels were accepted")
+	}
+}
