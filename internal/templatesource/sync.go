@@ -2,11 +2,15 @@ package templatesource
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Syncer resolves the catalog and writes it into the on-disk template cache the
@@ -16,15 +20,77 @@ import (
 type Syncer struct {
 	Resolver *Resolver
 	CacheDir string
+
+	mu        sync.Mutex
+	lastCheck time.Time
 }
 
+// versionFile records which source and version the cache holds, followed by
+// the files that sync wrote. The listing only reads directories, so the file
+// never shows up as a template.
+const versionFile = ".catalog-version"
+
 // Sync resolves the catalog and materializes it into CacheDir. It returns the
-// source used and the number of templates written. When no source is available
-// it leaves the cache untouched and returns ("", 0, nil) so a previously synced
+// source used and the number of templates written. When the source reports
+// that the cache already holds its current version, nothing is downloaded or
+// written and it returns (source, 0, nil). When no source is available it
+// leaves the cache untouched and returns ("", 0, nil) so a previously synced
 // catalog survives an outage. Per-template write failures are skipped rather
 // than aborting the whole sync.
 func (s *Syncer) Sync(ctx context.Context) (string, int, error) {
-	templates, src, err := s.Resolver.Resolve(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.check(ctx)
+}
+
+// SyncIfStale runs Sync when the last check is older than maxAge. It returns
+// at once when another sync holds the cache, so a caller waiting on it is
+// never stuck behind a slow download.
+func (s *Syncer) SyncIfStale(ctx context.Context, maxAge time.Duration) {
+	if !s.mu.TryLock() {
+		return
+	}
+	defer s.mu.Unlock()
+	if time.Since(s.lastCheck) < maxAge {
+		return
+	}
+	// A failed or timed-out check counts too, or an outage would make every
+	// listing wait out its timeout.
+	s.lastCheck = time.Now()
+	if _, _, err := s.check(ctx); err != nil {
+		log.Printf("templatesource: check for catalog changes: %v", err)
+	}
+}
+
+func (s *Syncer) check(ctx context.Context) (string, int, error) {
+	known, version, files := s.readVersion()
+	// A file removed from the cache by hand would otherwise stay missing until
+	// upstream changes, so any gap forces a full download.
+	for _, name := range files {
+		if _, err := os.Stat(filepath.Join(s.CacheDir, filepath.FromSlash(name))); err != nil {
+			known, version = "", ""
+			break
+		}
+	}
+	return s.sync(ctx, known, version)
+}
+
+// Refresh downloads and writes the catalog even when it has not changed, for an
+// operator who wants the cache rebuilt now.
+func (s *Syncer) Refresh(ctx context.Context) (string, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sync(ctx, "", "")
+}
+
+func (s *Syncer) sync(ctx context.Context, known, version string) (string, int, error) {
+	templates, src, next, err := s.Resolver.ResolveSince(ctx, known, version)
+	if err == nil || errors.Is(err, ErrUnchanged) {
+		s.lastCheck = time.Now()
+	}
+	if errors.Is(err, ErrUnchanged) {
+		return src, 0, nil
+	}
 	if err != nil {
 		return src, 0, err
 	}
@@ -36,14 +102,58 @@ func (s *Syncer) Sync(ctx context.Context) (string, int, error) {
 	}
 
 	written := 0
+	var files []string
 	for _, t := range templates {
 		if err := s.write(t); err != nil {
 			log.Printf("templatesource: skipping template %q: %v", t.ID, err)
 			continue
 		}
 		written++
+		files = append(files, templateFiles(t)...)
+	}
+	// A partial write must not be recorded as current, or the failed templates
+	// would never be retried while upstream stays the same.
+	if written == len(templates) && next != "" {
+		s.writeVersion(src, next, files)
+	} else {
+		s.writeVersion("", "", nil)
 	}
 	return src, written, nil
+}
+
+func (s *Syncer) readVersion() (string, string, []string) {
+	data, err := os.ReadFile(filepath.Join(s.CacheDir, versionFile))
+	if err != nil {
+		return "", "", nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		return "", "", nil
+	}
+	return lines[0], lines[1], lines[2:]
+}
+
+func templateFiles(t Template) []string {
+	files := []string{path.Join(t.ID, "docker-compose.yml")}
+	if len(t.Metadata) > 0 {
+		files = append(files, path.Join(t.ID, "metadata.yml"))
+	}
+	for name := range t.Files {
+		files = append(files, path.Join(t.ID, name))
+	}
+	return files
+}
+
+func (s *Syncer) writeVersion(source, version string, files []string) {
+	target := filepath.Join(s.CacheDir, versionFile)
+	if source == "" {
+		_ = os.Remove(target)
+		return
+	}
+	content := strings.Join(append([]string{source, version}, files...), "\n") + "\n"
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		log.Printf("templatesource: record catalog version: %v", err)
+	}
 }
 
 func (s *Syncer) write(t Template) error {

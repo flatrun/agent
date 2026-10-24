@@ -451,7 +451,7 @@ func New(cfg *config.Config, configPath string) *Server {
 
 	s.planStore.StartPruneLoop(context.Background(), time.Hour, time.Duration(cfg.Plans.RetentionDays)*24*time.Hour)
 
-	syncInterval := 3600
+	syncInterval := 900
 	if cfg.Templates.SyncInterval != nil {
 		syncInterval = *cfg.Templates.SyncInterval
 	}
@@ -4363,6 +4363,11 @@ type Template struct {
 
 func (s *Server) listTemplates(c *gin.Context) {
 	templatesDir := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates")
+	if s.templateSyncer != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+		s.templateSyncer.SyncIfStale(ctx, time.Minute)
+		cancel()
+	}
 
 	if err := os.MkdirAll(templatesDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -4490,7 +4495,7 @@ func (s *Server) refreshTemplates(c *gin.Context) {
 		}
 	}
 
-	src, synced, err := s.templateSyncer.Sync(c.Request.Context())
+	src, synced, err := s.templateSyncer.Refresh(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": fmt.Sprintf("template sync failed: %v", err),

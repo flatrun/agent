@@ -68,23 +68,37 @@ func (g GitHubSource) tarballURL() string {
 }
 
 func (g GitHubSource) List(ctx context.Context) ([]Template, error) {
+	templates, _, err := g.ListSince(ctx, "")
+	return templates, err
+}
+
+// ListSince uses the tarball's ETag as the version. codeload answers a matching
+// If-None-Match with 304 and no body, and the check does not count against the
+// GitHub API rate limit, so it is cheap to repeat often.
+func (g GitHubSource) ListSince(ctx context.Context, version string) ([]Template, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.tarballURL(), nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	if version != "" {
+		req.Header.Set("If-None-Match", version)
 	}
 	resp, err := g.client().Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotModified && version != "" {
+		return nil, version, ErrUnchanged
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %s: status %d", g.Repo, resp.StatusCode)
+		return nil, "", fmt.Errorf("fetch %s: status %d", g.Repo, resp.StatusCode)
 	}
 
 	gz, err := gzip.NewReader(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("gzip: %w", err)
+		return nil, "", fmt.Errorf("gzip: %w", err)
 	}
 	defer gz.Close()
 
@@ -99,7 +113,7 @@ func (g GitHubSource) List(ctx context.Context) ([]Template, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("tar: %w", err)
+			return nil, "", fmt.Errorf("tar: %w", err)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
@@ -114,13 +128,13 @@ func (g GitHubSource) List(ctx context.Context) ([]Template, error) {
 		}
 		data, err := io.ReadAll(io.LimitReader(tr, maxTemplateFileBytes))
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", name, err)
+			return nil, "", fmt.Errorf("read %s: %w", name, err)
 		}
 		total += int64(len(data))
 		files[name] = data
 	}
 
-	return templatesFromFiles(files), nil
+	return templatesFromFiles(files), resp.Header.Get("ETag"), nil
 }
 
 // stripTopDir removes the leading "<something>/" component that GitHub tarballs

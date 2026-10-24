@@ -6,10 +6,10 @@ func TestTemplatesSyncIntervalDefault(t *testing.T) {
 	var cfg Config
 	setDefaults(&cfg)
 	if cfg.Templates.SyncInterval == nil {
-		t.Fatal("unset sync_interval should default to 3600, got nil")
+		t.Fatal("unset sync_interval should default to 900, got nil")
 	}
-	if *cfg.Templates.SyncInterval != 3600 {
-		t.Fatalf("unset sync_interval should default to 3600, got %d", *cfg.Templates.SyncInterval)
+	if *cfg.Templates.SyncInterval != 900 {
+		t.Fatalf("unset sync_interval should default to 900, got %d", *cfg.Templates.SyncInterval)
 	}
 }
 
