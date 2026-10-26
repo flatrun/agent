@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/flatrun/agent/pkg/models"
 )
@@ -53,7 +54,7 @@ func restoreSnapshot(snapshots []fileSnapshot) error {
 // limit file are put back as they were before write ran, and nginx is
 // reloaded on that restored config, so a rejected change never stays in
 // conf.d where it would break the next reload for every deployment.
-func (m *Manager) applyChange(name string, write func() error) error {
+func (m *Manager) applyChange(name string, write func() error, extra ...string) error {
 	m.applyMu.Lock()
 	defer m.applyMu.Unlock()
 
@@ -63,6 +64,7 @@ func (m *Manager) applyChange(name string, write func() error) error {
 		filepath.Join(m.configPath, "rate_limits.conf"),
 	}
 	m.mu.RUnlock()
+	paths = append(paths, extra...)
 
 	snapshots, err := takeSnapshot(paths...)
 	if err != nil {
@@ -99,9 +101,24 @@ func (m *Manager) applyChange(name string, write func() error) error {
 // ApplyDeployment renders and installs the deployment's vhost and rate
 // limits, keeping the previous files when nginx rejects the result.
 func (m *Manager) ApplyDeployment(deployment *models.Deployment) error {
+	wanted := m.basicAuthFiles(deployment)
+	existing := m.existingBasicAuthFiles(deployment.Name)
 	return m.applyChange(deployment.Name, func() error {
+		if err := writeBasicAuthFiles(wanted, existing); err != nil {
+			return fmt.Errorf("failed to write basic auth users: %w", err)
+		}
 		return m.CreateVirtualHost(deployment)
-	})
+	}, unionPaths(existing, wanted)...)
+}
+
+func unionPaths(existing []string, wanted map[string][]byte) []string {
+	paths := append([]string{}, existing...)
+	for path := range wanted {
+		if !slices.Contains(existing, path) {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 // ApplyVirtualHost installs pre-rendered vhost content, keeping the previous
@@ -118,7 +135,11 @@ func (m *Manager) RemoveVirtualHost(name string) error {
 	if !m.VirtualHostExists(name) {
 		return nil
 	}
+	existing := m.existingBasicAuthFiles(name)
 	return m.applyChange(name, func() error {
+		if err := writeBasicAuthFiles(nil, existing); err != nil {
+			return err
+		}
 		return m.DeleteVirtualHost(name)
-	})
+	}, existing...)
 }

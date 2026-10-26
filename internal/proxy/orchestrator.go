@@ -19,6 +19,7 @@ func NewOrchestrator(cfg *config.Config) *Orchestrator {
 	nginxMgr := nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath)
 	sslMgr := ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath, nil)
 	nginxMgr.SetStaplingChecker(sslMgr.HasOCSPResponder)
+	nginxMgr.SetCertificateChecker(sslMgr.CertificateExists)
 	return &Orchestrator{
 		nginx: nginxMgr,
 		ssl:   sslMgr,
@@ -28,6 +29,7 @@ func NewOrchestrator(cfg *config.Config) *Orchestrator {
 func NewOrchestratorWithManagers(nginxMgr *nginx.Manager, sslMgr *ssl.Manager) *Orchestrator {
 	if nginxMgr != nil && sslMgr != nil {
 		nginxMgr.SetStaplingChecker(sslMgr.HasOCSPResponder)
+		nginxMgr.SetCertificateChecker(sslMgr.CertificateExists)
 	}
 	return &Orchestrator{
 		nginx: nginxMgr,
