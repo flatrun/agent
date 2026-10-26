@@ -9,19 +9,13 @@ import (
 
 var bodySizePattern = regexp.MustCompile(`^([0-9]+)([kKmMgG]?)$`)
 
-// DefaultBodySize is nginx's own client_max_body_size, in force wherever
-// neither the domain nor the agent sets one.
-const DefaultBodySize = "1m"
-
-// EffectiveBodySize is the limit nginx applies to a domain.
-func EffectiveBodySize(domain, agentDefault string) string {
+// ConfiguredBodySize is the limit FlatRun writes for a domain. Empty means
+// neither the domain nor the agent sets one, so nginx.conf's value applies.
+func ConfiguredBodySize(domain, agentDefault string) string {
 	if domain != "" {
 		return domain
 	}
-	if agentDefault != "" {
-		return agentDefault
-	}
-	return DefaultBodySize
+	return agentDefault
 }
 
 // MaxBodySizeLimit caps configurable request sizes. Larger bodies belong on

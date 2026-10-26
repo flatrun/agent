@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -42,6 +41,9 @@ type Manager struct {
 	// applyMu serialises validated writes so one change's rollback cannot
 	// overwrite another change made in between.
 	applyMu sync.Mutex
+
+	hookTokenOnce sync.Once
+	hookToken     string
 
 	testConfig func() error
 	reload     func() error
@@ -910,7 +912,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				StaticCache:   d.StaticCache,
 				Access:        d.Access,
 				DomainID:      safeLocationName(d.ID),
-				BodyLimit:     firstNonEmpty(d.ClientMaxBodySize, m.config.ClientMaxBodySize),
+				BodyLimit:     firstNonEmpty(validBodyLimit(d.ClientMaxBodySize), validBodyLimit(m.config.ClientMaxBodySize)),
 				NoBuffering:   d.ProxyBuffering != nil && !*d.ProxyBuffering,
 				AllowIPs:      d.AllowIPs,
 				BasicAuthFile: m.basicAuthFile(deploymentName, d),
@@ -951,7 +953,7 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			}
 		}
 
-		bodyLimit, tooLarge := serverBodyLimits(locations)
+		tooLarge := tooLargeDomains(locations)
 		for i := range locations {
 			locations[i].Headers = responseHeaders(locations[i].responseHeaders, hasSSL)
 		}
@@ -967,8 +969,8 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			RedirectAliases: redirects,
 			RedirectScheme:  scheme,
 			WebrootPath:     m.containerWebrootPath,
-			BodyLimit:       bodyLimit,
 			TooLargeDomains: tooLarge,
+			HookToken:       m.HookToken(),
 			Domain:          host,
 			SSLEnabled:      hasSSL,
 			HasSSL:          hasSSL,
@@ -1072,19 +1074,16 @@ type upstreamData struct {
 }
 
 type serverData struct {
-	Domain         string
-	SSLEnabled     bool
-	Locations      []locationData
-	HasSSL         bool
-	SSLDomain      string
-	ServerAliases  []string
-	EnableStapling bool
-	HasAccess      bool
-	// BodyLimit is the largest location limit on this host, so requests
-	// matched outside a domain's location (rate-limit, access portal) are not
-	// refused below what the domain allows.
-	BodyLimit       string
+	Domain          string
+	SSLEnabled      bool
+	Locations       []locationData
+	HasSSL          bool
+	SSLDomain       string
+	ServerAliases   []string
+	EnableStapling  bool
+	HasAccess       bool
 	TooLargeDomains []string
+	HookToken       string
 	DeploymentName  string
 	// RedirectAliases answer with a permanent redirect to Domain.
 	RedirectAliases []aliasRedirect
@@ -1406,9 +1405,6 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 {{- end}}
 {{define "serverLimits"}}
-{{- if .BodyLimit}}
-    client_max_body_size {{.BodyLimit}};
-{{- end}}
 {{- range .TooLargeDomains}}
 
     location @flatrun_too_large_{{.}} {
@@ -1418,6 +1414,7 @@ server {
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-Host $host;
         proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Flatrun-Hook "{{$.HookToken}}";
         proxy_intercept_errors on;
         recursive_error_pages on;
         error_page 404 500 502 503 504 = @flatrun_too_large_plain;
@@ -1726,6 +1723,16 @@ func escapeNginxString(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value)
 }
 
+// validBodyLimit drops a size nginx would refuse, such as "64mb" written by
+// hand into service.yml, so one bad value cannot block the whole vhost.
+func validBodyLimit(value string) string {
+	if err := models.ValidateBodySize(value); err != nil {
+		log.Printf("warning: ignoring client_max_body_size %q: %v", value, err)
+		return ""
+	}
+	return value
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if v != "" {
@@ -1735,39 +1742,19 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// serverBodyLimits returns the largest location limit on a host and the
-// domains on it that get a 413 handler. Limits are only written when a domain
-// or the agent sets one, so a limit raised by hand in nginx.conf still holds;
-// once a host has a server-level limit, locations without their own are
-// pinned to nginx's default so they do not inherit the larger value.
-func serverBodyLimits(locations []locationData) (string, []string) {
-	largest := ""
-	var largestBytes int64 = -1
+// tooLargeDomains lists the domains on a host that get a 413 handler. Limits
+// are written only on the locations whose domain or the agent sets one, so
+// every other location keeps the value nginx.conf gives it.
+func tooLargeDomains(locations []locationData) []string {
 	seen := map[string]bool{}
 	var domains []string
 	for _, loc := range locations {
-		size, err := models.ParseBodySize(loc.BodyLimit)
-		if err == nil {
-			if size == 0 {
-				size = math.MaxInt64
-			}
-			if size > largestBytes {
-				largest, largestBytes = loc.BodyLimit, size
-			}
-		}
 		if loc.DomainID != "" && !seen[loc.DomainID] {
 			seen[loc.DomainID] = true
 			domains = append(domains, loc.DomainID)
 		}
 	}
-	if largest != "" {
-		for i := range locations {
-			if locations[i].BodyLimit == "" {
-				locations[i].BodyLimit = models.DefaultBodySize
-			}
-		}
-	}
-	return largest, domains
+	return domains
 }
 
 func sanitizeZoneName(path string) string {
