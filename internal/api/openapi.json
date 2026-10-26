@@ -7010,6 +7010,47 @@
         "x-permission": "deployments:write",
         "x-plan-supported": true
       },
+      "patch": {
+        "operationId": "patch-projects-by-name-domains-by-domainId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "domainId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.DomainConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      },
       "put": {
         "operationId": "put-projects-by-name-domains-by-domainId",
         "parameters": [

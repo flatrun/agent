@@ -622,6 +622,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/deployments/:name/access/email-targets", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.getAccessEmailTargets)
 			protected.POST("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDomain)
 			protected.PUT("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDomain)
+			protected.PATCH("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.patchDomain)
 			protected.DELETE("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.deleteDomain)
 
 			// Settings endpoints
@@ -2378,6 +2379,7 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		}
 	}
 
+	originalMetadata, _ := cloneMetadata(deployment.Metadata)
 	metadata := mergeMetadata(deployment.Metadata, &incoming, sentFields)
 
 	if err := s.manager.SaveMetadata(name, metadata); err != nil {
@@ -2390,10 +2392,22 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 	deployment.Metadata = metadata
 
 	var proxyResult *proxy.SetupResult
+	var proxyErr error
 	if metadata.Networking.Expose {
-		proxyResult, _ = s.proxyOrchestrator.SetupDeployment(deployment)
+		proxyResult, proxyErr = s.proxyOrchestrator.SetupDeployment(deployment)
 	} else {
-		_ = s.proxyOrchestrator.TeardownDeployment(name)
+		proxyErr = s.proxyOrchestrator.TeardownDeployment(name)
+	}
+	if proxyErr != nil {
+		if originalMetadata != nil {
+			if err := s.manager.SaveMetadata(name, originalMetadata); err != nil {
+				log.Printf("warning: failed to restore metadata for %s: %v", name, err)
+			}
+		}
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Proxy update failed, the previous settings are still active: " + proxyErr.Error(),
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -5998,16 +6012,8 @@ func (s *Server) enableSSLForDeployment(name, domain string) {
 	if err := s.manager.SaveMetadata(name, dep.Metadata); err != nil {
 		log.Printf("warning: failed to save metadata after SSL enable for %s: %v", name, err)
 	}
-	if err := s.proxyOrchestrator.NginxManager().UpdateVirtualHost(dep); err != nil {
-		log.Printf("warning: failed to update vhost after SSL enable for %s: %v", name, err)
-		return
-	}
-	if err := s.proxyOrchestrator.NginxManager().TestConfig(); err != nil {
-		log.Printf("warning: SSL config test failed for %s: %v", name, err)
-		return
-	}
-	if err := s.proxyOrchestrator.NginxManager().Reload(); err != nil {
-		log.Printf("warning: failed to reload nginx after SSL enable for %s: %v", name, err)
+	if err := s.proxyOrchestrator.NginxManager().ApplyDeployment(dep); err != nil {
+		log.Printf("warning: nginx rejected the SSL config for %s, keeping the previous config: %v", name, err)
 	}
 }
 
@@ -6290,6 +6296,7 @@ func (s *Server) disableSSL(c *gin.Context) {
 		return
 	}
 
+	previousSSL := deployment.Metadata.SSL
 	deployment.Metadata.SSL.Enabled = false
 	deployment.Metadata.SSL.AutoCert = false
 
@@ -6300,22 +6307,15 @@ func (s *Server) disableSSL(c *gin.Context) {
 		return
 	}
 
-	if err := s.proxyOrchestrator.NginxManager().UpdateVirtualHost(deployment); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to update virtual host: " + err.Error(),
+	if err := s.proxyOrchestrator.NginxManager().ApplyDeployment(deployment); err != nil {
+		deployment.Metadata.SSL = previousSSL
+		if saveErr := s.manager.SaveMetadata(name, deployment.Metadata); saveErr != nil {
+			log.Printf("warning: failed to restore SSL settings for %s: %v", name, saveErr)
+		}
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Nginx rejected the config, the previous one is still active: " + err.Error(),
 		})
 		return
-	}
-
-	if err := s.proxyOrchestrator.NginxManager().TestConfig(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Nginx config test failed: " + err.Error(),
-		})
-		return
-	}
-
-	if err := s.proxyOrchestrator.NginxManager().Reload(); err != nil {
-		log.Printf("Warning: failed to reload nginx: %v", err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -6645,11 +6645,71 @@ func (s *Server) updateDomain(c *gin.Context) {
 	}
 
 	if planRequested(c) {
-		s.planDomainChange(c, deployment, "deployment.domain.update", &updatedDomain, func(dep *models.Deployment) (bool, error) {
-			return false, s.mutateDomainUpdate(dep, domainID, &updatedDomain)
-		})
+		s.planDomainUpdate(c, deployment, domainID, &updatedDomain)
 		return
 	}
+	s.commitDomainUpdate(c, deployment, domainID, &updatedDomain)
+}
+
+// patchDomain changes only the fields present in the request body and keeps
+// the rest of the stored domain, so one setting can be changed without
+// resending the whole domain.
+func (s *Server) patchDomain(c *gin.Context) {
+	name := c.Param("name")
+	domainID := c.Param("domainId")
+
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
+		return
+	}
+
+	var existing *models.DomainConfig
+	if deployment.Metadata != nil {
+		deployment.Metadata.MaterializeDomains()
+		for i := range deployment.Metadata.Domains {
+			if deployment.Metadata.Domains[i].ID == domainID {
+				existing = &deployment.Metadata.Domains[i]
+				break
+			}
+		}
+	}
+	if existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		return
+	}
+
+	stored, err := json.Marshal(existing)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var updatedDomain models.DomainConfig
+	if err := json.Unmarshal(stored, &updatedDomain); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// Decoding onto the stored copy keeps every field the request leaves out.
+	if err := c.ShouldBindJSON(&updatedDomain); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid domain data: " + err.Error()})
+		return
+	}
+
+	if planRequested(c) {
+		s.planDomainUpdate(c, deployment, domainID, &updatedDomain)
+		return
+	}
+	s.commitDomainUpdate(c, deployment, domainID, &updatedDomain)
+}
+
+func (s *Server) planDomainUpdate(c *gin.Context, deployment *models.Deployment, domainID string, updatedDomain *models.DomainConfig) {
+	s.planDomainChange(c, deployment, "deployment.domain.update", updatedDomain, func(dep *models.Deployment) (bool, error) {
+		return false, s.mutateDomainUpdate(dep, domainID, updatedDomain)
+	})
+}
+
+func (s *Server) commitDomainUpdate(c *gin.Context, deployment *models.Deployment, domainID string, updatedDomain *models.DomainConfig) {
+	name := deployment.Name
 
 	if !s.requirePlannedAction(c, name) {
 		return
@@ -6657,7 +6717,7 @@ func (s *Server) updateDomain(c *gin.Context) {
 	originalMetadata, _ := cloneMetadata(deployment.Metadata)
 	originalCompose, _, _ := s.manager.GetComposeFile(name)
 
-	if err := s.mutateDomainUpdate(deployment, domainID, &updatedDomain); err != nil {
+	if err := s.mutateDomainUpdate(deployment, domainID, updatedDomain); err != nil {
 		respondAPIError(c, err)
 		return
 	}
@@ -6675,6 +6735,7 @@ func (s *Server) updateDomain(c *gin.Context) {
 
 	var result *proxy.SetupResult
 	if s.proxyOrchestrator != nil {
+		var err error
 		result, err = s.proxyOrchestrator.SetupDeployment(deployment)
 		if err != nil {
 			_ = s.manager.SaveMetadata(name, originalMetadata)

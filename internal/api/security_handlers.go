@@ -527,6 +527,7 @@ func (s *Server) updateDeploymentSecurity(c *gin.Context) {
 	if deployment.Metadata == nil {
 		deployment.Metadata = &models.ServiceMetadata{}
 	}
+	previousSecurity := deployment.Metadata.Security
 	deployment.Metadata.Security = &securityConfig
 
 	if err := s.manager.SaveMetadata(name, deployment.Metadata); err != nil {
@@ -540,11 +541,13 @@ func (s *Server) updateDeploymentSecurity(c *gin.Context) {
 	if s.proxyOrchestrator != nil && s.proxyOrchestrator.NginxManager().VirtualHostExists(name) {
 		nginxMgr := s.proxyOrchestrator.NginxManager()
 
-		if err := nginxMgr.UpdateVirtualHost(deployment); err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"security":      securityConfig,
-				"vhost_updated": false,
-				"warning":       "Security config saved but vhost update failed: " + err.Error(),
+		if err := nginxMgr.ApplyDeployment(deployment); err != nil {
+			deployment.Metadata.Security = previousSecurity
+			if saveErr := s.manager.SaveMetadata(name, deployment.Metadata); saveErr != nil {
+				log.Printf("warning: failed to restore security settings for %s: %v", name, saveErr)
+			}
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "Nginx rejected the security config, the previous one is still active: " + err.Error(),
 			})
 			return
 		}
@@ -560,26 +563,6 @@ func (s *Server) updateDeploymentSecurity(c *gin.Context) {
 		}
 
 		hookStatus, _ = nginxMgr.GetSecurityHookStatus(name)
-
-		if err := nginxMgr.TestConfig(); err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"security":      securityConfig,
-				"vhost_updated": true,
-				"hook_status":   hookStatus,
-				"warning":       "Security config saved but nginx config test failed: " + err.Error(),
-			})
-			return
-		}
-
-		if err := nginxMgr.Reload(); err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"security":      securityConfig,
-				"vhost_updated": true,
-				"hook_status":   hookStatus,
-				"warning":       "Nginx reload failed (may need manual reload): " + err.Error(),
-			})
-			return
-		}
 		vhostUpdated = true
 	}
 
