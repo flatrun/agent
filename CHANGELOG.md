@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0-beta.13] - 2026-10-26
+
+### Added
+- A maximum upload request size per domain, with an agent-wide default for domains that set none
+- Uploads refused for their size are counted per domain, listed for the project and sent as a notification; an opt-in page tells visitors the limit
+- Per-domain streaming responses, response headers, alias redirect to the primary hostname, basic auth and IP allow-list
+- Per-service CPU and memory limits, restart policy, log rotation, environment, command and entrypoint, kept across redeploys in a compose file FlatRun generates beside the project's own
+- Resource limits set on a running container are kept when it is recreated
+- A single service can sleep when idle; a request to it starts the stopped services it depends on first
+- A domain can be changed one field at a time
+- Proxied requests are recorded with the project and service that served them
+
+### Fixed
+- A proxy change nginx rejects leaves the last working config in place and returns nginx's error, instead of leaving a broken file that blocked reloads for every project
+- Settings the proxy rejects are restored and reported as a conflict, where they used to report success
+- Rate-limited paths reach the same service and port as the route they belong to
+- HTTPS sites send the default security headers alongside HSTS
+- A project on the legacy single-domain settings keeps them when its domain is first edited
+
+### Upgrading
+- A project with service settings gets `docker-compose.flatrun.yml` beside its compose file. To run it without FlatRun, pass both: `docker compose -f docker-compose.yml -f docker-compose.flatrun.yml up -d`
+
 ## [0.4.0-beta.12] - 2026-10-23
 
 ### Added
