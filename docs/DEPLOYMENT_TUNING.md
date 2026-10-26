@@ -94,6 +94,26 @@ overlay stays as it was; the overlay it replaces is kept as
 settings until the service is recreated, which the service panel offers
 after saving.
 
+## Per-service sleep
+
+A single service can stop after it has been idle and start again on the
+next request, while the rest of the deployment keeps running. Turn it on
+from the service panel, or with
+`PUT /api/projects/:name/services/:service/sleep` and a body of
+`{"enabled": true, "idle_minutes": 15}` (at least 5 minutes). It is saved
+under `service_sleep` in `service.yml`.
+
+- A service counts as busy while requests are routed to it or its
+  containers receive network traffic.
+- A service that another running, awake service lists in `depends_on`
+  stays up. A database therefore sleeps only after everything that uses it
+  is asleep.
+- A request to a sleeping service's domain or path shows a short "waking
+  up" page. The service's sleeping dependencies start first, then the
+  service.
+- Deployment-wide sleep, set on the Deploys tab, takes precedence: while it
+  is on, per-service sleep settings are kept but not used.
+
 ## Container resource limits
 
 Memory and CPU caps can also be applied to a running container directly,

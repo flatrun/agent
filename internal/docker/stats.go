@@ -150,10 +150,24 @@ func GetDeploymentStats(projectName string) ([]ContainerStats, error) {
 	if projectName == "" {
 		return []ContainerStats{}, nil
 	}
+	return statsForLabels("com.docker.compose.project=" + projectName)
+}
 
-	// Get container names by docker-compose project label
-	psCmd := exec.Command("docker", "ps", "-q",
-		"--filter", "label=com.docker.compose.project="+projectName)
+// GetServiceStats returns stats for the running containers of one compose
+// service.
+func GetServiceStats(projectName, service string) ([]ContainerStats, error) {
+	if projectName == "" || service == "" {
+		return []ContainerStats{}, nil
+	}
+	return statsForLabels("com.docker.compose.project="+projectName, "com.docker.compose.service="+service)
+}
+
+func statsForLabels(labels ...string) ([]ContainerStats, error) {
+	args := []string{"ps", "-q"}
+	for _, label := range labels {
+		args = append(args, "--filter", "label="+label)
+	}
+	psCmd := exec.Command("docker", args...)
 	containerIDs, err := psCmd.Output()
 	if err != nil || len(strings.TrimSpace(string(containerIDs))) == 0 {
 		return []ContainerStats{}, nil
@@ -164,8 +178,8 @@ func GetDeploymentStats(projectName string) ([]ContainerStats, error) {
 		return []ContainerStats{}, nil
 	}
 
-	args := append([]string{"stats", "--no-stream", "--format", "{{json .}}"}, ids...)
-	cmd := exec.Command("docker", args...)
+	statsArgs := append([]string{"stats", "--no-stream", "--format", "{{json .}}"}, ids...)
+	cmd := exec.Command("docker", statsArgs...)
 	output, err := cmd.Output()
 	if err != nil {
 		return []ContainerStats{}, nil

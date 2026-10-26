@@ -99,6 +99,18 @@ type ServiceMetadata struct {
 	Workspace          string                    `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	// ServiceSettings is keyed by compose service name.
 	ServiceSettings map[string]ServiceSettings `yaml:"service_settings,omitempty" json:"service_settings,omitempty"`
+	// ServiceSleep lets single services sleep, keyed by compose service name.
+	// It applies only while Sleep, which sleeps the whole deployment, is off.
+	ServiceSleep map[string]SleepConfig `yaml:"service_sleep,omitempty" json:"service_sleep,omitempty"`
+}
+
+// ServiceSleepEnabled reports whether the service sleeps on its own.
+func (m *ServiceMetadata) ServiceSleepEnabled(service string) bool {
+	if m == nil || (m.Sleep != nil && m.Sleep.Enabled) {
+		return false
+	}
+	cfg, ok := m.ServiceSleep[service]
+	return ok && cfg.Enabled
 }
 
 // SleepConfig stops a deployment after a stretch without traffic and starts
