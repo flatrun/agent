@@ -6028,11 +6028,12 @@ func (s *Server) enableSSLForDeployment(name, domain string) {
 		return
 	}
 
-	if err := s.manager.SaveMetadata(name, dep.Metadata); err != nil {
-		log.Printf("warning: failed to save metadata after SSL enable for %s: %v", name, err)
-	}
 	if err := s.proxyOrchestrator.NginxManager().ApplyDeployment(dep); err != nil {
 		log.Printf("warning: nginx rejected the SSL config for %s, keeping the previous config: %v", name, err)
+		return
+	}
+	if err := s.manager.SaveMetadata(name, dep.Metadata); err != nil {
+		log.Printf("warning: failed to save metadata after SSL enable for %s: %v", name, err)
 	}
 }
 
