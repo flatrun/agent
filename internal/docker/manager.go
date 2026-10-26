@@ -205,6 +205,9 @@ type Manager struct {
 	cleanupTimeout time.Duration
 	mu             sync.RWMutex
 
+	overlayMu        sync.Mutex
+	overlayValidator func(deploymentPath, candidate string) error
+
 	// apiDegraded tracks whether status reads are currently falling back to the
 	// compose CLI, so the fallback is reported once per outage instead of once
 	// per request.

@@ -151,6 +151,9 @@ func BuildWorkload(deployment *models.Deployment, composeContent string, replica
 		workload.Networks = []string{proxyNetwork}
 	}
 	workload.Environment = environmentMap(service.Environment)
+	if err := applyServiceSettings(&workload, deployment.Metadata.ServiceSettings[compatibility.Service]); err != nil {
+		return orchestrator.Workload{}, err
+	}
 	for _, domain := range deployment.Metadata.GetDomains() {
 		if domain.Service == compatibility.Service {
 			workload.Port = domain.ContainerPort
@@ -161,6 +164,37 @@ func BuildWorkload(deployment *models.Deployment, composeContent string, replica
 		workload.Health.Path = deployment.Metadata.HealthCheck.Path
 	}
 	return workload, nil
+}
+
+// applyServiceSettings layers the settings FlatRun keeps for the service
+// over the compose file, as compose does with the overlay file.
+func applyServiceSettings(workload *orchestrator.Workload, settings models.ServiceSettings) error {
+	if r := settings.Resources; r != nil {
+		if r.CPUs != "" {
+			cpus, err := cpuValue(r.CPUs)
+			if err != nil {
+				return fmt.Errorf("invalid CPU limit: %w", err)
+			}
+			workload.Resources.CPULimit = cpus
+		}
+		if r.Memory != "" {
+			memory, err := memoryValue(r.Memory)
+			if err != nil {
+				return fmt.Errorf("invalid memory limit: %w", err)
+			}
+			workload.Resources.MemoryLimit = memory
+		}
+	}
+	for k, v := range settings.Environment {
+		workload.Environment[k] = v
+	}
+	if len(settings.Command) > 0 {
+		workload.Command = settings.Command
+	}
+	if len(settings.Entrypoint) > 0 {
+		workload.Entrypoint = settings.Entrypoint
+	}
+	return nil
 }
 
 func workloadResources(resources composeResources) (orchestrator.Resources, error) {

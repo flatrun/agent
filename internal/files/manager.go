@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/flatrun/agent/pkg/models"
 )
 
 type FileInfo struct {
@@ -295,9 +297,11 @@ func activeComposePath(deploymentPath string) string {
 		}
 	}
 	for _, pattern := range []string{"*compose*.yml", "*compose*.yaml"} {
-		matches, err := filepath.Glob(filepath.Join(deploymentPath, pattern))
-		if err == nil && len(matches) > 0 {
-			return matches[0]
+		matches, _ := filepath.Glob(filepath.Join(deploymentPath, pattern))
+		for _, match := range matches {
+			if filepath.Base(match) != models.ComposeOverlayFile {
+				return match
+			}
 		}
 	}
 	return ""

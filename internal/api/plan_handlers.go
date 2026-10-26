@@ -64,6 +64,12 @@ func (s *Server) planRegistry() map[string]planAction {
 			Permission: auth.PermConfigWrite,
 			Apply:      applyPlannedConfigUpdate,
 		},
+		"deployment.service.settings": {
+			Permission:      auth.PermDeploymentsWrite,
+			AccessLevel:     auth.AccessLevelWrite,
+			ProtectedAction: protectedActionUpdateDeployment,
+			Apply:           applyPlannedServiceSettings,
+		},
 		"deployment.service.start": {
 			Permission:  auth.PermDeploymentsWrite,
 			AccessLevel: auth.AccessLevelWrite,

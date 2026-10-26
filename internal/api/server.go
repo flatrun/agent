@@ -658,6 +658,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/services/:service/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("stop"))
 			protected.POST("/deployments/:name/services/:service/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("restart"))
 			protected.POST("/deployments/:name/services/:service/job", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.enqueueServiceJob)
+			protected.GET("/deployments/:name/services/:service/settings", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getServiceSettings)
+			protected.PUT("/deployments/:name/services/:service/settings", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateServiceSettings)
 			protected.POST("/deployments/:name/services/:service/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("rebuild"))
 			protected.POST("/deployments/:name/services/:service/pull", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("pull"))
 

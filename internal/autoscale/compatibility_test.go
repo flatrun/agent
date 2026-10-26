@@ -61,3 +61,39 @@ func TestBuildWorkloadCarriesPortableRuntimeInputs(t *testing.T) {
 		t.Fatalf("workload resources = %#v", workload.Resources)
 	}
 }
+
+func TestBuildWorkloadAppliesSavedServiceSettings(t *testing.T) {
+	deployment := &models.Deployment{Name: "shop", Metadata: &models.ServiceMetadata{
+		Scaling: &models.ScalingConfig{Service: "web", Stateless: true},
+		ServiceSettings: map[string]models.ServiceSettings{"web": {
+			Resources:   &models.ServiceResources{CPUs: "2", Memory: "1g"},
+			Environment: map[string]string{"APP_ENV": "staging", "EXTRA": "1"},
+			Command:     []string{"serve", "--fast"},
+		}},
+	}}
+	workload, err := BuildWorkload(deployment, `services:
+  web:
+    image: shop:1
+    environment:
+      APP_ENV: production
+      KEEP: "yes"
+    command: ["serve"]
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+`, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workload.Resources.CPULimit != 2 || workload.Resources.MemoryLimit != 1<<30 {
+		t.Fatalf("resources = %#v, want the saved limits", workload.Resources)
+	}
+	if workload.Environment["APP_ENV"] != "staging" || workload.Environment["EXTRA"] != "1" || workload.Environment["KEEP"] != "yes" {
+		t.Fatalf("environment = %#v, want saved values merged over the compose file", workload.Environment)
+	}
+	if len(workload.Command) != 2 || workload.Command[1] != "--fast" {
+		t.Fatalf("command = %#v", workload.Command)
+	}
+}

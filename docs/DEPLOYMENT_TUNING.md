@@ -64,21 +64,53 @@ Each change is checked with `nginx -t` before nginx reloads. If the check or
 the reload fails, the previous virtual host stays in place and the API returns
 the nginx error.
 
+## Per-service settings
+
+Each compose service can carry settings that FlatRun keeps under
+`service_settings` in `service.yml`. Set them from the service panel's
+Settings tab, or with
+`PUT /api/projects/:name/services/:service/settings` (add `?plan=true` to
+review the change first).
+
+| Field | Example | What it does |
+|-------|---------|--------------|
+| `resources.cpus` | `"0.5"` | CPU limit in cores. |
+| `resources.memory` | `512m` | Memory limit; at least `6m`. |
+| `restart` | `unless-stopped` | `no`, `always`, `unless-stopped` or `on-failure[:N]`. |
+| `logging.max_size` / `logging.max_files` | `10m` / `3` | Rotate the container's json-file log. |
+| `environment` | `{"APP_ENV": "production"}` | Variables merged over the compose file's own. Values are literal; `$` is not expanded. |
+| `command` / `entrypoint` | `["php-fpm", "-F"]` | Replace the image's command or entrypoint. |
+
+The agent renders the settings into `docker-compose.flatrun.yml` next to the
+deployment's compose file and passes it to compose after that file, so the
+compose file itself is never rewritten and a redeploy from a repository
+keeps the settings. To run the deployment without FlatRun, pass both files:
+`docker compose -f docker-compose.yml -f docker-compose.flatrun.yml up -d`.
+
+Every change is checked with `docker compose config` first. If compose
+refuses it, the API returns 422 with compose's message and the installed
+overlay stays as it was; the overlay it replaces is kept as
+`docker-compose.flatrun.yml.bak`. The running container keeps its current
+settings until the service is recreated, which the service panel offers
+after saving.
+
 ## Container resource limits
 
-Memory and CPU caps are applied to the running container, not the compose file,
-so they take effect without a rewrite or a restart. Set them from the UI or over
-the API:
+Memory and CPU caps can also be applied to a running container directly,
+without a restart:
 
 - `GET /api/projects/:name/resources` reads the current limits.
-- `PUT /api/containers/:id/resources` updates them.
+- `PUT /api/containers/:id/resources` updates them. For a container that
+  belongs to a deployment, `cpus` and `memory_limit` are also saved to its
+  service's settings, so recreating the container keeps them; the response
+  reports this as `persisted`.
 
 | Limit | Unit | What it does |
 |-------|------|--------------|
 | `memory_limit` | bytes | Hard memory ceiling for the container. |
-| `memory_swap` | bytes | Memory + swap ceiling. |
+| `memory_swap` | bytes | Memory + swap ceiling. Applied to the running container only. |
 | `cpus` | cores | Fractional CPU cap (e.g. `1.5`). |
-| `cpu_shares` | relative weight | Relative CPU priority under contention. |
+| `cpu_shares` | relative weight | Relative CPU priority under contention. Applied to the running container only. |
 
 ## App-level worker counts
 
