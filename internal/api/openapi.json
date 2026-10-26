@@ -16372,6 +16372,24 @@
           "size_alert_bytes"
         ]
       },
+      "models.BasicAuthConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "users": {
+            "type": "array"
+          }
+        },
+        "x-property-order": [
+          "enabled",
+          "users"
+        ],
+        "x-columns": [
+          "enabled"
+        ]
+      },
       "models.Certificate": {
         "type": "object",
         "properties": {
@@ -16774,6 +16792,18 @@
               "type": "string"
             }
           },
+          "allow_ips": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "basic_auth": {
+            "$ref": "#/components/schemas/models.BasicAuthConfig"
+          },
+          "canonical_redirect": {
+            "type": "string"
+          },
           "client_max_body_size": {
             "type": "string"
           },
@@ -16789,8 +16819,17 @@
           "path_prefix": {
             "type": "string"
           },
+          "proxy_buffering": {
+            "type": "boolean"
+          },
           "proxy_timeout": {
             "type": "integer"
+          },
+          "response_headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "route_only_aliases": {
             "type": "array",
@@ -16828,6 +16867,11 @@
           "static_cache",
           "client_max_body_size",
           "upload_limit_page",
+          "proxy_buffering",
+          "response_headers",
+          "canonical_redirect",
+          "basic_auth",
+          "allow_ips",
           "access"
         ],
         "x-columns": [
@@ -16840,7 +16884,9 @@
           "proxy_timeout",
           "static_cache",
           "client_max_body_size",
-          "upload_limit_page"
+          "upload_limit_page",
+          "proxy_buffering",
+          "canonical_redirect"
         ]
       },
       "models.EnvironmentInfo": {

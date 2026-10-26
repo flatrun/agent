@@ -2375,8 +2375,13 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 		return
 	}
 	if _, sentDomains := sentFields["domains"]; sentDomains {
+		var storedDomains []models.DomainConfig
+		if deployment.Metadata != nil {
+			storedDomains = deployment.Metadata.GetDomains()
+		}
 		for i := range incoming.Domains {
-			if err := validateDomainSettings(&incoming.Domains[i]); err != nil {
+			keepBasicAuthHashes(&incoming.Domains[i], storedDomains)
+			if err := normalizeDomainSettings(&incoming.Domains[i]); err != nil {
 				respondAPIError(c, err)
 				return
 			}

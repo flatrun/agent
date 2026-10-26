@@ -195,8 +195,39 @@ type DomainConfig struct {
 	// UploadLimitPage replaces the plain 413 nginx sends for a request over
 	// ClientMaxBodySize with a page, or JSON for API clients, stating the
 	// limit. A 413 sent by the app itself is passed through unchanged.
-	UploadLimitPage bool                `yaml:"upload_limit_page,omitempty" json:"upload_limit_page,omitempty"`
-	Access          *DomainAccessConfig `yaml:"access,omitempty" json:"access,omitempty"`
+	UploadLimitPage bool `yaml:"upload_limit_page,omitempty" json:"upload_limit_page,omitempty"`
+	// ProxyBuffering set to false sends the app's response to the client as
+	// it is written, for server-sent events and other streaming endpoints.
+	ProxyBuffering *bool `yaml:"proxy_buffering,omitempty" json:"proxy_buffering,omitempty"`
+	// ResponseHeaders are added to every response for this domain. One named
+	// like a default security header replaces that header.
+	ResponseHeaders map[string]string `yaml:"response_headers,omitempty" json:"response_headers,omitempty"`
+	// CanonicalRedirect "primary" answers requests for Aliases with a
+	// permanent redirect to Domain instead of serving the app on them.
+	CanonicalRedirect string           `yaml:"canonical_redirect,omitempty" json:"canonical_redirect,omitempty"`
+	BasicAuth         *BasicAuthConfig `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
+	// AllowIPs limits the domain to these addresses and CIDR ranges; every
+	// other client gets 403.
+	AllowIPs []string            `yaml:"allow_ips,omitempty" json:"allow_ips,omitempty"`
+	Access   *DomainAccessConfig `yaml:"access,omitempty" json:"access,omitempty"`
+}
+
+// CanonicalRedirectPrimary sends a domain's aliases to its primary hostname.
+const CanonicalRedirectPrimary = "primary"
+
+// BasicAuthConfig asks visitors for a username and password before the
+// request reaches the app.
+type BasicAuthConfig struct {
+	Enabled bool            `yaml:"enabled" json:"enabled"`
+	Users   []BasicAuthUser `yaml:"users,omitempty" json:"users,omitempty"`
+}
+
+// BasicAuthUser holds a crypt hash only. Password is accepted on write, is
+// hashed into PasswordHash before anything is saved, and is never stored.
+type BasicAuthUser struct {
+	Username     string `yaml:"username" json:"username"`
+	Password     string `yaml:"-" json:"password,omitempty"`
+	PasswordHash string `yaml:"password_hash" json:"password_hash,omitempty"`
 }
 
 type DomainAccessConfig struct {

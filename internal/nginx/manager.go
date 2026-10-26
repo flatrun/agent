@@ -29,6 +29,7 @@ type Manager struct {
 	webrootPath          string
 	containerWebrootPath string
 	staplingChecker      func(sslDomain string) bool
+	certChecker          func(domain string) bool
 	mu                   sync.RWMutex
 
 	// keepalive capability is probed once against the running nginx image and
@@ -112,6 +113,17 @@ func (m *Manager) ConfigPath() string {
 // behaviour.
 func (m *Manager) SetStaplingChecker(fn func(sslDomain string) bool) {
 	m.staplingChecker = fn
+}
+
+// SetCertificateChecker injects a predicate that reports whether a
+// certificate has been issued for a hostname. Alias redirect servers listen
+// on 443 only for aliases that have one; when left unset, none do.
+func (m *Manager) SetCertificateChecker(fn func(domain string) bool) {
+	m.certChecker = fn
+}
+
+func (m *Manager) hasCertificate(domain string) bool {
+	return m.certChecker != nil && m.certChecker(domain)
 }
 
 func (m *Manager) shouldStaple(sslDomain string) bool {
@@ -715,6 +727,11 @@ func (m *Manager) renderMultiDomainConfigWithBackends(deployment *models.Deploym
 		servers[i].Locations = attachRateLimits(servers[i].Domain, servers[i].Locations, rateLimits)
 		for j := range servers[i].Locations {
 			servers[i].Locations[j].SecurityEnabled = securityEnabled
+			// allow/deny in a location replaces the server's deny list, so an
+			// allow-listed location repeats the deployment's blocked addresses.
+			if len(servers[i].Locations[j].AllowIPs) > 0 {
+				servers[i].Locations[j].DenyIPs = blockedIPs
+			}
 		}
 	}
 
@@ -843,6 +860,8 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 		hasSSL := false
 		sslDomain := host
 		var serverAliases []string
+		var redirects []aliasRedirect
+		redirectSeen := map[string]bool{}
 
 		for _, d := range domainList {
 			path := d.PathPrefix
@@ -892,6 +911,11 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				Access:        d.Access,
 				DomainID:      safeLocationName(d.ID),
 				BodyLimit:     firstNonEmpty(d.ClientMaxBodySize, m.config.ClientMaxBodySize),
+				NoBuffering:   d.ProxyBuffering != nil && !*d.ProxyBuffering,
+				AllowIPs:      d.AllowIPs,
+				BasicAuthFile: m.basicAuthFile(deploymentName, d),
+
+				responseHeaders: d.ResponseHeaders,
 			})
 
 			if d.SSL.Enabled {
@@ -899,7 +923,14 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			}
 
 			for _, alias := range d.Aliases {
-				if alias != host {
+				switch {
+				case alias == host:
+				case d.CanonicalRedirect == models.CanonicalRedirectPrimary:
+					if !redirectSeen[alias] {
+						redirectSeen[alias] = true
+						redirects = append(redirects, aliasRedirect{Host: alias, TLS: m.hasCertificate(alias)})
+					}
+				default:
 					serverAliases = append(serverAliases, alias)
 				}
 			}
@@ -921,8 +952,21 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 		}
 
 		bodyLimit, tooLarge := serverBodyLimits(locations)
+		for i := range locations {
+			locations[i].Headers = responseHeaders(locations[i].responseHeaders, hasSSL)
+		}
+		scheme := "http"
+		if hasSSL {
+			scheme = "https"
+		}
+		for i := range redirects {
+			redirects[i].TLS = redirects[i].TLS && hasSSL
+		}
 
 		servers = append(servers, serverData{
+			RedirectAliases: redirects,
+			RedirectScheme:  scheme,
+			WebrootPath:     m.containerWebrootPath,
 			BodyLimit:       bodyLimit,
 			TooLargeDomains: tooLarge,
 			Domain:          host,
@@ -1042,6 +1086,20 @@ type serverData struct {
 	BodyLimit       string
 	TooLargeDomains []string
 	DeploymentName  string
+	// RedirectAliases answer with a permanent redirect to Domain.
+	RedirectAliases []aliasRedirect
+	RedirectScheme  string
+	WebrootPath     string
+}
+
+type aliasRedirect struct {
+	Host string
+	TLS  bool
+}
+
+type headerData struct {
+	Name  string
+	Value string
 }
 
 type locationData struct {
@@ -1064,6 +1122,14 @@ type locationData struct {
 	// to put in an nginx location name.
 	DomainID  string
 	BodyLimit string
+	// NoBuffering streams the app's response instead of buffering it.
+	NoBuffering   bool
+	Headers       []headerData
+	AllowIPs      []string
+	DenyIPs       []string
+	BasicAuthFile string
+
+	responseHeaders map[string]string
 	// Upstream is the value assigned to $upstream: an upstream block name when
 	// keepalive is supported, otherwise the literal service:port.
 	Upstream string
@@ -1298,7 +1364,41 @@ const accessTemplates = sleepTemplates + `{{define "accessPortal"}}{{if .HasAcce
 // in nginx.conf, so a server that adds HSTS must repeat the global headers.
 // Rate-limited paths are locations too, carrying the upstream of the route
 // they fall under, so they reach the same service and port as that route.
-const locationTemplates = `{{define "securityHeaders"}}
+const locationTemplates = `{{define "aliasRedirects"}}
+{{- range .RedirectAliases}}
+server {
+    listen 80;
+    server_name {{.Host}};
+
+    location /.well-known/acme-challenge/ {
+        root {{$.WebrootPath}};
+        access_log off;
+        log_not_found off;
+    }
+
+    location / {
+        return 301 {{$.RedirectScheme}}://{{$.Domain}}$request_uri;
+    }
+}
+{{- if .TLS}}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name {{.Host}};
+
+    ssl_certificate /etc/letsencrypt/live/{{.Host}}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{.Host}}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location / {
+        return 301 https://{{$.Domain}}$request_uri;
+    }
+}
+{{- end}}
+{{- end}}
+{{- end}}
+{{define "securityHeaders"}}
     add_header Strict-Transport-Security "max-age=63072000" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -1349,6 +1449,22 @@ const locationTemplates = `{{define "securityHeaders"}}
         limit_req zone={{.LimitZone}} burst={{.LimitBurst}} nodelay;
         limit_req_status 429;
 {{- end}}
+{{- if .AllowIPs}}
+{{- range .DenyIPs}}
+        deny {{.}};
+{{- end}}
+{{- range .AllowIPs}}
+        allow {{.}};
+{{- end}}
+        deny all;
+{{- end}}
+{{- if .BasicAuthFile}}
+        auth_basic "Restricted";
+        auth_basic_user_file {{.BasicAuthFile}};
+{{- end}}
+{{- range .Headers}}
+        add_header {{.Name}} "{{.Value}}" always;
+{{- end}}
         set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
@@ -1364,6 +1480,9 @@ const locationTemplates = `{{define "securityHeaders"}}
         proxy_connect_timeout 60s;
         proxy_send_timeout {{.ProxyTimeout}}s;
         proxy_read_timeout {{.ProxyTimeout}}s;
+{{- if .NoBuffering}}
+        proxy_buffering off;
+{{- end}}
 {{- if .StaticCache}}
         expires $flatrun_static_expires;
 {{- end}}
@@ -1376,6 +1495,7 @@ const locationTemplates = `{{define "securityHeaders"}}
 {{- end}}`
 
 const multiRouteHTTPTemplate = upstreamBlocks + accessTemplates + locationTemplates + `{{- range .Servers}}
+{{template "aliasRedirects" .}}
 server {
     listen 80;
     server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
@@ -1398,6 +1518,7 @@ server {
 {{end}}`
 
 const multiRouteSSLTemplate = upstreamBlocks + accessTemplates + locationTemplates + `{{- range .Servers}}
+{{template "aliasRedirects" .}}
 server {
     listen 80;
     server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
@@ -1451,6 +1572,7 @@ server {
 {{end}}`
 
 const multiRouteMixedTemplate = upstreamBlocks + accessTemplates + locationTemplates + `{{- range .Servers}}
+{{template "aliasRedirects" .}}
 {{- if .HasSSL}}
 server {
     listen 80;
@@ -1560,6 +1682,48 @@ func safeLocationName(id string) string {
 		return id
 	}
 	return ""
+}
+
+// defaultSecurityHeaders mirrors the headers nginx.conf sets for every
+// response. A location that adds its own header stops inheriting them, so it
+// repeats them unless the domain overrides one by name.
+var defaultSecurityHeaders = []headerData{
+	{"X-Frame-Options", "SAMEORIGIN"},
+	{"X-Content-Type-Options", "nosniff"},
+	{"X-XSS-Protection", "1; mode=block"},
+	{"Referrer-Policy", "strict-origin-when-cross-origin"},
+}
+
+func responseHeaders(custom map[string]string, https bool) []headerData {
+	if len(custom) == 0 {
+		return nil
+	}
+	overridden := map[string]bool{}
+	names := make([]string, 0, len(custom))
+	for name := range custom {
+		overridden[strings.ToLower(name)] = true
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	defaults := defaultSecurityHeaders
+	if https {
+		defaults = append([]headerData{{"Strict-Transport-Security", "max-age=63072000"}}, defaults...)
+	}
+	var out []headerData
+	for _, h := range defaults {
+		if !overridden[strings.ToLower(h.Name)] {
+			out = append(out, h)
+		}
+	}
+	for _, name := range names {
+		out = append(out, headerData{Name: name, Value: escapeNginxString(custom[name])})
+	}
+	return out
+}
+
+func escapeNginxString(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value)
 }
 
 func firstNonEmpty(values ...string) string {
