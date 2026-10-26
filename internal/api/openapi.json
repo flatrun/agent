@@ -8598,6 +8598,79 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/projects/{name}/services/{service}/settings": {
+      "get": {
+        "operationId": "get-projects-by-name-services-by-service-settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name-services-by-service-settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.ServiceSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write",
+        "x-plan-supported": true
+      }
+    },
     "/api/projects/{name}/services/{service}/start": {
       "post": {
         "operationId": "post-projects-by-name-services-by-service-start",
@@ -17426,6 +17499,25 @@
           "running_replicas"
         ]
       },
+      "models.ServiceLogging": {
+        "type": "object",
+        "properties": {
+          "max_files": {
+            "type": "integer"
+          },
+          "max_size": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "max_size",
+          "max_files"
+        ],
+        "x-columns": [
+          "max_size",
+          "max_files"
+        ]
+      },
       "models.ServiceMetadata": {
         "type": "object",
         "properties": {
@@ -17507,6 +17599,12 @@
               "type": "string"
             }
           },
+          "service_settings": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/models.ServiceSettings"
+            }
+          },
           "sleep": {
             "$ref": "#/components/schemas/models.SleepConfig"
           },
@@ -17552,7 +17650,8 @@
           "source",
           "environment",
           "sleep",
-          "workspace"
+          "workspace",
+          "service_settings"
         ],
         "x-columns": [
           "name",
@@ -17593,6 +17692,68 @@
           "source",
           "target",
           "read_only"
+        ]
+      },
+      "models.ServiceResources": {
+        "type": "object",
+        "properties": {
+          "cpus": {
+            "type": "string"
+          },
+          "memory": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "cpus",
+          "memory"
+        ],
+        "x-columns": [
+          "cpus",
+          "memory"
+        ]
+      },
+      "models.ServiceSettings": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "entrypoint": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "logging": {
+            "$ref": "#/components/schemas/models.ServiceLogging"
+          },
+          "resources": {
+            "$ref": "#/components/schemas/models.ServiceResources"
+          },
+          "restart": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "resources",
+          "restart",
+          "logging",
+          "environment",
+          "command",
+          "entrypoint"
+        ],
+        "x-columns": [
+          "restart"
         ]
       },
       "models.SleepConfig": {

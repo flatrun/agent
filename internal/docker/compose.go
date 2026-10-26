@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/flatrun/agent/pkg/models"
 )
 
 type ComposeExecutor struct {
@@ -389,8 +391,10 @@ func (c *ComposeExecutor) findComposeFile(dirPath string) string {
 
 	for _, pattern := range patterns {
 		matches, _ := filepath.Glob(dirPath + "/" + pattern)
-		if len(matches) > 0 {
-			return matches[0]
+		for _, match := range matches {
+			if filepath.Base(match) != models.ComposeOverlayFile {
+				return match
+			}
 		}
 	}
 
@@ -430,7 +434,11 @@ func (c *ComposeExecutor) composeCommand(ctx context.Context, deploymentPath str
 	projectName := c.getProjectName(deploymentPath)
 
 	var baseArgs []string
-	baseArgs = append(baseArgs, "-f", composePath, "-p", projectName)
+	baseArgs = append(baseArgs, "-f", composePath)
+	if _, err := os.Stat(overlayPath(deploymentPath)); err == nil {
+		baseArgs = append(baseArgs, "-f", models.ComposeOverlayFile)
+	}
+	baseArgs = append(baseArgs, "-p", projectName)
 
 	envFile := deploymentPath + "/.env.flatrun"
 	if _, err := os.Stat(envFile); err == nil {

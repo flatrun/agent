@@ -1,12 +1,15 @@
 package api
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/capacity"
 	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/system"
+	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -126,10 +129,95 @@ func (s *Server) updateContainerResources(c *gin.Context) {
 
 	resources, _ := docker.GetContainerResources(id)
 
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"message":   "Resources updated",
 		"resources": resources,
-	})
+	}
+	if persisted, err := s.persistContainerResources(id, &update); err != nil {
+		response["persisted"] = false
+		response["persist_error"] = err.Error()
+	} else {
+		response["persisted"] = persisted
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// persistContainerResources saves CPU and memory limits set on a
+// deployment's container into its service settings, so recreating the
+// container keeps them. It reports false for a container outside any
+// deployment, where there is nothing to save them in.
+func (s *Server) persistContainerResources(containerID string, update *docker.ResourceUpdate) (bool, error) {
+	if update.CPUs == nil && update.MemoryLimit == nil {
+		return false, nil
+	}
+	name, err := s.containerDeploymentName(containerID)
+	if err != nil || name == "" {
+		return false, nil
+	}
+	deployment, err := s.manager.GetDeployment(name)
+	if err != nil {
+		return false, nil
+	}
+	service := ""
+	for _, svc := range deployment.Services {
+		if deploymentContainsContainer(&models.Deployment{Services: []models.Service{svc}}, containerID) {
+			service = svc.Name
+			break
+		}
+	}
+	if service == "" {
+		return false, nil
+	}
+	return s.persistServiceResources(deployment, service, update)
+}
+
+// persistServiceResources saves the limits as the service's settings unless
+// the deployment only takes reviewed or unprotected changes; the running
+// container keeps the new limits either way.
+func (s *Server) persistServiceResources(deployment *models.Deployment, service string, update *docker.ResourceUpdate) (bool, error) {
+	name := deployment.Name
+	if deployment.Metadata != nil && deployment.Metadata.RequirePlan {
+		return false, errors.New("this deployment requires changes to be planned, so the limits apply to the running container only; plan them in the service's settings to keep them")
+	}
+	if blocked, reason, err := s.protectedDeploymentActionBlocked(name, protectedActionUpdateDeployment); err != nil {
+		return false, err
+	} else if blocked {
+		return false, errors.New(reason)
+	}
+
+	settings := models.ServiceSettings{}
+	if deployment.Metadata != nil {
+		settings = deployment.Metadata.ServiceSettings[service]
+	}
+	resources := models.ServiceResources{}
+	if settings.Resources != nil {
+		resources = *settings.Resources
+	}
+	if update.CPUs != nil {
+		resources.CPUs = ""
+		if *update.CPUs > 0 {
+			resources.CPUs = strconv.FormatFloat(*update.CPUs, 'f', -1, 64)
+		}
+	}
+	if update.MemoryLimit != nil {
+		resources.Memory = composeMemory(*update.MemoryLimit)
+	}
+	settings.Resources = &resources
+	if err := s.commitServiceSettings(name, service, &settings); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func composeMemory(bytes int64) string {
+	switch {
+	case bytes <= 0:
+		return ""
+	case bytes%(1<<20) == 0:
+		return strconv.FormatInt(bytes>>20, 10) + "m"
+	default:
+		return strconv.FormatInt(bytes, 10) + "b"
+	}
 }
 
 func (s *Server) getDeploymentResources(c *gin.Context) {

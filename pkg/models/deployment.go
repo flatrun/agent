@@ -97,6 +97,8 @@ type ServiceMetadata struct {
 	Environment        *EnvironmentInfo          `yaml:"environment,omitempty" json:"environment,omitempty"`
 	Sleep              *SleepConfig              `yaml:"sleep,omitempty" json:"sleep,omitempty"`
 	Workspace          string                    `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	// ServiceSettings is keyed by compose service name.
+	ServiceSettings map[string]ServiceSettings `yaml:"service_settings,omitempty" json:"service_settings,omitempty"`
 }
 
 // SleepConfig stops a deployment after a stretch without traffic and starts

@@ -263,9 +263,11 @@ func FindComposeFile(dirPath string) string {
 	}
 
 	for _, pattern := range patterns {
-		matches, err := filepath.Glob(filepath.Join(dirPath, pattern))
-		if err == nil && len(matches) > 0 {
-			return matches[0]
+		matches, _ := filepath.Glob(filepath.Join(dirPath, pattern))
+		for _, match := range matches {
+			if filepath.Base(match) != models.ComposeOverlayFile {
+				return match
+			}
 		}
 	}
 
