@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -166,6 +167,22 @@ func (s *Server) persistContainerResources(containerID string, update *docker.Re
 	}
 	if service == "" {
 		return false, nil
+	}
+	return s.persistServiceResources(deployment, service, update)
+}
+
+// persistServiceResources saves the limits as the service's settings unless
+// the deployment only takes reviewed or unprotected changes; the running
+// container keeps the new limits either way.
+func (s *Server) persistServiceResources(deployment *models.Deployment, service string, update *docker.ResourceUpdate) (bool, error) {
+	name := deployment.Name
+	if deployment.Metadata != nil && deployment.Metadata.RequirePlan {
+		return false, errors.New("this deployment requires changes to be planned, so the limits apply to the running container only; plan them in the service's settings to keep them")
+	}
+	if blocked, reason, err := s.protectedDeploymentActionBlocked(name, protectedActionUpdateDeployment); err != nil {
+		return false, err
+	} else if blocked {
+		return false, errors.New(reason)
 	}
 
 	settings := models.ServiceSettings{}

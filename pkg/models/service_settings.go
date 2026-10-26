@@ -56,7 +56,7 @@ func (s ServiceSettings) Validate() error {
 	if r := s.Resources; r != nil {
 		if r.CPUs != "" {
 			cpus, err := strconv.ParseFloat(r.CPUs, 64)
-			if err != nil || cpus <= 0 || cpus > 1024 {
+			if err != nil || !(cpus > 0 && cpus <= 1024) {
 				return fmt.Errorf("CPU limit must be a number above 0, such as 0.5 or 2")
 			}
 		}

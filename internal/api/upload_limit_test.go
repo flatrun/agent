@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/flatrun/agent/internal/nginx"
+	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/pkg/models"
 )
 
@@ -30,10 +32,24 @@ func uploadLimitRouter(t *testing.T) (*Server, *gin.Engine) {
 	return server, router
 }
 
-func TestTooLargeHookAnswersAPIClientsWithTheLimit(t *testing.T) {
-	_, router := uploadLimitRouter(t)
+func withTestProxy(t *testing.T, server *Server) {
+	t.Helper()
+	cfg := *server.config
+	cfg.DeploymentsPath = t.TempDir()
+	server.proxyOrchestrator = proxy.NewOrchestrator(&cfg)
+}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/hooks/too-large/shop/media", nil)
+func tooLargeRequest(server *Server, path string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set(nginx.HookTokenHeader(), server.proxyOrchestrator.NginxManager().HookToken())
+	return req
+}
+
+func TestTooLargeHookAnswersAPIClientsWithTheLimit(t *testing.T) {
+	server, router := uploadLimitRouter(t)
+	withTestProxy(t, server)
+
+	req := tooLargeRequest(server, "/api/hooks/too-large/shop/media")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Original-URI", "/wp-admin/async-upload.php?x=1")
 	rec := httptest.NewRecorder()
@@ -55,9 +71,10 @@ func TestTooLargeHookAnswersAPIClientsWithTheLimit(t *testing.T) {
 }
 
 func TestTooLargeHookShowsLimitPageToBrowsers(t *testing.T) {
-	_, router := uploadLimitRouter(t)
+	server, router := uploadLimitRouter(t)
+	withTestProxy(t, server)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/hooks/too-large/shop/media", nil)
+	req := tooLargeRequest(server, "/api/hooks/too-large/shop/media")
 	req.Header.Set("Accept", "text/html")
 	req.Header.Set("X-Original-Host", "media.example.com")
 	rec := httptest.NewRecorder()
@@ -72,10 +89,11 @@ func TestTooLargeHookShowsLimitPageToBrowsers(t *testing.T) {
 }
 
 func TestTooLargeHookKeepsNginxResponseWhenPageIsOff(t *testing.T) {
-	_, router := uploadLimitRouter(t)
+	server, router := uploadLimitRouter(t)
+	withTestProxy(t, server)
 
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hooks/too-large/shop/site", nil))
+	router.ServeHTTP(rec, tooLargeRequest(server, "/api/hooks/too-large/shop/site"))
 
 	if rec.Code != http.StatusRequestEntityTooLarge || rec.Body.String() != nginxTooLargeBody {
 		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
@@ -83,10 +101,11 @@ func TestTooLargeHookKeepsNginxResponseWhenPageIsOff(t *testing.T) {
 }
 
 func TestUploadRejectionsListTheLimitAndCount(t *testing.T) {
-	_, router := uploadLimitRouter(t)
+	server, router := uploadLimitRouter(t)
+	withTestProxy(t, server)
 
 	for i := 0; i < 3; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/api/hooks/too-large/shop/site", nil)
+		req := tooLargeRequest(server, "/api/hooks/too-large/shop/site")
 		req.Header.Set("X-Original-URI", "/upload?token=secret")
 		router.ServeHTTP(httptest.NewRecorder(), req)
 	}
@@ -103,7 +122,7 @@ func TestUploadRejectionsListTheLimitAndCount(t *testing.T) {
 		t.Fatalf("rejections = %+v", resp.Rejections)
 	}
 	got := resp.Rejections[0]
-	if got.DomainID != "site" || got.Count != 3 || got.Limit != models.DefaultBodySize || got.LastPath != "/upload" {
+	if got.DomainID != "site" || got.Count != 3 || got.Limit != "" || got.LastPath != "/upload" {
 		t.Fatalf("rejection = %+v", got)
 	}
 }
@@ -154,5 +173,22 @@ func TestAgentUploadLimitDefaultIsValidatedBeforeSaving(t *testing.T) {
 	}
 	if s.config.Nginx.ClientMaxBodySize != "256m" {
 		t.Fatalf("default = %q", s.config.Nginx.ClientMaxBodySize)
+	}
+}
+
+func TestTooLargeHookIgnoresCallsWithoutNginxKey(t *testing.T) {
+	server, router := uploadLimitRouter(t)
+	withTestProxy(t, server)
+
+	for _, key := range []string{"", "forged"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/hooks/too-large/shop/site", nil)
+		req.Header.Set(nginx.HookTokenHeader(), key)
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/deployments/shop/upload-rejections", nil))
+	if strings.Contains(rec.Body.String(), `"domain_id"`) {
+		t.Fatalf("a call without nginx's key was recorded: %s", rec.Body.String())
 	}
 }

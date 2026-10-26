@@ -58,3 +58,26 @@ func TestUpdateDeploymentMetadataSavesWhenFlatRunDoesNotManageNginx(t *testing.T
 		t.Fatalf("metadata = %+v, want the update saved", deployment.Metadata)
 	}
 }
+
+func TestEnablingSSLKeepsHTTPSettingsWhenNginxRejectsThem(t *testing.T) {
+	s, tmpDir, _ := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "shop", &models.ServiceMetadata{
+		Name: "shop",
+		Type: "web",
+		Domains: []models.DomainConfig{{
+			ID:     "d0",
+			Domain: "shop.example.com",
+			SSL:    models.SSLConfig{AutoCert: true},
+		}},
+	})
+
+	s.enableSSLForDeployment("shop", "shop.example.com")
+
+	deployment, err := s.manager.GetDeployment("shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deployment.Metadata.Domains[0].SSL.Enabled {
+		t.Fatal("SSL saved as enabled although nginx refused the HTTPS config")
+	}
+}

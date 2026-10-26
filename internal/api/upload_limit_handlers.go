@@ -13,6 +13,7 @@ import (
 
 	"github.com/flatrun/agent/internal/access"
 	"github.com/flatrun/agent/internal/events"
+	"github.com/flatrun/agent/internal/nginx"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
@@ -104,8 +105,12 @@ func tooLargePage(host, limit string) string {
 	if host != "" {
 		site = "<strong>" + html.EscapeString(host) + "</strong>"
 	}
-	content := `<h1>Upload too large</h1><p>` + site + ` accepts requests up to <strong>` + html.EscapeString(limit) +
-		`</strong>. Try a smaller file, or ask the site's administrator to raise the limit.</p>`
+	accepts := ` refused the upload because it is larger than the server accepts.`
+	if limit != "" {
+		accepts = ` accepts requests up to <strong>` + html.EscapeString(limit) + `</strong>.`
+	}
+	content := `<h1>Upload too large</h1><p>` + site + accepts +
+		` Try a smaller file, or ask the site's administrator to raise the limit.</p>`
 	return brandPage("Upload too large", "", content, "Served by FlatRun")
 }
 
@@ -116,6 +121,11 @@ func (s *Server) requestTooLarge(c *gin.Context) {
 	name := c.Param("deployment")
 	domainID := c.Param("domain")
 	c.Header("Cache-Control", "no-store")
+
+	if s.proxyOrchestrator == nil || !s.proxyOrchestrator.NginxManager().ValidHookToken(c.GetHeader(nginx.HookTokenHeader())) {
+		c.Data(http.StatusRequestEntityTooLarge, "text/html", []byte(nginxTooLargeBody))
+		return
+	}
 
 	var domain *models.DomainConfig
 	if deployment, err := s.manager.GetDeployment(name); err == nil && deployment.Metadata != nil {
@@ -132,7 +142,7 @@ func (s *Server) requestTooLarge(c *gin.Context) {
 		return
 	}
 
-	limit := models.EffectiveBodySize(domain.ClientMaxBodySize, s.nginxBodySizeDefault())
+	limit := models.ConfiguredBodySize(domain.ClientMaxBodySize, s.nginxBodySizeDefault())
 	host := access.Hostname(c.GetHeader("X-Original-Host"))
 	if host == "" {
 		host = domain.Domain
@@ -155,13 +165,17 @@ func (s *Server) requestTooLarge(c *gin.Context) {
 		return
 	}
 	if wantsJSON(c) {
-		body, _ := json.Marshal(gin.H{
+		problem := gin.H{
 			"type":   "about:blank",
 			"title":  "Request too large",
 			"status": http.StatusRequestEntityTooLarge,
-			"detail": "This site accepts requests up to " + limit + ".",
-			"limit":  limit,
-		})
+			"detail": "The request is larger than this site accepts.",
+		}
+		if limit != "" {
+			problem["detail"] = "This site accepts requests up to " + limit + "."
+			problem["limit"] = limit
+		}
+		body, _ := json.Marshal(problem)
 		c.Data(http.StatusRequestEntityTooLarge, "application/problem+json", body)
 		return
 	}
@@ -179,12 +193,16 @@ func (s *Server) publishUploadRejection(deployment string, domain *models.Domain
 	if s.notify == nil {
 		return
 	}
+	refusedBy := "the " + limit + " limit"
+	if limit == "" {
+		refusedBy = "the limit in nginx.conf, as neither the domain nor the agent sets one"
+	}
 	_, err := s.notify.Publish(events.Event{
 		Source:         "proxy",
 		Type:           "request_too_large",
 		Severity:       events.SeverityWarning,
 		Title:          "Uploads refused on " + domain.Domain,
-		Message:        "A request to " + domain.Domain + path + " was larger than the " + limit + " limit and was refused with HTTP 413. Raise the maximum upload request size for this domain if uploads of this size are expected.",
+		Message:        "A request to " + domain.Domain + path + " was larger than " + refusedBy + " and was refused with HTTP 413. Raise the maximum upload request size for this domain if uploads of this size are expected.",
 		Scope:          events.Scope{Deployment: deployment},
 		CorrelationKey: "proxy/request_too_large/" + deployment + "/" + domain.ID,
 		OccurredAt:     now,
