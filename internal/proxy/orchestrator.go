@@ -152,18 +152,22 @@ func (o *Orchestrator) setupMultiDomainDeployment(deployment *models.Deployment,
 			result.CertificateExists = true
 		}
 
-		needsUpdate := false
+		var enabled []int
 		for i := range domains {
-			if domains[i].SSL.AutoCert && o.ssl.CertificateExists(domains[i].Domain) {
+			if domains[i].SSL.AutoCert && !domains[i].SSL.Enabled && o.ssl.CertificateExists(domains[i].Domain) {
 				domains[i].SSL.Enabled = true
-				needsUpdate = true
+				enabled = append(enabled, i)
 			}
 		}
 
-		if needsUpdate {
+		if len(enabled) > 0 {
 			deployment.Metadata.Domains = domains
 			if err := o.nginx.ApplyDeployment(deployment); err != nil {
 				log.Printf("warning: nginx rejected the SSL config, keeping the HTTP config: %v", err)
+				for _, i := range enabled {
+					domains[i].SSL.Enabled = false
+				}
+				result.SSLError = "nginx rejected the HTTPS config, the HTTP config is still active: " + err.Error()
 			}
 		}
 	}
