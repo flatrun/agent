@@ -7688,6 +7688,74 @@
         "x-permission": "deployments:write"
       }
     },
+    "/api/projects/{name}/logo": {
+      "delete": {
+        "operationId": "delete-projects-by-name-logo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      },
+      "get": {
+        "operationId": "get-projects-by-name-logo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      },
+      "put": {
+        "operationId": "put-projects-by-name-logo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
+      }
+    },
     "/api/projects/{name}/logs": {
       "delete": {
         "operationId": "delete-projects-by-name-logs",
@@ -11861,6 +11929,29 @@
           "templates"
         ],
         "x-permission": "templates:write"
+      }
+    },
+    "/api/templates/{id}/logo": {
+      "get": {
+        "operationId": "get-templates-by-id-logo",
+        "tags": [
+          "templates"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
       }
     },
     "/api/traffic/cleanup": {
@@ -16455,6 +16546,9 @@
             "type": "string",
             "format": "date-time"
           },
+          "logo_version": {
+            "type": "string"
+          },
           "metadata": {
             "$ref": "#/components/schemas/models.ServiceMetadata"
           },
@@ -16489,14 +16583,16 @@
           "updated_at",
           "services",
           "metadata",
-          "workspace"
+          "workspace",
+          "logo_version"
         ],
         "x-columns": [
           "name",
           "status",
           "created_at",
           "updated_at",
-          "workspace"
+          "workspace",
+          "logo_version"
         ]
       },
       "models.DeploymentRateLimit": {
@@ -17251,6 +17347,9 @@
               "$ref": "#/components/schemas/models.LogSource"
             }
           },
+          "logo": {
+            "type": "string"
+          },
           "migration": {
             "$ref": "#/components/schemas/models.MigrationSpec"
           },
@@ -17296,6 +17395,9 @@
           "ssl": {
             "$ref": "#/components/schemas/models.SSLConfig"
           },
+          "template": {
+            "type": "string"
+          },
           "type": {
             "type": "string"
           },
@@ -17307,6 +17409,8 @@
           "name",
           "type",
           "kind",
+          "logo",
+          "template",
           "log_sources",
           "primary_service",
           "networking",
@@ -17333,6 +17437,8 @@
           "name",
           "type",
           "kind",
+          "logo",
+          "template",
           "primary_service",
           "require_plan",
           "credential_id",

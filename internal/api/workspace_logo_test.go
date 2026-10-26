@@ -24,14 +24,14 @@ func pngBytes(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func uploadLogo(t *testing.T, c workspaceClient, slug string, content []byte) int {
+func uploadLogo(t *testing.T, c workspaceClient, path string, content []byte) int {
 	t.Helper()
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
 	part, _ := form.CreateFormFile("file", "logo")
 	_, _ = part.Write(content)
 	_ = form.Close()
-	req, _ := http.NewRequest(http.MethodPut, c.url+"/api/workspaces/"+slug+"/logo", &body)
+	req, _ := http.NewRequest(http.MethodPut, c.url+"/api"+path, &body)
 	req.Header.Set("Content-Type", form.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := http.DefaultClient.Do(req)
@@ -42,9 +42,9 @@ func uploadLogo(t *testing.T, c workspaceClient, slug string, content []byte) in
 	return resp.StatusCode
 }
 
-func fetchLogo(t *testing.T, c workspaceClient, slug string) (int, string, []byte) {
+func fetchLogo(t *testing.T, c workspaceClient, path string) (int, string, []byte) {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, c.url+"/api/workspaces/"+slug+"/logo", nil)
+	req, _ := http.NewRequest(http.MethodGet, c.url+"/api"+path, nil)
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -70,24 +70,24 @@ func TestWorkspaceLogoAndName(t *testing.T) {
 		t.Fatalf("rename = %d %v", status, body)
 	}
 
-	if status, _, _ := fetchLogo(t, admin, "default"); status != http.StatusNotFound {
+	if status, _, _ := fetchLogo(t, admin, "/workspaces/default/logo"); status != http.StatusNotFound {
 		t.Fatalf("logo before upload = %d", status)
 	}
 	logo := pngBytes(t)
-	if status := uploadLogo(t, bob, "default", logo); status != http.StatusForbidden {
+	if status := uploadLogo(t, bob, "/workspaces/default/logo", logo); status != http.StatusForbidden {
 		t.Fatalf("member uploading = %d", status)
 	}
-	if status := uploadLogo(t, admin, "default", []byte("not an image")); status != http.StatusUnsupportedMediaType {
+	if status := uploadLogo(t, admin, "/workspaces/default/logo", []byte("not an image")); status != http.StatusUnsupportedMediaType {
 		t.Fatalf("text upload = %d", status)
 	}
-	if status := uploadLogo(t, admin, "default", append(logo, make([]byte, 600<<10)...)); status != http.StatusRequestEntityTooLarge {
+	if status := uploadLogo(t, admin, "/workspaces/default/logo", append(logo, make([]byte, 600<<10)...)); status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized upload = %d", status)
 	}
-	if status := uploadLogo(t, admin, "default", logo); status != http.StatusOK {
+	if status := uploadLogo(t, admin, "/workspaces/default/logo", logo); status != http.StatusOK {
 		t.Fatalf("upload = %d", status)
 	}
 
-	status, contentType, data := fetchLogo(t, bob, "default")
+	status, contentType, data := fetchLogo(t, bob, "/workspaces/default/logo")
 	if status != http.StatusOK || contentType != "image/png" || !bytes.Equal(data, logo) {
 		t.Fatalf("member reading logo = %d %s %d bytes", status, contentType, len(data))
 	}
@@ -100,7 +100,7 @@ func TestWorkspaceLogoAndName(t *testing.T) {
 	if status, _ := admin.do(http.MethodDelete, "/workspaces/default/logo", "", nil); status != http.StatusNoContent {
 		t.Fatalf("delete logo = %d", status)
 	}
-	if status, _, _ := fetchLogo(t, admin, "default"); status != http.StatusNotFound {
+	if status, _, _ := fetchLogo(t, admin, "/workspaces/default/logo"); status != http.StatusNotFound {
 		t.Fatalf("logo after delete = %d", status)
 	}
 }

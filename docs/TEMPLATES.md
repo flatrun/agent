@@ -70,3 +70,19 @@ The on-disk cache is the durable store. Two things follow:
   The agent picks these up the same way it reads synced templates. Set
   `sync_interval: 0` (or disable both sources) if you want the cache left entirely
   under manual control.
+
+## Logos
+
+A template's `metadata.yml` and a project's `service.yml` both take a `logo`, in one of three forms:
+
+| Value | Shows |
+|---|---|
+| `logos:postgresql` | An icon from a set the dashboard bundles |
+| `https://...` | The image at that link |
+| `logo.svg` | A PNG, WebP or SVG file, at most 512 KB, relative to the folder of the file that names it |
+
+Catalog templates ship a file, so their logos show on servers without internet. A template's file is served at `/api/templates/<id>/logo` without sign-in, so it works as an image source.
+
+A project's file is served at `/api/projects/<name>/logo`. `PUT` on that path stores an upload as `.flatrun/logo.<ext>` in the project's folder and sets `logo` to it; `DELETE` clears `logo` and removes the upload. A project created from a template gets its own copy of the template's logo and records the template's id as `template`.
+
+With no `logo`, the dashboard shows the logo of a template running the same image, then an icon for the image itself.

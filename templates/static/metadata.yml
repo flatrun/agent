@@ -1,7 +1,6 @@
 name: Static Site
 description: Simple static HTML/CSS/JS site
-icon: pi pi-file
-logo: https://cdn.simpleicons.org/html5
+logo: logo.svg
 category: basic
 priority: 100
 container_port: 80

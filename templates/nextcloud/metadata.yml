@@ -1,7 +1,6 @@
 name: Nextcloud
 description: Self-hosted productivity platform
-icon: pi pi-cloud
-logo: https://cdn.simpleicons.org/nextcloud
+logo: logo.svg
 category: application
 priority: 85
 container_port: 80
