@@ -84,6 +84,7 @@ func TestInvalidServiceSettingsAreRefused(t *testing.T) {
 	for name, body := range map[string]map[string]any{
 		"memory":   {"resources": map[string]string{"memory": "1m"}},
 		"cpus":     {"resources": map[string]string{"cpus": "lots"}},
+		"cpus nan": {"resources": map[string]string{"cpus": "NaN"}},
 		"restart":  {"restart": "sometimes"},
 		"env name": {"environment": map[string]string{"1BAD": "x"}},
 		"log":      {"logging": map[string]any{"max_files": 3}},
@@ -157,4 +158,51 @@ func TestPlannedServiceSettingsHideTheEnvironmentUntilApplied(t *testing.T) {
 func stringify(v any) string {
 	raw, _ := json.Marshal(v)
 	return string(raw)
+}
+
+func TestSettingsOfARemovedServiceCanBeCleared(t *testing.T) {
+	s, _, url := serviceSettingsServer(t, &models.ServiceMetadata{Name: "shop", Type: "web", ServiceSettings: map[string]models.ServiceSettings{
+		"ghost": {Restart: "always"},
+	}})
+	ghost := strings.Replace(url, "/web/", "/ghost/", 1)
+
+	if resp, body := doJSON(t, http.MethodPut, ghost, map[string]any{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("clearing a removed service's settings: status = %d: %v", resp.StatusCode, body)
+	}
+	deployment, _ := s.manager.GetDeployment("shop")
+	if _, ok := deployment.Metadata.ServiceSettings["ghost"]; ok {
+		t.Fatalf("settings of a removed service were kept: %+v", deployment.Metadata.ServiceSettings)
+	}
+}
+
+func TestPlannedServiceSettingsHideOtherServicesEnvironment(t *testing.T) {
+	_, _, url := serviceSettingsServer(t, &models.ServiceMetadata{Name: "shop", Type: "web", ServiceSettings: map[string]models.ServiceSettings{
+		"worker": {Environment: map[string]string{"WORKER_TOKEN": "worker-only-value"}},
+	}})
+
+	resp, body := doJSON(t, http.MethodPut, url+"?plan=true", map[string]any{"restart": "always"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d: %v", resp.StatusCode, body)
+	}
+	if strings.Contains(stringify(planFromResponse(t, body)), "worker-only-value") {
+		t.Fatal("the plan shows another service's environment value to reviewers")
+	}
+}
+
+func TestContainerLimitsAreNotSavedWhenTheDeploymentRequiresPlans(t *testing.T) {
+	s, _, _ := serviceSettingsServer(t, &models.ServiceMetadata{Name: "shop", Type: "web", RequirePlan: true})
+	deployment, err := s.manager.GetDeployment("shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cpus := 0.5
+
+	persisted, err := s.persistServiceResources(deployment, "web", &docker.ResourceUpdate{CPUs: &cpus})
+	if persisted || err == nil {
+		t.Fatalf("persisted = %v, err = %v; want the limit kept off service.yml", persisted, err)
+	}
+	deployment, _ = s.manager.GetDeployment("shop")
+	if len(deployment.Metadata.ServiceSettings) != 0 {
+		t.Fatalf("service.yml changed outside a plan: %+v", deployment.Metadata.ServiceSettings)
+	}
 }

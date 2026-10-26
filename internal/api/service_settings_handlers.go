@@ -72,7 +72,10 @@ func (s *Server) nextServiceSettings(name, service string, req *models.ServiceSe
 	if err != nil {
 		return nil, nil, apiErrf(http.StatusNotFound, "Deployment not found")
 	}
-	if _, err := s.resolveService(name, service); err != nil || service == "" {
+	if service == "" {
+		return nil, nil, apiErrf(http.StatusNotFound, "Service not found")
+	}
+	if _, err := s.resolveService(name, service); err != nil && !req.IsEmpty() {
 		return nil, nil, apiErrf(http.StatusNotFound, "Service %s is not in the compose file", service)
 	}
 	next, err := cloneMetadata(deployment.Metadata)
@@ -128,9 +131,9 @@ func (s *Server) planServiceSettings(c *gin.Context, name, service string, req *
 	metaRel := filepath.Join(name, "service.yml")
 	overlayRel := filepath.Join(name, models.ComposeOverlayFile)
 
-	sensitive := len(req.Environment) > 0
+	sensitive := hasServiceEnvironment(next.ServiceSettings)
 	if deployment.Metadata != nil {
-		sensitive = sensitive || len(deployment.Metadata.ServiceSettings[service].Environment) > 0
+		sensitive = sensitive || hasServiceEnvironment(deployment.Metadata.ServiceSettings)
 	}
 
 	p := s.newPlan("deployment.service.settings", "deployment", name)
@@ -222,4 +225,13 @@ func capitalize(msg string) string {
 		return msg
 	}
 	return strings.ToUpper(msg[:1]) + msg[1:]
+}
+
+func hasServiceEnvironment(settings map[string]models.ServiceSettings) bool {
+	for _, svc := range settings {
+		if len(svc.Environment) > 0 {
+			return true
+		}
+	}
+	return false
 }
