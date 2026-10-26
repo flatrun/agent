@@ -11,6 +11,7 @@ import (
 func renderDomains(t *testing.T, cfg *config.NginxConfig, domains ...models.DomainConfig) string {
 	t.Helper()
 	m := NewManager(cfg, t.TempDir(), "")
+	m.agentHostProbe = func() bool { return true }
 	out, err := m.renderMultiDomainConfig(&models.Deployment{Name: "shop", Metadata: &models.ServiceMetadata{Domains: domains}}, false)
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +26,23 @@ func TestUnsetUploadLimitLeavesNginxDefault(t *testing.T) {
 	}
 	if !strings.Contains(out, "error_page 413 = @flatrun_too_large_site;") || !strings.Contains(out, "location @flatrun_too_large_site {") {
 		t.Fatalf("413 must still be routed to the agent:\n%s", out)
+	}
+}
+
+func TestNoTooLargeHandlerWhenNginxCannotResolveTheAgent(t *testing.T) {
+	m := NewManager(&config.NginxConfig{}, t.TempDir(), "")
+	m.agentHostProbe = func() bool { return false }
+	out, err := m.renderMultiDomainConfig(&models.Deployment{Name: "shop", Metadata: &models.ServiceMetadata{Domains: []models.DomainConfig{
+		{ID: "site", Service: "web", ContainerPort: 80, Domain: "shop.example.com", ClientMaxBodySize: "64m"},
+	}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "host.docker.internal") || strings.Contains(out, "error_page 413") {
+		t.Fatalf("nginx rejects a config naming a host it cannot resolve:\n%s", out)
+	}
+	if !strings.Contains(locationBlock(t, out, "/"), "client_max_body_size 64m;") {
+		t.Errorf("the limit must still be written:\n%s", out)
 	}
 }
 
