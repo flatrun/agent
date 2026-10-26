@@ -186,8 +186,17 @@ type DomainConfig struct {
 	// StaticCache opts this domain into a long browser cache for static assets
 	// (css, js, images, fonts). It applies only to responses whose path has a
 	// static extension; dynamic responses keep the app's own cache headers.
-	StaticCache bool                `yaml:"static_cache,omitempty" json:"static_cache,omitempty"`
-	Access      *DomainAccessConfig `yaml:"access,omitempty" json:"access,omitempty"`
+	StaticCache bool `yaml:"static_cache,omitempty" json:"static_cache,omitempty"`
+	// ClientMaxBodySize is the largest request this domain accepts, in nginx
+	// size syntax (512k, 64m, 1g; 0 for no limit). Empty uses the agent-wide
+	// default. It bounds the whole request, so it must sit above the app's
+	// per-file upload limit to leave room for multipart boundaries and headers.
+	ClientMaxBodySize string `yaml:"client_max_body_size,omitempty" json:"client_max_body_size,omitempty"`
+	// UploadLimitPage replaces the plain 413 nginx sends for a request over
+	// ClientMaxBodySize with a page, or JSON for API clients, stating the
+	// limit. A 413 sent by the app itself is passed through unchanged.
+	UploadLimitPage bool                `yaml:"upload_limit_page,omitempty" json:"upload_limit_page,omitempty"`
+	Access          *DomainAccessConfig `yaml:"access,omitempty" json:"access,omitempty"`
 }
 
 type DomainAccessConfig struct {

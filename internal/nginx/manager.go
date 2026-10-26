@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -709,6 +711,7 @@ func (m *Manager) renderMultiDomainConfigWithBackends(deployment *models.Deploym
 		}
 	}
 	for i := range servers {
+		servers[i].DeploymentName = deployment.Name
 		servers[i].Locations = attachRateLimits(servers[i].Domain, servers[i].Locations, rateLimits)
 		for j := range servers[i].Locations {
 			servers[i].Locations[j].SecurityEnabled = securityEnabled
@@ -887,6 +890,8 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 				ProxyTimeout:  timeout,
 				StaticCache:   d.StaticCache,
 				Access:        d.Access,
+				DomainID:      safeLocationName(d.ID),
+				BodyLimit:     firstNonEmpty(d.ClientMaxBodySize, m.config.ClientMaxBodySize),
 			})
 
 			if d.SSL.Enabled {
@@ -915,15 +920,19 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			}
 		}
 
+		bodyLimit, tooLarge := serverBodyLimits(locations)
+
 		servers = append(servers, serverData{
-			Domain:         host,
-			SSLEnabled:     hasSSL,
-			HasSSL:         hasSSL,
-			SSLDomain:      sslDomain,
-			Locations:      locations,
-			ServerAliases:  serverAliases,
-			EnableStapling: hasSSL && m.shouldStaple(sslDomain),
-			HasAccess:      hasAccess,
+			BodyLimit:       bodyLimit,
+			TooLargeDomains: tooLarge,
+			Domain:          host,
+			SSLEnabled:      hasSSL,
+			HasSSL:          hasSSL,
+			SSLDomain:       sslDomain,
+			Locations:       locations,
+			ServerAliases:   serverAliases,
+			EnableStapling:  hasSSL && m.shouldStaple(sslDomain),
+			HasAccess:       hasAccess,
 		})
 	}
 
@@ -1027,6 +1036,12 @@ type serverData struct {
 	ServerAliases  []string
 	EnableStapling bool
 	HasAccess      bool
+	// BodyLimit is the largest location limit on this host, so requests
+	// matched outside a domain's location (rate-limit, access portal) are not
+	// refused below what the domain allows.
+	BodyLimit       string
+	TooLargeDomains []string
+	DeploymentName  string
 }
 
 type locationData struct {
@@ -1045,6 +1060,10 @@ type locationData struct {
 	SecurityEnabled bool
 	LimitZone       string
 	LimitBurst      int
+	// DomainID names the domain's 413 handler; empty when the ID is not safe
+	// to put in an nginx location name.
+	DomainID  string
+	BodyLimit string
 	// Upstream is the value assigned to $upstream: an upstream block name when
 	// keepalive is supported, otherwise the literal service:port.
 	Upstream string
@@ -1271,9 +1290,6 @@ const accessTemplates = sleepTemplates + `{{define "accessPortal"}}{{if .HasAcce
 {{define "accessCheck"}}{{if and .Access .Access.Enabled}}
         auth_request /_flatrun/access/check;
         error_page 401 = @flatrun_access_login;
-{{- if .SleepEnabled}}
-        error_page 502 503 504 = @flatrun_wake;
-{{- end}}
 {{end}}{{end}}
 `
 
@@ -1289,10 +1305,46 @@ const locationTemplates = `{{define "securityHeaders"}}
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 {{- end}}
+{{define "serverLimits"}}
+{{- if .BodyLimit}}
+    client_max_body_size {{.BodyLimit}};
+{{- end}}
+{{- range .TooLargeDomains}}
+
+    location @flatrun_too_large_{{.}} {
+        rewrite ^ /api/hooks/too-large/{{$.DeploymentName}}/{{.}} break;
+        proxy_method GET;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-Host $host;
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_intercept_errors on;
+        recursive_error_pages on;
+        error_page 404 500 502 503 504 = @flatrun_too_large_plain;
+        proxy_pass http://host.docker.internal:8090;
+    }
+{{- end}}
+{{- if .TooLargeDomains}}
+
+    location @flatrun_too_large_plain {
+        return 413;
+    }
+{{- end}}
+{{- end}}
 {{define "proxyLocation"}}
 
     location {{.Path}} {
 {{template "accessCheck" .}}
+{{- if .BodyLimit}}
+        client_max_body_size {{.BodyLimit}};
+{{- end}}
+{{- if .DomainID}}
+        recursive_error_pages on;
+        error_page 413 = @flatrun_too_large_{{.DomainID}};
+{{- end}}
+{{- if .SleepEnabled}}
+        error_page 502 503 504 = @flatrun_wake;
+{{- end}}
 {{- if .LimitZone}}
         limit_req zone={{.LimitZone}} burst={{.LimitBurst}} nodelay;
         limit_req_status 429;
@@ -1332,6 +1384,7 @@ server {
 {{- range $.BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "serverLimits" .}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
 {{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
@@ -1390,6 +1443,7 @@ server {
 {{- range $.BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "serverLimits" .}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
 {{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
@@ -1437,6 +1491,7 @@ server {
 {{- range $.BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "serverLimits" .}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
 {{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
@@ -1450,6 +1505,7 @@ server {
 {{- range $.BlockedIPs}}
     deny {{.}};
 {{- end}}
+{{template "serverLimits" .}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
 {{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
@@ -1495,6 +1551,59 @@ func attachRateLimits(host string, locations []locationData, rateLimits []rateLi
 		}
 	}
 	return locations
+}
+
+var locationNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+func safeLocationName(id string) string {
+	if locationNamePattern.MatchString(id) {
+		return id
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// serverBodyLimits returns the largest location limit on a host and the
+// domains on it that get a 413 handler. Limits are only written when a domain
+// or the agent sets one, so a limit raised by hand in nginx.conf still holds;
+// once a host has a server-level limit, locations without their own are
+// pinned to nginx's default so they do not inherit the larger value.
+func serverBodyLimits(locations []locationData) (string, []string) {
+	largest := ""
+	var largestBytes int64 = -1
+	seen := map[string]bool{}
+	var domains []string
+	for _, loc := range locations {
+		size, err := models.ParseBodySize(loc.BodyLimit)
+		if err == nil {
+			if size == 0 {
+				size = math.MaxInt64
+			}
+			if size > largestBytes {
+				largest, largestBytes = loc.BodyLimit, size
+			}
+		}
+		if loc.DomainID != "" && !seen[loc.DomainID] {
+			seen[loc.DomainID] = true
+			domains = append(domains, loc.DomainID)
+		}
+	}
+	if largest != "" {
+		for i := range locations {
+			if locations[i].BodyLimit == "" {
+				locations[i].BodyLimit = models.DefaultBodySize
+			}
+		}
+	}
+	return largest, domains
 }
 
 func sanitizeZoneName(path string) string {

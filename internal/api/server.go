@@ -129,6 +129,7 @@ type Server struct {
 	webhooks           *webhook.Registry
 	runInBackground    func(func())
 	sleeper            *sleep.Controller
+	uploadRejections   uploadRejections
 	sleepCancel        context.CancelFunc
 	aiProvider         ai.Provider
 	triageBudget       *triageBudget
@@ -505,6 +506,8 @@ func (s *Server) setupRoutes() {
 		api.POST("/hooks/:provider/:deployment", s.receiveWebhook)
 		// Reached through nginx's fallback when a sleeping deployment is down.
 		api.Any("/hooks/wake/:deployment", s.wakeDeployment)
+		// Reached through nginx when a request is over its domain's size limit.
+		api.Any("/hooks/too-large/:deployment/:domain", s.requestTooLarge)
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)
@@ -619,6 +622,7 @@ func (s *Server) setupRoutes() {
 
 			// Domain endpoints
 			protected.GET("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listDomains)
+			protected.GET("/deployments/:name/upload-rejections", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.listUploadRejections)
 			protected.GET("/deployments/:name/access/email-targets", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.getAccessEmailTargets)
 			protected.POST("/deployments/:name/domains", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.addDomain)
 			protected.PUT("/deployments/:name/domains/:domainId", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateDomain)
@@ -2372,6 +2376,10 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 	}
 	if _, sentDomains := sentFields["domains"]; sentDomains {
 		for i := range incoming.Domains {
+			if err := validateDomainSettings(&incoming.Domains[i]); err != nil {
+				respondAPIError(c, err)
+				return
+			}
 			if err := s.validateDomainAccess(incoming.Domains[i].Access); err != nil {
 				respondAPIError(c, err)
 				return
@@ -6750,6 +6758,8 @@ func (s *Server) commitDomainUpdate(c *gin.Context, deployment *models.Deploymen
 			return
 		}
 	}
+
+	s.uploadRejections.clear(name, domainID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":      "Domain updated successfully",

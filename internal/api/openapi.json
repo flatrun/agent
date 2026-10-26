@@ -8958,6 +8958,30 @@
         "x-permission": "deployments:read"
       }
     },
+    "/api/projects/{name}/upload-rejections": {
+      "get": {
+        "operationId": "get-projects-by-name-upload-rejections",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:read"
+      }
+    },
     "/api/projects/{name}/users": {
       "get": {
         "operationId": "get-projects-by-name-users",
@@ -16750,6 +16774,9 @@
               "type": "string"
             }
           },
+          "client_max_body_size": {
+            "type": "string"
+          },
           "container_port": {
             "type": "integer"
           },
@@ -16782,6 +16809,9 @@
           },
           "strip_prefix": {
             "type": "boolean"
+          },
+          "upload_limit_page": {
+            "type": "boolean"
           }
         },
         "x-property-order": [
@@ -16796,6 +16826,8 @@
           "route_only_aliases",
           "proxy_timeout",
           "static_cache",
+          "client_max_body_size",
+          "upload_limit_page",
           "access"
         ],
         "x-columns": [
@@ -16806,7 +16838,9 @@
           "path_prefix",
           "strip_prefix",
           "proxy_timeout",
-          "static_cache"
+          "static_cache",
+          "client_max_body_size",
+          "upload_limit_page"
         ]
       },
       "models.EnvironmentInfo": {

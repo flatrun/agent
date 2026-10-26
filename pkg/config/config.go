@@ -197,6 +197,9 @@ type NginxConfig struct {
 	External             bool   `yaml:"external" json:"external"`
 	ContainerWebrootPath string `yaml:"container_webroot_path" json:"container_webroot_path"`
 	RejectUnknownDomains bool   `yaml:"reject_unknown_domains" json:"reject_unknown_domains"`
+	// ClientMaxBodySize is the request size limit for domains that do not set
+	// their own, in nginx size syntax. Empty keeps nginx's 1m default.
+	ClientMaxBodySize string `yaml:"client_max_body_size,omitempty" json:"client_max_body_size,omitempty"`
 }
 
 type CertbotConfig struct {

@@ -133,6 +133,9 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 // mutateDomainAdd validates the new domain and appends it to the
 // deployment metadata in memory only; persisting is the caller's job.
 func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.DomainConfig) error {
+	if err := validateDomainSettings(domain); err != nil {
+		return err
+	}
 	if err := s.validateDomainAccess(domain.Access); err != nil {
 		return err
 	}
@@ -173,6 +176,9 @@ func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.D
 // mutateDomainUpdate replaces the domain with the given ID in memory
 // only; persisting is the caller's job.
 func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID string, updated *models.DomainConfig) error {
+	if err := validateDomainSettings(updated); err != nil {
+		return err
+	}
 	if err := s.validateDomainAccess(updated.Access); err != nil {
 		return err
 	}
@@ -211,6 +217,18 @@ func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID stri
 		}
 	}
 	return apiErrf(http.StatusNotFound, "Domain not found")
+}
+
+// validateDomainSettings checks the proxy settings a domain renders into its
+// nginx location, so a bad value is refused before anything is written.
+func validateDomainSettings(domain *models.DomainConfig) error {
+	if err := models.ValidateBodySize(domain.ClientMaxBodySize); err != nil {
+		return apiErrf(http.StatusBadRequest, "Maximum upload request size: %s", err.Error())
+	}
+	if domain.ProxyTimeout < 0 || domain.ProxyTimeout > 86400 {
+		return apiErrf(http.StatusBadRequest, "Proxy timeout must be from 1 to 86400 seconds")
+	}
+	return nil
 }
 
 func (s *Server) validateDomainAccess(policy *models.DomainAccessConfig) error {
