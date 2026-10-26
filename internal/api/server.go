@@ -2398,6 +2398,12 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 	} else {
 		proxyErr = s.proxyOrchestrator.TeardownDeployment(name)
 	}
+	// Without a FlatRun-managed nginx there is no proxy config to keep
+	// consistent, so the metadata stands.
+	if proxyErr != nil && !s.config.Nginx.Enabled {
+		log.Printf("Warning: proxy update for %s failed: %v", name, proxyErr)
+		proxyErr = nil
+	}
 	if proxyErr != nil {
 		if originalMetadata != nil {
 			if err := s.manager.SaveMetadata(name, originalMetadata); err != nil {
