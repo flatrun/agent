@@ -603,3 +603,91 @@ func TestDomainListChangesPersistThroughHTTP(t *testing.T) {
 		t.Fatalf("domains = %+v", metadata.Domains)
 	}
 }
+
+func TestPatchDomainChangesOnlySentFields(t *testing.T) {
+	server, tmpDir, cleanup := setupDomainsTestServer(t)
+	defer cleanup()
+
+	createTestDeployment(t, tmpDir, "patched", &models.ServiceMetadata{
+		Name: "patched",
+		Type: "web",
+		Domains: []models.DomainConfig{{
+			ID:            "primary",
+			Service:       "web",
+			ContainerPort: 8080,
+			Domain:        "app.example.com",
+			Aliases:       []string{"www.app.example.com"},
+			SSL:           models.SSLConfig{Enabled: true, AutoCert: true},
+			StaticCache:   true,
+		}},
+	})
+
+	router := gin.New()
+	router.PATCH("/deployments/:name/domains/:domainId", server.patchDomain)
+
+	patch := httptest.NewRecorder()
+	router.ServeHTTP(patch, httptest.NewRequest(http.MethodPatch, "/deployments/patched/domains/primary", strings.NewReader(`{"proxy_timeout":300}`)))
+	if patch.Code != http.StatusOK {
+		t.Fatalf("patch status = %d: %s", patch.Code, patch.Body.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "patched", "service.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata models.ServiceMetadata
+	if err := yaml.Unmarshal(data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	got := metadata.Domains[0]
+	if got.ProxyTimeout != 300 {
+		t.Fatalf("proxy_timeout = %d, want 300", got.ProxyTimeout)
+	}
+	if got.Domain != "app.example.com" || got.ContainerPort != 8080 || !got.SSL.Enabled || !got.SSL.AutoCert || !got.StaticCache || len(got.Aliases) != 1 {
+		t.Fatalf("fields that were not sent changed: %+v", got)
+	}
+
+	missing := httptest.NewRecorder()
+	router.ServeHTTP(missing, httptest.NewRequest(http.MethodPatch, "/deployments/patched/domains/nope", strings.NewReader(`{"proxy_timeout":30}`)))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("unknown domain status = %d, want 404", missing.Code)
+	}
+}
+
+func TestPatchLegacyDefaultDomainStoresItExplicitly(t *testing.T) {
+	server, tmpDir, cleanup := setupDomainsTestServer(t)
+	defer cleanup()
+
+	createTestDeployment(t, tmpDir, "legacy", &models.ServiceMetadata{
+		Name:           "legacy",
+		Type:           "web",
+		PrimaryService: "web",
+		Networking:     models.NetworkingConfig{Expose: true, Domain: "legacy.example.com", ContainerPort: 3000},
+		SSL:            models.SSLConfig{Enabled: true, AutoCert: true},
+	})
+
+	router := gin.New()
+	router.PATCH("/deployments/:name/domains/:domainId", server.patchDomain)
+
+	patch := httptest.NewRecorder()
+	router.ServeHTTP(patch, httptest.NewRequest(http.MethodPatch, "/deployments/legacy/domains/default", strings.NewReader(`{"proxy_timeout":120}`)))
+	if patch.Code != http.StatusOK {
+		t.Fatalf("patch status = %d: %s", patch.Code, patch.Body.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "legacy", "service.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata models.ServiceMetadata
+	if err := yaml.Unmarshal(data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata.Domains) != 1 {
+		t.Fatalf("domains = %+v, want the default domain stored explicitly", metadata.Domains)
+	}
+	got := metadata.Domains[0]
+	if got.ID != "default" || got.Domain != "legacy.example.com" || got.Service != "web" || got.ContainerPort != 3000 || !got.SSL.Enabled || got.ProxyTimeout != 120 {
+		t.Fatalf("domain = %+v", got)
+	}
+}

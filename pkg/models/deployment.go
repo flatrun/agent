@@ -247,6 +247,15 @@ func (m *ServiceMetadata) GetDomains() []DomainConfig {
 	}}
 }
 
+// MaterializeDomains stores the domain GetDomains derives from the legacy
+// networking settings as an explicit entry, so it can carry per-domain
+// settings. It does nothing when explicit domains already exist.
+func (m *ServiceMetadata) MaterializeDomains() {
+	if len(m.Domains) == 0 {
+		m.Domains = m.GetDomains()
+	}
+}
+
 func (m *ServiceMetadata) GetUniqueDomainNames() []string {
 	domains := m.GetDomains()
 	domainSet := make(map[string]struct{})

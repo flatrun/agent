@@ -35,6 +35,13 @@ type Manager struct {
 	keepaliveMu     sync.Mutex
 	keepaliveProbed bool
 	keepaliveOK     bool
+
+	// applyMu serialises validated writes so one change's rollback cannot
+	// overwrite another change made in between.
+	applyMu sync.Mutex
+
+	testConfig func() error
+	reload     func() error
 }
 
 // mapsConfigFile is a managed http-context snippet (not a vhost) included
@@ -352,6 +359,9 @@ func (m *Manager) GetVhostsUsingSSLDomain(domain string) []string {
 }
 
 func (m *Manager) Reload() error {
+	if m.reload != nil {
+		return m.reload()
+	}
 	if m.config.ContainerName == "" {
 		return fmt.Errorf("nginx container name not configured")
 	}
@@ -375,6 +385,9 @@ func (m *Manager) Reload() error {
 }
 
 func (m *Manager) TestConfig() error {
+	if m.testConfig != nil {
+		return m.testConfig()
+	}
 	if m.config.ContainerName == "" {
 		return fmt.Errorf("nginx container name not configured")
 	}
@@ -693,6 +706,12 @@ func (m *Manager) renderMultiDomainConfigWithBackends(deployment *models.Deploym
 			for j := range servers[i].Locations {
 				servers[i].Locations[j].SleepEnabled = true
 			}
+		}
+	}
+	for i := range servers {
+		servers[i].Locations = attachRateLimits(servers[i].Domain, servers[i].Locations, rateLimits)
+		for j := range servers[i].Locations {
+			servers[i].Locations[j].SecurityEnabled = securityEnabled
 		}
 	}
 
@@ -1022,6 +1041,10 @@ type locationData struct {
 	StaticCache   bool
 	Access        *models.DomainAccessConfig
 	SleepEnabled  bool
+	// SecurityEnabled adds the security event hook to the location.
+	SecurityEnabled bool
+	LimitZone       string
+	LimitBurst      int
 	// Upstream is the value assigned to $upstream: an upstream block name when
 	// keepalive is supported, otherwise the literal service:port.
 	Upstream string
@@ -1254,21 +1277,26 @@ const accessTemplates = sleepTemplates + `{{define "accessPortal"}}{{if .HasAcce
 {{end}}{{end}}
 `
 
-const multiRouteHTTPTemplate = upstreamBlocks + accessTemplates + `{{- range .Servers}}
-server {
-    listen 80;
-    server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
-
-    resolver 127.0.0.11 valid=30s ipv6=off;
-{{- range $.BlockedIPs}}
-    deny {{.}};
+// locationTemplates renders one proxied location and the HTTPS security
+// headers. An add_header in a server block stops nginx inheriting the ones set
+// in nginx.conf, so a server that adds HSTS must repeat the global headers.
+// Rate-limited paths are locations too, carrying the upstream of the route
+// they fall under, so they reach the same service and port as that route.
+const locationTemplates = `{{define "securityHeaders"}}
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 {{- end}}
-{{template "accessPortal" .}}
-{{template "sleepWake" $}}
-{{- range .Locations}}
+{{define "proxyLocation"}}
 
     location {{.Path}} {
 {{template "accessCheck" .}}
+{{- if .LimitZone}}
+        limit_req zone={{.LimitZone}} burst={{.LimitBurst}} nodelay;
+        limit_req_status 429;
+{{- end}}
         set $upstream {{.Upstream}};
 {{- if .StripPrefix}}
         rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
@@ -1287,30 +1315,26 @@ server {
 {{- if .StaticCache}}
         expires $flatrun_static_expires;
 {{- end}}
-{{- if $.SecurityEnabled}}
+{{- if .SecurityEnabled}}
         log_by_lua_block {
             security.capture_event()
         }
 {{- end}}
     }
-{{- end}}
-{{- range $.RateLimits}}
+{{- end}}`
 
-    location {{.Path}} {
-        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
-        limit_req_status 429;
-        set $upstream {{$.DeploymentName}}:80;
-        proxy_pass http://$upstream;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-{{- if $.SecurityEnabled}}
-        log_by_lua_block {
-            security.capture_event()
-        }
+const multiRouteHTTPTemplate = upstreamBlocks + accessTemplates + locationTemplates + `{{- range .Servers}}
+server {
+    listen 80;
+    server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+{{- range $.BlockedIPs}}
+    deny {{.}};
 {{- end}}
-    }
-{{- end}}
+{{template "accessPortal" .}}
+{{template "sleepWake" $}}
+{{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
@@ -1320,7 +1344,7 @@ server {
 }
 {{end}}`
 
-const multiRouteSSLTemplate = upstreamBlocks + accessTemplates + `{{- range .Servers}}
+const multiRouteSSLTemplate = upstreamBlocks + accessTemplates + locationTemplates + `{{- range .Servers}}
 server {
     listen 80;
     server_name {{.Domain}}{{range .ServerAliases}} {{.}}{{end}};
@@ -1360,7 +1384,7 @@ server {
     ssl_stapling_verify on;
 {{- end}}
 
-    add_header Strict-Transport-Security "max-age=63072000" always;
+{{template "securityHeaders"}}
 
     resolver 127.0.0.11 valid=30s ipv6=off;
 {{- range $.BlockedIPs}}
@@ -1368,56 +1392,11 @@ server {
 {{- end}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
-{{- range .Locations}}
-
-    location {{.Path}} {
-{{template "accessCheck" .}}
-        set $upstream {{.Upstream}};
-{{- if .StripPrefix}}
-        rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
-{{- end}}
-        proxy_pass {{.Protocol}}://$upstream;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout {{.ProxyTimeout}}s;
-        proxy_read_timeout {{.ProxyTimeout}}s;
-{{- if .StaticCache}}
-        expires $flatrun_static_expires;
-{{- end}}
-{{- if $.SecurityEnabled}}
-        log_by_lua_block {
-            security.capture_event()
-        }
-{{- end}}
-    }
-{{- end}}
-{{- range $.RateLimits}}
-
-    location {{.Path}} {
-        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
-        limit_req_status 429;
-        set $upstream {{$.DeploymentName}}:80;
-        proxy_pass http://$upstream;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-{{- if $.SecurityEnabled}}
-        log_by_lua_block {
-            security.capture_event()
-        }
-{{- end}}
-    }
-{{- end}}
+{{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
 }
 {{end}}`
 
-const multiRouteMixedTemplate = upstreamBlocks + accessTemplates + `{{- range .Servers}}
+const multiRouteMixedTemplate = upstreamBlocks + accessTemplates + locationTemplates + `{{- range .Servers}}
 {{- if .HasSSL}}
 server {
     listen 80;
@@ -1452,7 +1431,7 @@ server {
     ssl_stapling_verify on;
 {{- end}}
 
-    add_header Strict-Transport-Security "max-age=63072000" always;
+{{template "securityHeaders"}}
 
     resolver 127.0.0.11 valid=30s ipv6=off;
 {{- range $.BlockedIPs}}
@@ -1460,52 +1439,7 @@ server {
 {{- end}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
-{{- range .Locations}}
-
-    location {{.Path}} {
-{{template "accessCheck" .}}
-        set $upstream {{.Upstream}};
-{{- if .StripPrefix}}
-        rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
-{{- end}}
-        proxy_pass {{.Protocol}}://$upstream;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout {{.ProxyTimeout}}s;
-        proxy_read_timeout {{.ProxyTimeout}}s;
-{{- if .StaticCache}}
-        expires $flatrun_static_expires;
-{{- end}}
-{{- if $.SecurityEnabled}}
-        log_by_lua_block {
-            security.capture_event()
-        }
-{{- end}}
-    }
-{{- end}}
-{{- range $.RateLimits}}
-
-    location {{.Path}} {
-        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
-        limit_req_status 429;
-        set $upstream {{$.DeploymentName}}:80;
-        proxy_pass http://$upstream;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-{{- if $.SecurityEnabled}}
-        log_by_lua_block {
-            security.capture_event()
-        }
-{{- end}}
-    }
-{{- end}}
+{{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
 }
 {{- else}}
 server {
@@ -1518,52 +1452,7 @@ server {
 {{- end}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
-{{- range .Locations}}
-
-    location {{.Path}} {
-{{template "accessCheck" .}}
-        set $upstream {{.Upstream}};
-{{- if .StripPrefix}}
-        rewrite ^{{.OriginalPath}}(.*)$ /$1 break;
-{{- end}}
-        proxy_pass {{.Protocol}}://$upstream;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout {{.ProxyTimeout}}s;
-        proxy_read_timeout {{.ProxyTimeout}}s;
-{{- if .StaticCache}}
-        expires $flatrun_static_expires;
-{{- end}}
-{{- if $.SecurityEnabled}}
-        log_by_lua_block {
-            security.capture_event()
-        }
-{{- end}}
-    }
-{{- end}}
-{{- range $.RateLimits}}
-
-    location {{.Path}} {
-        limit_req zone={{.Zone}} burst={{.Burst}} nodelay;
-        limit_req_status 429;
-        set $upstream {{$.DeploymentName}}:80;
-        proxy_pass http://$upstream;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-{{- if $.SecurityEnabled}}
-        log_by_lua_block {
-            security.capture_event()
-        }
-{{- end}}
-    }
-{{- end}}
+{{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
 
     location /.well-known/acme-challenge/ {
         root {{$.ContainerWebrootPath}};
@@ -1573,6 +1462,40 @@ server {
 }
 {{- end}}
 {{end}}`
+
+// attachRateLimits applies each rate limit to the location serving its path.
+// A limit on a path that already has a location is added to it; a limit on a
+// deeper path gets its own location copied from the route that would otherwise
+// serve it, so limited requests reach the same service, port and settings.
+func attachRateLimits(host string, locations []locationData, rateLimits []rateLimitData) []locationData {
+	for _, rl := range rateLimits {
+		exact := -1
+		best := -1
+		for i, loc := range locations {
+			if loc.Path == rl.Path {
+				exact = i
+				break
+			}
+			if strings.HasPrefix(rl.Path, loc.Path) && (best == -1 || len(loc.Path) > len(locations[best].Path)) {
+				best = i
+			}
+		}
+		switch {
+		case exact != -1:
+			locations[exact].LimitZone = rl.Zone
+			locations[exact].LimitBurst = rl.Burst
+		case best != -1:
+			limited := locations[best]
+			limited.Path = rl.Path
+			limited.LimitZone = rl.Zone
+			limited.LimitBurst = rl.Burst
+			locations = append(locations, limited)
+		default:
+			log.Printf("warning: rate limit on %q for host %q matches no route, skipping", rl.Path, host)
+		}
+	}
+	return locations
+}
 
 func sanitizeZoneName(path string) string {
 	name := strings.ReplaceAll(path, "/", "_")

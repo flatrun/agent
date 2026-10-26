@@ -17,10 +17,7 @@ type DeploymentSource interface {
 type ManagedNginx interface {
 	RenderVirtualHost(*models.Deployment) (string, error)
 	RenderVirtualHostWithBackends(*models.Deployment, map[string][]nginx.UpstreamBackend) (string, error)
-	GetVirtualHost(string) (string, error)
-	WriteVirtualHost(string, string) error
-	TestConfig() error
-	Reload() error
+	ApplyVirtualHost(string, string) error
 }
 
 type managedNginxProvider struct {
@@ -70,18 +67,8 @@ func (p *managedNginxProvider) Reconcile(ctx context.Context, route Route) error
 	if err != nil {
 		return fmt.Errorf("render deployment route: %w", err)
 	}
-	previousContent, previousErr := p.manager.GetVirtualHost(route.ID)
-	if err := p.manager.WriteVirtualHost(route.ID, content); err != nil {
-		return fmt.Errorf("write deployment route: %w", err)
-	}
-	if err := p.manager.TestConfig(); err != nil {
-		if previousErr == nil {
-			_ = p.manager.WriteVirtualHost(route.ID, previousContent)
-		}
-		return fmt.Errorf("test Nginx configuration: %w", err)
-	}
-	if err := p.manager.Reload(); err != nil {
-		return fmt.Errorf("reload Nginx: %w", err)
+	if err := p.manager.ApplyVirtualHost(route.ID, content); err != nil {
+		return fmt.Errorf("apply deployment route: %w", err)
 	}
 	p.mu.Lock()
 	p.routes[route.ID] = cloneRoute(route)
@@ -124,14 +111,8 @@ func (p *managedNginxProvider) Remove(ctx context.Context, routeID string) error
 	if err != nil {
 		return fmt.Errorf("render deployment route: %w", err)
 	}
-	if err := p.manager.WriteVirtualHost(routeID, content); err != nil {
-		return fmt.Errorf("write deployment route: %w", err)
-	}
-	if err := p.manager.TestConfig(); err != nil {
-		return fmt.Errorf("test Nginx configuration: %w", err)
-	}
-	if err := p.manager.Reload(); err != nil {
-		return fmt.Errorf("reload Nginx: %w", err)
+	if err := p.manager.ApplyVirtualHost(routeID, content); err != nil {
+		return fmt.Errorf("apply deployment route: %w", err)
 	}
 	p.mu.Lock()
 	delete(p.routes, routeID)

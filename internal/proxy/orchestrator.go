@@ -123,38 +123,11 @@ func (o *Orchestrator) setupMultiDomainDeployment(deployment *models.Deployment,
 	}
 	deployment.Metadata.Domains = domains
 
-	var previousConfig string
-	hadPreviousConfig := o.nginx.VirtualHostExists(deployment.Name)
-	if hadPreviousConfig {
-		var err error
-		previousConfig, err = o.nginx.GetVirtualHost(deployment.Name)
-		if err != nil {
-			log.Printf("warning: failed to backup previous vhost config: %v", err)
-			hadPreviousConfig = false
-		}
-	}
-
-	if err := o.nginx.CreateVirtualHost(deployment); err != nil {
-		return nil, fmt.Errorf("failed to create virtual host: %w", err)
+	if err := o.nginx.ApplyDeployment(deployment); err != nil {
+		return nil, fmt.Errorf("nginx rejected the new config, the previous one is still active: %w", err)
 	}
 	result.VirtualHostCreated = true
-
-	if err := o.nginx.TestConfig(); err != nil {
-		if hadPreviousConfig {
-			if restoreErr := o.nginx.WriteVirtualHost(deployment.Name, previousConfig); restoreErr != nil {
-				log.Printf("warning: failed to restore previous vhost config: %v", restoreErr)
-			}
-		} else {
-			_ = o.nginx.DeleteVirtualHost(deployment.Name)
-		}
-		return nil, fmt.Errorf("nginx config validation failed: %w", err)
-	}
-
-	if err := o.nginx.Reload(); err != nil {
-		log.Printf("warning: failed to reload nginx: %v", err)
-	} else {
-		result.NginxReloaded = true
-	}
+	result.NginxReloaded = true
 
 	for _, d := range domains {
 		port := d.ContainerPort
@@ -179,24 +152,22 @@ func (o *Orchestrator) setupMultiDomainDeployment(deployment *models.Deployment,
 			result.CertificateExists = true
 		}
 
-		needsUpdate := false
+		var enabled []int
 		for i := range domains {
-			if domains[i].SSL.AutoCert && o.ssl.CertificateExists(domains[i].Domain) {
+			if domains[i].SSL.AutoCert && !domains[i].SSL.Enabled && o.ssl.CertificateExists(domains[i].Domain) {
 				domains[i].SSL.Enabled = true
-				needsUpdate = true
+				enabled = append(enabled, i)
 			}
 		}
 
-		if needsUpdate {
+		if len(enabled) > 0 {
 			deployment.Metadata.Domains = domains
-			if err := o.nginx.UpdateVirtualHost(deployment); err != nil {
-				log.Printf("warning: failed to update virtual host with SSL: %v", err)
-			}
-			if err := o.nginx.TestConfig(); err != nil {
-				log.Printf("warning: SSL config test failed: %v", err)
-			}
-			if err := o.nginx.Reload(); err != nil {
-				log.Printf("warning: failed to reload nginx after SSL: %v", err)
+			if err := o.nginx.ApplyDeployment(deployment); err != nil {
+				log.Printf("warning: nginx rejected the SSL config, keeping the HTTP config: %v", err)
+				for _, i := range enabled {
+					domains[i].SSL.Enabled = false
+				}
+				result.SSLError = "nginx rejected the HTTPS config, the HTTP config is still active: " + err.Error()
 			}
 		}
 	}
@@ -206,12 +177,8 @@ func (o *Orchestrator) setupMultiDomainDeployment(deployment *models.Deployment,
 }
 
 func (o *Orchestrator) TeardownDeployment(deploymentName string) error {
-	if err := o.nginx.DeleteVirtualHost(deploymentName); err != nil {
-		return fmt.Errorf("failed to delete virtual host: %w", err)
-	}
-
-	if err := o.nginx.Reload(); err != nil {
-		log.Printf("warning: failed to reload nginx after teardown: %v", err)
+	if err := o.nginx.RemoveVirtualHost(deploymentName); err != nil {
+		return fmt.Errorf("failed to remove virtual host: %w", err)
 	}
 
 	return nil

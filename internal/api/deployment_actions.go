@@ -154,20 +154,7 @@ func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.D
 		deployment.Metadata = &models.ServiceMetadata{}
 	}
 
-	if len(deployment.Metadata.Domains) == 0 && deployment.Metadata.Networking.Expose {
-		existingService := deployment.Metadata.Networking.Service
-		if existingService == "" {
-			existingService = resolved
-		}
-		existingDomain := models.DomainConfig{
-			ID:            "default",
-			Service:       existingService,
-			ContainerPort: deployment.Metadata.Networking.ContainerPort,
-			Domain:        deployment.Metadata.Networking.Domain,
-			SSL:           deployment.Metadata.SSL,
-		}
-		deployment.Metadata.Domains = []models.DomainConfig{existingDomain}
-	}
+	deployment.Metadata.MaterializeDomains()
 
 	for _, existing := range deployment.Metadata.Domains {
 		if existing.Domain == domain.Domain && existing.PathPrefix == domain.PathPrefix {
@@ -192,7 +179,11 @@ func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID stri
 	if updated.Domain == "" {
 		return apiErrf(http.StatusBadRequest, "Domain is required")
 	}
-	if deployment.Metadata == nil || len(deployment.Metadata.Domains) == 0 {
+	if deployment.Metadata == nil {
+		return apiErrf(http.StatusNotFound, "Domain not found")
+	}
+	deployment.Metadata.MaterializeDomains()
+	if len(deployment.Metadata.Domains) == 0 {
 		return apiErrf(http.StatusNotFound, "Domain not found")
 	}
 

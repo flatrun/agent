@@ -23,13 +23,11 @@ func (m *managedNginxRecorder) RenderVirtualHostWithBackends(_ *models.Deploymen
 	m.backends = backends
 	return "preserved deployment config", nil
 }
-func (m *managedNginxRecorder) GetVirtualHost(string) (string, error) { return "previous config", nil }
-func (m *managedNginxRecorder) WriteVirtualHost(_, content string) error {
+func (m *managedNginxRecorder) ApplyVirtualHost(_, content string) error {
 	m.content = content
+	m.reloads++
 	return nil
 }
-func (m *managedNginxRecorder) TestConfig() error { return nil }
-func (m *managedNginxRecorder) Reload() error     { m.reloads++; return nil }
 
 type deploymentSourceStub struct{ deployment *models.Deployment }
 
