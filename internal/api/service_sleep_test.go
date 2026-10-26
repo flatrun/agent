@@ -204,3 +204,50 @@ func TestServiceSleepSettings(t *testing.T) {
 		t.Fatal("a disabled service must be removed from service_sleep")
 	}
 }
+
+func TestStartingAServiceByHandStartsItsSleepingDependencies(t *testing.T) {
+	s, r := newRedeployTestServer(t, &fakeRunner{})
+	runner := &recordingRunner{}
+	s.runServiceAction = runner.run
+	r.POST("/api/deployments/:name/services/:service/job", s.enqueueServiceJob)
+	if err := s.manager.CreateDeployment("shop", shopCompose, nil); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := s.manager.GetDeployment("shop")
+	d.Metadata.ServiceSleep = map[string]models.SleepConfig{"db": {Enabled: true, IdleMinutes: 10, Sleeping: true}}
+	if err := s.manager.SaveMetadata("shop", d.Metadata); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/deployments/shop/services/api/job", strings.NewReader(`{"action":"start"}`)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !waitFor(func() bool { return len(runner.calls()) == 2 }) {
+		t.Fatalf("started = %v", runner.calls())
+	}
+	if got := runner.calls(); !slices.Equal(got, []string{"start db", "start api"}) {
+		t.Fatalf("started = %v, want the sleeping database first", got)
+	}
+}
+
+func TestServiceSleepIsNotSavedWhenNginxRejectsTheWakeRoute(t *testing.T) {
+	s, tmpDir, ts := setupPlanTestServer(t)
+	s.config.Nginx.Enabled = true
+	createTestDeployment(t, tmpDir, "shop", &models.ServiceMetadata{
+		Name:    "shop",
+		Type:    "web",
+		Domains: []models.DomainConfig{{ID: "site", Service: "web", ContainerPort: 80, Domain: "shop.example.com"}},
+	})
+
+	resp, body := doJSON(t, http.MethodPut, ts.URL+"/api/deployments/shop/services/web/sleep",
+		map[string]any{"enabled": true, "idle_minutes": 10})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d: %v", resp.StatusCode, body)
+	}
+	d, _ := s.manager.GetDeployment("shop")
+	if d.Metadata.ServiceSleepEnabled("web") {
+		t.Fatal("sleep saved although nginx has no route to wake the service")
+	}
+}

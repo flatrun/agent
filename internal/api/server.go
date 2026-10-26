@@ -2828,7 +2828,13 @@ func (s *Server) enqueueServiceJob(c *gin.Context) {
 
 func (s *Server) runServiceActionJob(job *ActionJob) {
 	job.setRunning()
-	err := s.runServiceAction(job.action, job.deployment, job.service, job.opts, job.appendLine)
+	var err error
+	if job.action != "stop" && job.action != "pull" && !job.opts.putToSleep {
+		err = s.startSleepingDependencies(job)
+	}
+	if err == nil {
+		err = s.runServiceAction(job.action, job.deployment, job.service, job.opts, job.appendLine)
+	}
 	if err != nil {
 		if job.opts.putToSleep {
 			if wakeErr := s.setServiceSleeping(job.deployment, job.service, false); wakeErr != nil {

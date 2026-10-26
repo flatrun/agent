@@ -177,6 +177,29 @@ func (s *Server) runWakeJob(job *ActionJob) {
 	s.jobs.finish(job, JobSucceeded, "")
 }
 
+// startSleepingDependencies starts the services that service depends on and
+// that are asleep on their own, so starting it by hand does not leave it
+// without its database or other dependencies.
+func (s *Server) startSleepingDependencies(job *ActionJob) error {
+	if s.manager == nil {
+		return nil
+	}
+	deployment, err := s.manager.GetDeployment(job.deployment)
+	if err != nil || deployment.Metadata == nil {
+		return nil
+	}
+	for _, dep := range wakeOrder(deployment, job.service) {
+		if dep == job.service || !deployment.Metadata.ServiceSleep[dep].Sleeping {
+			continue
+		}
+		job.appendLine("Starting " + dep + ", which " + job.service + " depends on")
+		if err := s.runServiceAction("start", job.deployment, dep, actionOptions{}, job.appendLine); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // wakeService is reached through nginx when a location's service sleeps on
 // its own and its container is gone.
 func (s *Server) wakeService(c *gin.Context) {
@@ -228,6 +251,11 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Service not found"})
 		return
 	}
+	previous, err := cloneMetadata(deployment.Metadata)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	meta := deployment.Metadata
 	if meta == nil {
 		meta = &models.ServiceMetadata{Name: name}
@@ -251,7 +279,19 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 	if s.proxyOrchestrator != nil && (meta.Networking.Expose || len(meta.GetDomains()) > 0) {
 		if updated, err := s.manager.GetDeployment(name); err == nil {
 			if _, err := s.proxyOrchestrator.UpdateDeployment(updated); err != nil {
-				log.Printf("Warning: failed to update virtual host for %s: %v", name, err)
+				if !s.config.Nginx.Enabled {
+					log.Printf("Warning: failed to update virtual host for %s: %v", name, err)
+				} else {
+					if previous != nil {
+						if err := s.manager.SaveMetadata(name, previous); err != nil {
+							log.Printf("warning: failed to restore metadata for %s: %v", name, err)
+						}
+					}
+					c.JSON(http.StatusConflict, gin.H{
+						"error": "Proxy update failed, the previous settings are still active: " + err.Error(),
+					})
+					return
+				}
 			}
 		}
 	}
