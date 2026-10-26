@@ -19,6 +19,7 @@ func NewOrchestrator(cfg *config.Config) *Orchestrator {
 	nginxMgr := nginx.NewManager(&cfg.Nginx, cfg.DeploymentsPath, cfg.Certbot.WebrootPath)
 	sslMgr := ssl.NewManager(&cfg.Certbot, cfg.DeploymentsPath, nil)
 	nginxMgr.SetStaplingChecker(sslMgr.HasOCSPResponder)
+	nginxMgr.SetCertificateChecker(sslMgr.CertificateExists)
 	return &Orchestrator{
 		nginx: nginxMgr,
 		ssl:   sslMgr,
@@ -28,6 +29,7 @@ func NewOrchestrator(cfg *config.Config) *Orchestrator {
 func NewOrchestratorWithManagers(nginxMgr *nginx.Manager, sslMgr *ssl.Manager) *Orchestrator {
 	if nginxMgr != nil && sslMgr != nil {
 		nginxMgr.SetStaplingChecker(sslMgr.HasOCSPResponder)
+		nginxMgr.SetCertificateChecker(sslMgr.CertificateExists)
 	}
 	return &Orchestrator{
 		nginx: nginxMgr,
@@ -53,12 +55,34 @@ func (o *Orchestrator) UpdateConfig(cfg *config.Config) {
 // certificates, without writing or reloading anything. Returns "" when
 // the deployment is not exposed.
 func (o *Orchestrator) RenderDeployment(deployment *models.Deployment) (string, error) {
-	if deployment.Metadata == nil {
+	installable := o.withIssuedCertificates(deployment)
+	if installable == nil {
 		return "", nil
+	}
+	return o.nginx.RenderVirtualHost(installable)
+}
+
+// ReapplyDeployment re-renders an exposed deployment's vhost from its
+// current settings and installs it, keeping the previous one if nginx
+// rejects it. Unlike SetupDeployment it requests no certificates.
+func (o *Orchestrator) ReapplyDeployment(deployment *models.Deployment) error {
+	installable := o.withIssuedCertificates(deployment)
+	if installable == nil {
+		return nil
+	}
+	return o.nginx.ApplyDeployment(installable)
+}
+
+// withIssuedCertificates returns a copy of the deployment with SSL turned
+// off for auto-cert domains whose certificate does not exist yet, or nil
+// when the deployment is not exposed.
+func (o *Orchestrator) withIssuedCertificates(deployment *models.Deployment) *models.Deployment {
+	if deployment.Metadata == nil {
+		return nil
 	}
 	domains := deployment.Metadata.GetDomains()
 	if len(domains) == 0 {
-		return "", nil
+		return nil
 	}
 
 	rendered := make([]models.DomainConfig, len(domains))
@@ -73,8 +97,7 @@ func (o *Orchestrator) RenderDeployment(deployment *models.Deployment) (string, 
 	metaCopy.Domains = rendered
 	deploymentCopy := *deployment
 	deploymentCopy.Metadata = &metaCopy
-
-	return o.nginx.RenderVirtualHost(&deploymentCopy)
+	return &deploymentCopy
 }
 
 func (o *Orchestrator) SetupDeployment(deployment *models.Deployment) (*SetupResult, error) {

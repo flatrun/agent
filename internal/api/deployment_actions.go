@@ -133,6 +133,9 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 // mutateDomainAdd validates the new domain and appends it to the
 // deployment metadata in memory only; persisting is the caller's job.
 func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.DomainConfig) error {
+	if err := normalizeDomainSettings(domain); err != nil {
+		return err
+	}
 	if err := s.validateDomainAccess(domain.Access); err != nil {
 		return err
 	}
@@ -173,6 +176,13 @@ func (s *Server) mutateDomainAdd(deployment *models.Deployment, domain *models.D
 // mutateDomainUpdate replaces the domain with the given ID in memory
 // only; persisting is the caller's job.
 func (s *Server) mutateDomainUpdate(deployment *models.Deployment, domainID string, updated *models.DomainConfig) error {
+	if deployment.Metadata != nil {
+		updated.ID = domainID
+		keepBasicAuthHashes(updated, deployment.Metadata.GetDomains())
+	}
+	if err := normalizeDomainSettings(updated); err != nil {
+		return err
+	}
 	if err := s.validateDomainAccess(updated.Access); err != nil {
 		return err
 	}

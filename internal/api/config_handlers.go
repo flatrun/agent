@@ -7,6 +7,7 @@ import (
 
 	"github.com/flatrun/agent/internal/ai"
 	"github.com/flatrun/agent/pkg/config"
+	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -69,7 +70,24 @@ type configUpdateOutcome struct {
 	ApplyErr error
 }
 
+// configValidators check a value before it is saved, for keys whose type
+// alone does not rule out values the agent cannot apply.
+var configValidators = map[string]func(interface{}) error{
+	"nginx.client_max_body_size": func(value interface{}) error {
+		size, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("nginx.client_max_body_size must be a size such as 64m")
+		}
+		return models.ValidateBodySize(size)
+	},
+}
+
 func (s *Server) applyConfigUpdate(key string, value interface{}) (*configUpdateOutcome, error) {
+	if validate, ok := configValidators[key]; ok {
+		if err := validate(value); err != nil {
+			return nil, apiErrf(http.StatusBadRequest, "%s", err.Error())
+		}
+	}
 	if err := config.Set(s.config, key, value); err != nil {
 		return nil, apiErrf(http.StatusBadRequest, "%s", err.Error())
 	}
@@ -152,6 +170,7 @@ func (s *Server) runtimeAppliers() map[string]func(*Server) error {
 		"security.detection_window":        applyDetectorThresholds,
 		"security.trusted_proxies":         regenerateSecurityScripts,
 		"security.trust_cf_header":         regenerateSecurityScripts,
+		"nginx.client_max_body_size":       func(srv *Server) error { return srv.reapplyAllProxies() },
 	}
 }
 
