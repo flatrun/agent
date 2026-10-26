@@ -1,7 +1,6 @@
 name: MySQL
 description: Popular open-source relational database
-icon: pi pi-database
-logo: https://cdn.simpleicons.org/mysql
+logo: logo.svg
 category: database
 type: infrastructure
 priority: 90

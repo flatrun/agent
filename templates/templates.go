@@ -13,7 +13,7 @@ import (
 	"text/template"
 )
 
-//go:embed infra/*/metadata.yml infra/*/docker-compose.yml
+//go:embed infra/*/metadata.yml infra/*/docker-compose.yml infra/*/logo.svg
 //go:embed infra/nginx/nginx.conf infra/nginx/nginx.lua.conf infra/nginx/default.conf infra/nginx/lua/*
 //go:embed welcome/index.html
 //go:embed errors/*.html
@@ -90,6 +90,9 @@ func Checksum() string {
 		}
 		if compose, err := GetCompose(id); err == nil {
 			h.Write(compose)
+		}
+		if logo, err := GetFile(id, "logo.svg"); err == nil {
+			h.Write(logo)
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil))

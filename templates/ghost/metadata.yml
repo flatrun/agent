@@ -1,7 +1,6 @@
 name: Ghost
 description: Professional publishing platform
-icon: pi pi-book
-logo: https://cdn.simpleicons.org/ghost
+logo: logo.svg
 category: application
 priority: 70
 container_port: 2368

@@ -1,7 +1,6 @@
 name: Node.js
 description: JavaScript runtime for web applications
-icon: pi pi-code
-logo: https://cdn.simpleicons.org/nodedotjs
+logo: logo.svg
 category: runtime
 priority: 40
 container_port: 3000

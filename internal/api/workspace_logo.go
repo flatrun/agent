@@ -24,7 +24,7 @@ func (s *Server) putWorkspaceLogo(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !saveLogo(c, s.workspaceLogoDir(w.Slug)) {
+	if _, ok := saveLogo(c, s.workspaceLogoDir(w.Slug)); !ok {
 		return
 	}
 	c.JSON(http.StatusOK, s.withLogo(workspace.Membership{Workspace: *w, Role: role}))

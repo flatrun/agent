@@ -66,7 +66,7 @@ func TestProjectLogo(t *testing.T) {
 	status, body = admin.do(http.MethodGet, "/projects/shop", "", nil)
 	project, _ := body["deployment"].(map[string]any)
 	meta, _ := project["metadata"].(map[string]any)
-	if status != http.StatusOK || project["logo_version"] == nil || meta["logo"] != "upload" {
+	if status != http.StatusOK || project["logo_version"] == nil || meta["logo"] != ".flatrun/logo.png" {
 		t.Fatalf("project = %d %v", status, body)
 	}
 
@@ -89,13 +89,13 @@ func TestProjectLogo(t *testing.T) {
 }
 
 func TestProjectLogoSetting(t *testing.T) {
-	_, client := setupWorkspaceTestServer(t)
+	s, client := setupWorkspaceTestServer(t)
 	admin := client.login("admin", "admin-pass")
 	if status, body := createDeploymentAs(admin, "", "shop"); status != http.StatusCreated {
 		t.Fatalf("create = %d %v", status, body)
 	}
 
-	for _, logo := range []string{"simple-icons:redis", "logos:postgresql", "https://cdn.simpleicons.org/n8n", "template:trakli", ""} {
+	for _, logo := range []string{"simple-icons:redis", "logos:postgresql", "https://example.com/n8n.svg", "assets/brand.svg", ""} {
 		if status, body := admin.do(http.MethodPut, "/projects/shop/metadata", "", map[string]string{"logo": logo}); status != http.StatusOK {
 			t.Fatalf("logo %q = %d %v", logo, status, body)
 		}
@@ -106,11 +106,57 @@ func TestProjectLogoSetting(t *testing.T) {
 			t.Fatalf("logo %q stored as %q", logo, got)
 		}
 	}
-	for _, logo := range []string{"redis", "javascript:alert(1)", "https://", "template:", "Simple Icons:Redis"} {
+	for _, logo := range []string{"redis", "javascript:alert(1)", "https://", "Simple Icons:Redis", "../blog/logo.svg", "/etc/logo.svg", "assets/../logo.svg", ".env"} {
 		if status, _ := admin.do(http.MethodPut, "/projects/shop/metadata", "", map[string]string{"logo": logo}); status != http.StatusBadRequest {
 			t.Fatalf("logo %q = %d, want 400", logo, status)
 		}
 	}
+
+	shop := filepath.Join(s.manager.BasePath(), "shop")
+	brand := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"/>`)
+	if err := os.MkdirAll(filepath.Join(shop, "assets"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shop, "assets", "brand.svg"), brand, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := admin.do(http.MethodPut, "/projects/shop/metadata", "", map[string]string{"logo": "assets/brand.svg"}); status != http.StatusOK {
+		t.Fatalf("logo naming a file in the project = %d %v", status, body)
+	}
+	if status, _, data := fetchLogo(t, admin, "/projects/shop/logo"); status != http.StatusOK || !bytes.Equal(data, brand) {
+		t.Fatalf("file named by the logo = %d %q", status, data)
+	}
+	_, body := admin.do(http.MethodGet, "/projects/shop", "", nil)
+	if project, _ := body["deployment"].(map[string]any); project["logo_version"] == nil {
+		t.Fatalf("project naming a logo file has no logo version: %v", project)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.svg")
+	if err := os.WriteFile(outside, brand, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(shop, "assets", "link.svg")); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := admin.do(http.MethodPut, "/projects/shop/metadata", "", map[string]string{"logo": "assets/link.svg"}); status != http.StatusOK {
+		t.Fatalf("logo naming a link = %d %v", status, body)
+	}
+	if status, _, _ := fetchLogo(t, admin, "/projects/shop/logo"); status != http.StatusNotFound {
+		t.Fatalf("logo linking outside the project = %d", status)
+	}
+
+	if status, _ := admin.do(http.MethodDelete, "/projects/shop/logo", "", nil); status != http.StatusNoContent {
+		t.Fatalf("reset logo = %d", status)
+	}
+	_, body = admin.do(http.MethodGet, "/projects/shop", "", nil)
+	project, _ := body["deployment"].(map[string]any)
+	if meta, _ := project["metadata"].(map[string]any); meta["logo"] != nil {
+		t.Fatalf("logo after reset = %v", meta["logo"])
+	}
+	if _, err := os.Stat(filepath.Join(shop, "assets", "brand.svg")); err != nil {
+		t.Fatalf("reset removed a file the project owns: %v", err)
+	}
+
 	status, _ := admin.do(http.MethodPost, "/projects", "", map[string]any{
 		"name":            "blog",
 		"compose_content": "services:\n  web:\n    image: nginx:alpine\n",
@@ -181,7 +227,40 @@ func TestTemplateLogo(t *testing.T) {
 	}
 	_, body = admin.do(http.MethodGet, "/projects/money", "", nil)
 	project, _ := body["deployment"].(map[string]any)
-	if meta, _ := project["metadata"].(map[string]any); meta["template"] != "trakli" {
+	if meta, _ := project["metadata"].(map[string]any); meta["template"] != "trakli" || meta["logo"] != ".flatrun/logo.svg" {
 		t.Fatalf("project created from a template = %v", project["metadata"])
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if status, _, data := fetchLogo(t, admin, "/projects/money/logo"); status != http.StatusOK || !bytes.Equal(data, logo) {
+		t.Fatalf("copied logo after the template is gone = %d %q", status, data)
+	}
+
+	icons := filepath.Join(s.config.DeploymentsPath, ".flatrun", "templates", "cache")
+	if err := os.MkdirAll(icons, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"docker-compose.yml": "services:\n  app:\n    image: redis:7\n",
+		"metadata.yml":       "name: Cache\nlogo: logos:redis\n",
+	} {
+		if err := os.WriteFile(filepath.Join(icons, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for project, want := range map[string]string{"cache": "logos:redis", "named": "logos:valkey"} {
+		request := map[string]any{"name": project, "template_id": "cache", "compose_content": "services:\n  app:\n    image: redis:7\n"}
+		if project == "named" {
+			request["metadata"] = map[string]any{"name": project, "logo": want}
+		}
+		if status, body := admin.do(http.MethodPost, "/projects", "", request); status != http.StatusCreated {
+			t.Fatalf("create %s = %d %v", project, status, body)
+		}
+		_, body := admin.do(http.MethodGet, "/projects/"+project, "", nil)
+		created, _ := body["deployment"].(map[string]any)
+		if meta, _ := created["metadata"].(map[string]any); meta["logo"] != want {
+			t.Fatalf("%s logo = %v, want %s", project, meta["logo"], want)
+		}
 	}
 }

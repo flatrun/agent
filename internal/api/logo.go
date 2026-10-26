@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -49,34 +50,34 @@ func logoContentType(data []byte) string {
 	return ""
 }
 
-// saveLogo stores the uploaded image in dir, replacing any earlier logo. It answers the
-// request itself when the upload is refused.
-func saveLogo(c *gin.Context, dir string) bool {
+// saveLogo stores the uploaded image in dir, replacing any earlier logo, and returns the file
+// name it wrote. It answers the request itself when the upload is refused.
+func saveLogo(c *gin.Context, dir string) (string, bool) {
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "send the image as the file field of a form"})
-		return false
+		return "", false
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, maxLogoBytes+1))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return false
+		return "", false
 	}
 	if len(data) > maxLogoBytes {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "a logo can be at most 512 KB"})
-		return false
+		return "", false
 	}
 	contentType := logoContentType(data)
 	if contentType == "" {
 		c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "a logo must be PNG, WebP or SVG"})
-		return false
+		return "", false
 	}
 	if err := writeLogo(dir, logoExtensions[contentType], data); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return false
+		return "", false
 	}
-	return true
+	return "logo" + logoExtensions[contentType], true
 }
 
 // writeLogo replaces the logo only once the new file is complete, so a failed write keeps the
@@ -118,6 +119,23 @@ func serveLogo(c *gin.Context, dir, missing string) {
 		return
 	}
 	serveLogoFile(c, path)
+}
+
+// containedFile resolves rel inside root, following symlinks, and refuses a path that leads
+// outside it.
+func containedFile(root, rel string) (string, bool) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false
+	}
+	file, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", false
+	}
+	if inside, err := filepath.Rel(realRoot, file); err != nil || inside == "." || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return file, true
 }
 
 // serveLogoFile sends an image only when it is one a logo may be.

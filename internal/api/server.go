@@ -1178,7 +1178,7 @@ func (s *Server) getDeployment(c *gin.Context) {
 	if owners := s.deploymentOwners([]models.Deployment{*deployment}); owners != nil {
 		deployment.Workspace = owners[name]
 	}
-	deployment.LogoVersion = logoVersion(s.projectLogoDir(name))
+	deployment.LogoVersion = s.projectLogoVersion(deployment)
 	composeContent, composeFilename, _ := s.manager.GetComposeFile(name)
 	proxyStatus := s.proxyOrchestrator.GetDeploymentProxyStatus(deployment)
 
@@ -1304,7 +1304,7 @@ func (s *Server) createDeployment(c *gin.Context) {
 		return
 	}
 	if req.Metadata != nil {
-		if err := validateProjectLogo(req.Metadata.Logo); err != nil {
+		if err := req.Metadata.Logo.Validate(); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -1552,6 +1552,9 @@ func (s *Server) createDeployment(c *gin.Context) {
 			}
 		}
 		req.Metadata.Template = req.TemplateID
+		if req.Metadata.Logo == "" {
+			req.Metadata.Logo = s.copyTemplateLogo(req.Name, req.TemplateID)
+		}
 	}
 	if req.Metadata != nil {
 		if len(databaseConfigs) > 0 {
@@ -2361,7 +2364,7 @@ func (s *Server) updateDeploymentMetadata(c *gin.Context) {
 			seenServices[healthCheck.Service] = struct{}{}
 		}
 	}
-	if err := validateProjectLogo(incoming.Logo); err != nil {
+	if err := incoming.Logo.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -4310,8 +4313,7 @@ type TemplateFile struct {
 type TemplateMetadata struct {
 	Name          string               `yaml:"name"`
 	Description   string               `yaml:"description"`
-	Icon          string               `yaml:"icon"`
-	Logo          string               `yaml:"logo"`
+	Logo          models.Logo          `yaml:"logo"`
 	Category      string               `yaml:"category"`
 	Type          string               `yaml:"type"`
 	ObjectStore   *TemplateObjectStore `yaml:"object_store"`
@@ -4381,7 +4383,6 @@ type Template struct {
 	ID            string               `json:"id"`
 	Name          string               `json:"name" yaml:"name"`
 	Description   string               `json:"description" yaml:"description"`
-	Icon          string               `json:"icon" yaml:"icon"`
 	Logo          string               `json:"logo" yaml:"logo"`
 	Category      string               `json:"category" yaml:"category"`
 	ObjectStore   *TemplateObjectStore `json:"object_store,omitempty" yaml:"object_store,omitempty"`
@@ -4444,9 +4445,6 @@ func (s *Server) listTemplates(c *gin.Context) {
 			if metadata.Name == "" {
 				metadata.Name = toTitleCase(strings.ReplaceAll(entry.Name(), "-", " "))
 			}
-			if metadata.Icon == "" {
-				metadata.Icon = "pi pi-box"
-			}
 			if metadata.Category == "" {
 				metadata.Category = "general"
 			}
@@ -4469,7 +4467,6 @@ func (s *Server) listTemplates(c *gin.Context) {
 				ID:            templateID,
 				Name:          metadata.Name,
 				Description:   metadata.Description,
-				Icon:          metadata.Icon,
 				Logo:          templateLogo(templateID, metadata.Logo),
 				Category:      metadata.Category,
 				ObjectStore:   metadata.ObjectStore,
@@ -5417,6 +5414,10 @@ func ensureBuiltinTemplates(templatesDir string) {
 		composeContent, err := templates.GetCompose(tmplID)
 		if err == nil {
 			_ = os.WriteFile(composePath, composeContent, 0644)
+		}
+
+		if logo, err := templates.GetFile(tmplID, "logo.svg"); err == nil {
+			_ = os.WriteFile(filepath.Join(templatePath, "logo.svg"), logo, 0644)
 		}
 	}
 

@@ -11,8 +11,8 @@ type Deployment struct {
 	Services  []Service        `json:"services,omitempty"`
 	Metadata  *ServiceMetadata `json:"metadata,omitempty"`
 	Workspace string           `json:"workspace,omitempty"`
-	// LogoVersion changes whenever the project's uploaded logo is replaced, and is empty when
-	// it has none.
+	// LogoVersion changes whenever the file the project's logo names is replaced, and is empty
+	// when the logo is not a file.
 	LogoVersion string `json:"logo_version,omitempty"`
 }
 
@@ -70,10 +70,7 @@ type ServiceMetadata struct {
 	Name string `yaml:"name" json:"name"`
 	Type string `yaml:"type" json:"type"`
 	Kind string `yaml:"kind,omitempty" json:"kind,omitempty"`
-	// Logo is what the project shows as its logo: an icon id such as simple-icons:redis, an
-	// http(s) link, "upload" for the file uploaded to the project, or "template:<id>" for a
-	// template's logo.
-	Logo string `yaml:"logo,omitempty" json:"logo,omitempty"`
+	Logo Logo   `yaml:"logo,omitempty" json:"logo,omitempty"`
 	// Template is the template the project was created from.
 	Template   string      `yaml:"template,omitempty" json:"template,omitempty"`
 	LogSources []LogSource `yaml:"log_sources,omitempty" json:"log_sources,omitempty"`
