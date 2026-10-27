@@ -45,6 +45,11 @@ type Manager struct {
 	hookTokenOnce sync.Once
 	hookToken     string
 
+	agentHostMu     sync.Mutex
+	agentHostProbed bool
+	agentHostOK     bool
+	agentHostProbe  func() bool
+
 	testConfig func() error
 	reload     func() error
 }
@@ -551,6 +556,48 @@ func (m *Manager) keepaliveSupported() bool {
 	return false
 }
 
+// agentHostProbeConfig proxies to the agent the way the 413 handler does. nginx
+// resolves a literal proxy_pass host when it loads the config, so a proxy
+// container without a host.docker.internal entry rejects every vhost that
+// contains the handler.
+const agentHostProbeConfig = `events {} http { server { listen 65534; location / { proxy_pass http://host.docker.internal:8090; } } }`
+
+// agentHostResolves reports whether the running nginx can resolve the agent's
+// host. A conclusive answer is cached; an inconclusive probe is retried later
+// and answers false meanwhile, which leaves out the 413 handler.
+func (m *Manager) agentHostResolves() bool {
+	if m.agentHostProbe != nil {
+		return m.agentHostProbe()
+	}
+	m.agentHostMu.Lock()
+	defer m.agentHostMu.Unlock()
+
+	if m.agentHostProbed {
+		return m.agentHostOK
+	}
+	if m.config.ContainerName == "" {
+		return false
+	}
+	if err := m.waitForContainerReady(1); err != nil {
+		return false
+	}
+
+	script := "printf '%s' '" + agentHostProbeConfig + "' > /tmp/flatrun-agent-host-probe.conf && nginx -t -c /tmp/flatrun-agent-host-probe.conf"
+	out, _ := exec.Command("docker", "exec", m.config.ContainerName, "sh", "-c", script).CombinedOutput()
+	outStr := string(out)
+
+	if isNginxConfigValid(outStr) {
+		m.agentHostProbed = true
+		m.agentHostOK = true
+		return true
+	}
+	if strings.Contains(outStr, "[emerg]") {
+		m.agentHostProbed = true
+		m.agentHostOK = false
+	}
+	return false
+}
+
 // upstreamNameFor builds a unique, readable nginx upstream name for a
 // service:port target, reserving it in used so distinct targets never collide.
 func upstreamNameFor(service string, port int, used map[string]bool) string {
@@ -953,6 +1000,11 @@ func (m *Manager) groupDomainsByHost(domains []models.DomainConfig, deploymentNa
 			}
 		}
 
+		if !m.agentHostResolves() {
+			for i := range locations {
+				locations[i].DomainID = ""
+			}
+		}
 		tooLarge := tooLargeDomains(locations)
 		for i := range locations {
 			locations[i].Headers = responseHeaders(locations[i].responseHeaders, hasSSL)
