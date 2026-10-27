@@ -266,18 +266,16 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 	sleeping := meta.ServiceSleep[service].Sleeping && req.Enabled
 	// The wake route goes away with the setting, so a service turned off while
 	// asleep must be started here or no request can start it again. The start
-	// is reserved before anything changes: if another action holds the
-	// service, such as the sweep's stop, the request is refused instead.
+	// is reserved before anything changes: if any action holds the service,
+	// even a start that may still fail, the request is refused instead.
 	var resume *ActionJob
 	if !req.Enabled && meta.ServiceSleep[service].Sleeping {
 		job, created := s.jobs.createScoped(name, service, "start", actionOptions{})
-		if !created && job.action != "start" {
+		if !created {
 			c.JSON(http.StatusConflict, gin.H{"error": "An action is running for this service, try again when it finishes"})
 			return
 		}
-		if created {
-			resume = job
-		}
+		resume = job
 	}
 	release := func() {
 		if resume != nil {

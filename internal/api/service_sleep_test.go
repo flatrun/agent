@@ -229,7 +229,22 @@ func TestTurningSleepOffStartsAServiceThatIsAsleep(t *testing.T) {
 	}
 }
 
-func TestSleepCannotBeTurnedOffWhileTheServiceIsBeingPutToSleep(t *testing.T) {
+func TestSleepCannotBeTurnedOffWhileAnActionHoldsTheService(t *testing.T) {
+	for _, held := range []struct {
+		action string
+		opts   actionOptions
+	}{
+		{"stop", actionOptions{putToSleep: true}},
+		{"start", actionOptions{}},
+	} {
+		t.Run(held.action, func(t *testing.T) {
+			assertSleepOffRefusedWhileHeld(t, held.action, held.opts)
+		})
+	}
+}
+
+func assertSleepOffRefusedWhileHeld(t *testing.T, action string, opts actionOptions) {
+	t.Helper()
 	s, r := newRedeployTestServer(t, &fakeRunner{})
 	r.PUT("/api/deployments/:name/services/:service/sleep", s.updateServiceSleep)
 	if err := s.manager.CreateDeployment("shop", shopCompose, nil); err != nil {
@@ -240,14 +255,14 @@ func TestSleepCannotBeTurnedOffWhileTheServiceIsBeingPutToSleep(t *testing.T) {
 	if err := s.manager.SaveMetadata("shop", d.Metadata); err != nil {
 		t.Fatal(err)
 	}
-	if _, created := s.jobs.createScoped("shop", "worker", "stop", actionOptions{putToSleep: true}); !created {
-		t.Fatal("could not hold the service with a stop")
+	if _, created := s.jobs.createScoped("shop", "worker", action, opts); !created {
+		t.Fatalf("could not hold the service with a %s", action)
 	}
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/deployments/shop/services/worker/sleep", strings.NewReader(`{"enabled":false}`)))
 	if rec.Code != http.StatusConflict {
-		t.Fatalf("disable during the stop = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("disable during the %s = %d: %s", action, rec.Code, rec.Body.String())
 	}
 	d, _ = s.manager.GetDeployment("shop")
 	if !d.Metadata.ServiceSleepEnabled("worker") {
