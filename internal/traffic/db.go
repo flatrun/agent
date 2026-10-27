@@ -70,7 +70,43 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_traffic_source_ip ON traffic_logs(source_ip);
 	`
 
-	_, err := db.conn.Exec(schema)
+	if _, err := db.conn.Exec(schema); err != nil {
+		return err
+	}
+	for _, column := range []string{"routed_deployment", "routed_service"} {
+		if err := db.addColumnIfMissing("traffic_logs", column, "TEXT"); err != nil {
+			return err
+		}
+	}
+	_, err := db.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_traffic_routed ON traffic_logs(routed_deployment, routed_service, created_at DESC)`)
+	return err
+}
+
+func (db *DB) addColumnIfMissing(table, column, kind string) error {
+	rows, err := db.conn.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name, typ  string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.conn.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + kind)
 	return err
 }
 
@@ -80,11 +116,11 @@ func (db *DB) InsertLog(log *TrafficLog) (int64, error) {
 
 	result, err := db.conn.Exec(`
 		INSERT INTO traffic_logs
-		(deployment_name, request_path, request_method, status_code, source_ip, response_time_ms, bytes_sent, request_length, upstream_time_ms, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(deployment_name, request_path, request_method, status_code, source_ip, response_time_ms, bytes_sent, request_length, upstream_time_ms, created_at, routed_deployment, routed_service)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.DeploymentName, log.RequestPath, log.RequestMethod, log.StatusCode,
 		log.SourceIP, log.ResponseTimeMs, log.BytesSent, log.RequestLength,
-		log.UpstreamTimeMs, log.CreatedAt,
+		log.UpstreamTimeMs, log.CreatedAt, nullable(log.RoutedDeployment), nullable(log.RoutedService),
 	)
 	if err != nil {
 		return 0, err
@@ -512,11 +548,33 @@ func (db *DB) LastSeen(deploymentName string) (time.Time, error) {
 
 	var last time.Time
 	err := db.conn.QueryRow(
-		`SELECT created_at FROM traffic_logs WHERE deployment_name = ? ORDER BY created_at DESC LIMIT 1`,
-		deploymentName,
+		`SELECT created_at FROM traffic_logs WHERE deployment_name = ? OR routed_deployment = ? ORDER BY created_at DESC LIMIT 1`,
+		deploymentName, deploymentName,
 	).Scan(&last)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, nil
 	}
 	return last, err
+}
+
+func (db *DB) LastSeenService(deploymentName, service string) (time.Time, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var last time.Time
+	err := db.conn.QueryRow(
+		`SELECT created_at FROM traffic_logs WHERE routed_deployment = ? AND routed_service = ? ORDER BY created_at DESC LIMIT 1`,
+		deploymentName, service,
+	).Scan(&last)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	return last, err
+}
+
+func nullable(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }

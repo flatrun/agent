@@ -28,12 +28,20 @@ function _M.log_request()
     -- Extract deployment name from host (remove port if present)
     local deployment_name = host:match("^([^:]+)") or host
 
+    -- Set by the generated vhost on each proxied location; nil elsewhere.
+    local routed_deployment = ngx.var.flatrun_deployment
+    local routed_service = ngx.var.flatrun_service
+    if routed_deployment == "" then routed_deployment = nil end
+    if routed_service == "" then routed_service = nil end
+
     -- Non-blocking: fire and forget via timer
     local ok, err = ngx.timer.at(0, function(premature)
         if premature then return end
 
         local body, encode_err = cjson.encode({
             deployment_name = deployment_name,
+            routed_deployment = routed_deployment,
+            routed_service = routed_service,
             request_path = uri,
             request_method = method,
             status_code = status,

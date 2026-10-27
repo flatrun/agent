@@ -14,6 +14,9 @@ type TrafficLog struct {
 	RequestLength  int       `json:"request_length"`
 	UpstreamTimeMs *int      `json:"upstream_time_ms,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+
+	RoutedDeployment string `json:"routed_deployment,omitempty"`
+	RoutedService    string `json:"routed_service,omitempty"`
 }
 
 type TrafficFilter struct {
@@ -84,6 +87,10 @@ type IngestTrafficLog struct {
 	RequestLength  int    `json:"request_length"`
 	UpstreamTimeMs *int   `json:"upstream_time_ms,omitempty"`
 	Timestamp      int64  `json:"timestamp"`
+	// RoutedDeployment and RoutedService name what served the request;
+	// DeploymentName is the request's host.
+	RoutedDeployment string `json:"routed_deployment,omitempty"`
+	RoutedService    string `json:"routed_service,omitempty"`
 }
 
 type UnknownDomainStats struct {

@@ -46,6 +46,9 @@ func (m *Manager) IngestLog(ingest *IngestTrafficLog) (*TrafficLog, error) {
 		RequestLength:  ingest.RequestLength,
 		UpstreamTimeMs: ingest.UpstreamTimeMs,
 		CreatedAt:      time.Now(),
+
+		RoutedDeployment: ingest.RoutedDeployment,
+		RoutedService:    ingest.RoutedService,
 	}
 
 	if ingest.Timestamp > 0 {
@@ -132,4 +135,10 @@ func (m *Manager) cleanupLoop() {
 
 func (m *Manager) LastSeen(deploymentName string) (time.Time, error) {
 	return m.db.LastSeen(deploymentName)
+}
+
+// LastSeenService returns when a request routed to the service was last
+// logged, or zero.
+func (m *Manager) LastSeenService(deploymentName, service string) (time.Time, error) {
+	return m.db.LastSeenService(deploymentName, service)
 }

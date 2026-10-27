@@ -773,9 +773,14 @@ func (m *Manager) renderMultiDomainConfigWithBackends(deployment *models.Deploym
 	}
 	for i := range servers {
 		servers[i].DeploymentName = deployment.Name
+		servers[i].WakeServices = attachServiceWake(deployment, servers[i].Locations)
 		servers[i].Locations = attachRateLimits(servers[i].Domain, servers[i].Locations, rateLimits)
 		for j := range servers[i].Locations {
 			servers[i].Locations[j].SecurityEnabled = securityEnabled
+			if trafficName.MatchString(deployment.Name) && trafficName.MatchString(servers[i].Locations[j].RouteService) {
+				servers[i].Locations[j].TrafficDeployment = deployment.Name
+				servers[i].Locations[j].TrafficService = servers[i].Locations[j].RouteService
+			}
 			// allow/deny in a location replaces the server's deny list, so an
 			// allow-listed location repeats the deployment's blocked addresses.
 			if len(servers[i].Locations[j].AllowIPs) > 0 {
@@ -1137,10 +1142,16 @@ type serverData struct {
 	TooLargeDomains []string
 	HookToken       string
 	DeploymentName  string
+	WakeServices    []wakeService
 	// RedirectAliases answer with a permanent redirect to Domain.
 	RedirectAliases []aliasRedirect
 	RedirectScheme  string
 	WebrootPath     string
+}
+
+type wakeService struct {
+	Location string
+	Service  string
 }
 
 type aliasRedirect struct {
@@ -1173,6 +1184,13 @@ type locationData struct {
 	// to put in an nginx location name.
 	DomainID  string
 	BodyLimit string
+	// WakeLocation names the server's location that wakes this location's
+	// service when it sleeps on its own.
+	WakeLocation string
+	// TrafficDeployment and TrafficService tell the traffic log which
+	// deployment and service served the request.
+	TrafficDeployment string
+	TrafficService    string
 	// NoBuffering streams the app's response instead of buffering it.
 	NoBuffering   bool
 	Headers       []headerData
@@ -1372,7 +1390,18 @@ upstream {{.Name}} {
 // sleepTemplates sends requests that find a sleeping deployment's containers
 // gone (nginx answers 502 when the upstream name no longer resolves) to the
 // agent, which starts the deployment and serves a waiting page.
-const sleepTemplates = `{{define "sleepWake"}}{{if .SleepEnabled}}
+const sleepTemplates = `{{define "serviceWake"}}
+{{- range .WakeServices}}
+
+    location {{.Location}} {
+        rewrite ^ /api/hooks/wake/{{$.DeploymentName}}/{{.Service}} break;
+        proxy_pass http://host.docker.internal:8090;
+        proxy_set_header X-Original-Host $host;
+        proxy_set_header X-Original-URI $request_uri;
+    }
+{{- end}}
+{{- end}}
+{{define "sleepWake"}}{{if .SleepEnabled}}
     error_page 502 503 504 = @flatrun_wake;
 
     location @flatrun_wake {
@@ -1493,6 +1522,12 @@ server {
 {{- end}}
 {{- if .SleepEnabled}}
         error_page 502 503 504 = @flatrun_wake;
+{{- else if .WakeLocation}}
+        error_page 502 503 504 = {{.WakeLocation}};
+{{- end}}
+{{- if .TrafficService}}
+        set $flatrun_deployment "{{.TrafficDeployment}}";
+        set $flatrun_service "{{.TrafficService}}";
 {{- end}}
 {{- if .LimitZone}}
         limit_req zone={{.LimitZone}} burst={{.LimitBurst}} nodelay;
@@ -1537,6 +1572,7 @@ server {
 {{- end}}
 {{- if .SecurityEnabled}}
         log_by_lua_block {
+            traffic.log_request()
             security.capture_event()
         }
 {{- end}}
@@ -1556,6 +1592,7 @@ server {
 {{template "serverLimits" .}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
+{{template "serviceWake" .}}
 {{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
 
     location /.well-known/acme-challenge/ {
@@ -1616,6 +1653,7 @@ server {
 {{template "serverLimits" .}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
+{{template "serviceWake" .}}
 {{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
 }
 {{end}}`
@@ -1665,6 +1703,7 @@ server {
 {{template "serverLimits" .}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
+{{template "serviceWake" .}}
 {{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
 }
 {{- else}}
@@ -1679,6 +1718,7 @@ server {
 {{template "serverLimits" .}}
 {{template "accessPortal" .}}
 {{template "sleepWake" $}}
+{{template "serviceWake" .}}
 {{- range .Locations}}{{template "proxyLocation" .}}{{- end}}
 
     location /.well-known/acme-challenge/ {
@@ -1773,6 +1813,30 @@ func responseHeaders(custom map[string]string, https bool) []headerData {
 
 func escapeNginxString(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value)
+}
+
+var trafficName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// attachServiceWake points each location whose service sleeps on its own
+// at a named location that asks the agent to wake that service, and
+// returns those named locations for the server block.
+func attachServiceWake(deployment *models.Deployment, locations []locationData) []wakeService {
+	var wakes []wakeService
+	byService := map[string]string{}
+	for i := range locations {
+		service := locations[i].RouteService
+		if !deployment.Metadata.ServiceSleepEnabled(service) || !trafficName.MatchString(service) {
+			continue
+		}
+		name, ok := byService[service]
+		if !ok {
+			name = fmt.Sprintf("@flatrun_wake_service_%d", len(wakes))
+			byService[service] = name
+			wakes = append(wakes, wakeService{Location: name, Service: service})
+		}
+		locations[i].WakeLocation = name
+	}
+	return wakes
 }
 
 // validBodyLimit drops a size nginx would refuse, such as "64mb" written by

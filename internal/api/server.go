@@ -506,6 +506,7 @@ func (s *Server) setupRoutes() {
 		api.POST("/hooks/:provider/:deployment", s.receiveWebhook)
 		// Reached through nginx's fallback when a sleeping deployment is down.
 		api.Any("/hooks/wake/:deployment", s.wakeDeployment)
+		api.Any("/hooks/wake/:deployment/:service", s.wakeService)
 		// Reached through nginx when a request is over its domain's size limit.
 		api.Any("/hooks/too-large/:deployment/:domain", s.requestTooLarge)
 
@@ -658,6 +659,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/deployments/:name/services/:service/stop", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("stop"))
 			protected.POST("/deployments/:name/services/:service/restart", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("restart"))
 			protected.POST("/deployments/:name/services/:service/job", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.enqueueServiceJob)
+			protected.PUT("/deployments/:name/services/:service/sleep", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateServiceSleep)
 			protected.GET("/deployments/:name/services/:service/settings", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelRead), s.getServiceSettings)
 			protected.PUT("/deployments/:name/services/:service/settings", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.updateServiceSettings)
 			protected.POST("/deployments/:name/services/:service/rebuild", s.authMiddleware.RequirePermission(auth.PermDeploymentsWrite), s.authMiddleware.RequireDeploymentAccess(auth.AccessLevelWrite), s.serviceActionHandler("rebuild"))
@@ -2826,8 +2828,19 @@ func (s *Server) enqueueServiceJob(c *gin.Context) {
 
 func (s *Server) runServiceActionJob(job *ActionJob) {
 	job.setRunning()
-	err := s.runServiceAction(job.action, job.deployment, job.service, job.opts, job.appendLine)
+	var err error
+	if job.action != "stop" && job.action != "pull" && !job.opts.putToSleep {
+		err = s.startSleepingDependencies(job)
+	}
+	if err == nil {
+		err = s.runServiceAction(job.action, job.deployment, job.service, job.opts, job.appendLine)
+	}
 	if err != nil {
+		if job.opts.putToSleep {
+			if wakeErr := s.setServiceSleeping(job.deployment, job.service, false); wakeErr != nil {
+				log.Printf("Warning: failed to clear sleep on %s/%s after its stop failed: %v", job.deployment, job.service, wakeErr)
+			}
+		}
 		s.jobs.finish(job, JobFailed, err.Error())
 		return
 	}
@@ -2859,6 +2872,9 @@ func (s *Server) defaultRunServiceAction(action, name, service string, actOpts a
 		_, err = s.manager.PullService(name, service, opts...)
 	default:
 		err = fmt.Errorf("unsupported service action: %s", action)
+	}
+	if err == nil && action != "stop" && action != "pull" {
+		s.markServiceAwake(name, service)
 	}
 	return err
 }

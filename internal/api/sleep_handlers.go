@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/flatrun/agent/internal/access"
-	"github.com/flatrun/agent/internal/docker"
 	"github.com/flatrun/agent/internal/sleep"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
@@ -27,29 +26,20 @@ const (
 // trafficActivity reports the last request nginx logged for a deployment.
 type trafficActivity struct{ s *Server }
 
-func (t trafficActivity) LastActive(_ context.Context, deployment string, _ time.Time) (time.Time, error) {
+func (t trafficActivity) LastActive(_ context.Context, key string, _ time.Time) (time.Time, error) {
 	if t.s.trafficManager == nil {
 		return time.Time{}, nil
 	}
-	return t.s.trafficManager.LastSeen(deployment)
-}
-
-func deploymentReceivedBytes(_ context.Context, deployment string) (uint64, error) {
-	stats, err := docker.GetDeploymentStats(deployment)
-	if err != nil {
-		return 0, err
+	if deployment, service, isService := splitSleepKey(key); isService {
+		return t.s.trafficManager.LastSeenService(deployment, service)
 	}
-	var total uint64
-	for _, c := range stats {
-		total += c.NetworkRx
-	}
-	return total, nil
+	return t.s.trafficManager.LastSeen(key)
 }
 
 func (s *Server) newSleepController() *sleep.Controller {
 	return sleep.NewController(time.Now(),
 		trafficActivity{s},
-		&sleep.NetworkActivity{ReceivedBytes: deploymentReceivedBytes, Threshold: sleepNetworkThreshold},
+		&sleep.NetworkActivity{ReceivedBytes: sleepTargetReceivedBytes, Threshold: sleepNetworkThreshold},
 	)
 }
 
@@ -67,7 +57,9 @@ func (s *Server) runSleepLoop(ctx context.Context) {
 }
 
 // putIdleDeploymentsToSleep stops every running, sleep-enabled deployment that
-// has been idle for its configured time.
+// has been idle for its configured time, and every service that sleeps on
+// its own. It returns the deployments and "deployment/service" keys put to
+// sleep.
 func (s *Server) putIdleDeploymentsToSleep(ctx context.Context, now time.Time) []string {
 	deployments, err := s.manager.ListDeployments()
 	if err != nil {
@@ -82,9 +74,16 @@ func (s *Server) putIdleDeploymentsToSleep(ctx context.Context, now time.Time) [
 		}
 		targets = append(targets, sleep.Target{Name: d.Name, IdleFor: time.Duration(cfg.IdleMinutes) * time.Minute})
 	}
+	for _, d := range deployments {
+		targets = append(targets, serviceSleepTargets(d)...)
+	}
 
 	due := s.sleeper.Due(ctx, targets, now)
 	for _, name := range due {
+		if deployment, service, isService := splitSleepKey(name); isService {
+			s.putServiceToSleep(deployment, service)
+			continue
+		}
 		if err := s.setSleeping(name, true); err != nil {
 			log.Printf("Warning: failed to mark %s sleeping: %v", name, err)
 			continue
@@ -124,6 +123,13 @@ func (s *Server) markAwake(name string) {
 	}
 	if err := s.setSleeping(name, false); err != nil {
 		log.Printf("Warning: failed to clear sleeping flag for %s: %v", name, err)
+	}
+	// Starting the whole deployment starts every service, including those
+	// that were asleep on their own.
+	if deployment, err := s.manager.GetDeployment(name); err == nil && deployment.Metadata != nil {
+		for service := range deployment.Metadata.ServiceSleep {
+			s.markServiceAwake(name, service)
+		}
 	}
 }
 

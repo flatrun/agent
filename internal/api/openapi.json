@@ -3,7 +3,7 @@
   "info": {
     "title": "FlatRun Agent API",
     "description": "Generated from the agent's routes and the types its handlers bind and return. Every /projects path is also served under /deployments.",
-    "version": "0.4.0-beta.12"
+    "version": "0.4.0-beta.13"
   },
   "paths": {
     "/api/access/check": {
@@ -8669,6 +8669,64 @@
         ],
         "x-permission": "deployments:write",
         "x-plan-supported": true
+      }
+    },
+    "/api/projects/{name}/services/{service}/sleep": {
+      "put": {
+        "operationId": "put-projects-by-name-services-by-service-sleep",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "idle_minutes": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "enabled",
+                  "idle_minutes"
+                ],
+                "x-property-order": [
+                  "enabled",
+                  "idle_minutes"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "projects"
+        ],
+        "x-permission": "deployments:write"
       }
     },
     "/api/projects/{name}/services/{service}/start": {
@@ -17605,6 +17663,12 @@
               "$ref": "#/components/schemas/models.ServiceSettings"
             }
           },
+          "service_sleep": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/models.SleepConfig"
+            }
+          },
           "sleep": {
             "$ref": "#/components/schemas/models.SleepConfig"
           },
@@ -17651,7 +17715,8 @@
           "environment",
           "sleep",
           "workspace",
-          "service_settings"
+          "service_settings",
+          "service_sleep"
         ],
         "x-columns": [
           "name",

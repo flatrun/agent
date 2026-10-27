@@ -31,6 +31,12 @@ These are opt-in per domain: a domain that never sets them keeps the stock proxy
 behaviour. Because the fields live in `service.yml`, the same values move with
 the deployment directory.
 
+![Domain form with streaming, response headers and the alias redirect](screenshots/domain-responses-light.png#gh-light-mode-only)
+![Domain form with streaming, response headers and the alias redirect](screenshots/domain-responses-dark.png#gh-dark-mode-only)
+
+![Domain form with a username and password and an IP allow-list](screenshots/domain-visitor-access-light.png#gh-light-mode-only)
+![Domain form with a username and password and an IP allow-list](screenshots/domain-visitor-access-dark.png#gh-dark-mode-only)
+
 ### Basic auth passwords
 
 The agent hashes each password with SHA-512 crypt before saving and keeps
@@ -51,14 +57,23 @@ limit plus about 10% is a safe starting point (for a 100 MB file limit, use
 `110m`). PHP apps enforce `upload_max_filesize` and `post_max_size` as well,
 so raise those too.
 
+![Domain form with the maximum upload request size set to 64 MB](screenshots/domain-upload-limit-light.png#gh-light-mode-only)
+![Domain form with the maximum upload request size set to 64 MB](screenshots/domain-upload-limit-dark.png#gh-dark-mode-only)
+
 The agent-wide default is the `nginx.client_max_body_size` config key
 (`PUT /api/config/nginx.client_max_body_size`). Changing it re-renders every
 installed virtual host.
+
+![Agent settings with the default maximum upload request size](screenshots/upload-limit-default-light.png#gh-light-mode-only)
+![Agent settings with the default maximum upload request size](screenshots/upload-limit-default-dark.png#gh-dark-mode-only)
 
 Every request nginx refuses for its size is counted per domain and listed at
 `GET /api/projects/:name/upload-rejections`, and the first one in each
 15-minute window is published as a `proxy`/`request_too_large` notification
 event.
+
+![Banner reporting three refused uploads with the limit and a Change limit button](screenshots/upload-rejections-light.png#gh-light-mode-only)
+![Banner reporting three refused uploads with the limit and a Change limit button](screenshots/upload-rejections-dark.png#gh-dark-mode-only)
 
 Each change is checked with `nginx -t` before nginx reloads. If the check or
 the reload fails, the previous virtual host stays in place and the API returns
@@ -93,6 +108,36 @@ overlay stays as it was; the overlay it replaces is kept as
 `docker-compose.flatrun.yml.bak`. The running container keeps its current
 settings until the service is recreated, which the service panel offers
 after saving.
+
+![Service panel with CPU and memory limits, restart policy, log rotation and variables](screenshots/service-settings-light.png#gh-light-mode-only)
+![Service panel with CPU and memory limits, restart policy, log rotation and variables](screenshots/service-settings-dark.png#gh-dark-mode-only)
+
+## Per-service sleep
+
+A single service can stop after it has been idle and start again on the
+next request, while the rest of the deployment keeps running. Turn it on
+from the service panel, or with
+`PUT /api/projects/:name/services/:service/sleep` and a body of
+`{"enabled": true, "idle_minutes": 15}` (at least 5 minutes). It is saved
+under `service_sleep` in `service.yml`.
+
+- A service counts as busy while requests are routed to it or its
+  containers receive network traffic.
+- A service that another running, awake service lists in `depends_on`
+  stays up. A database therefore sleeps only after everything that uses it
+  is asleep.
+- A request to a sleeping service's domain or path shows a short "waking
+  up" page. The service's sleeping dependencies start first, then the
+  service.
+- Deployment-wide sleep, set in the project's Deployments section, takes
+  precedence. While it is on, per-service sleep settings are kept but not
+  used.
+
+![Service panel with sleep turned on for the worker, which is asleep](screenshots/service-sleep-light.png#gh-light-mode-only)
+![Service panel with sleep turned on for the worker, which is asleep](screenshots/service-sleep-dark.png#gh-dark-mode-only)
+
+![Service canvas with the worker asleep while web, api, db, cache and storage run](screenshots/service-asleep-light.png#gh-light-mode-only)
+![Service canvas with the worker asleep while web, api, db, cache and storage run](screenshots/service-asleep-dark.png#gh-dark-mode-only)
 
 ## Container resource limits
 
