@@ -205,6 +205,30 @@ func TestServiceSleepSettings(t *testing.T) {
 	}
 }
 
+func TestTurningSleepOffStartsAServiceThatIsAsleep(t *testing.T) {
+	s, r := newRedeployTestServer(t, &fakeRunner{})
+	runner := &recordingRunner{}
+	s.runServiceAction = runner.run
+	r.PUT("/api/deployments/:name/services/:service/sleep", s.updateServiceSleep)
+	if err := s.manager.CreateDeployment("shop", shopCompose, nil); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := s.manager.GetDeployment("shop")
+	d.Metadata.ServiceSleep = map[string]models.SleepConfig{"worker": {Enabled: true, IdleMinutes: 10, Sleeping: true}}
+	if err := s.manager.SaveMetadata("shop", d.Metadata); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/deployments/shop/services/worker/sleep", strings.NewReader(`{"enabled":false}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !waitFor(func() bool { return slices.Contains(runner.calls(), "start worker") }) {
+		t.Fatalf("started = %v, want the sleeping worker started", runner.calls())
+	}
+}
+
 func TestStartingAServiceByHandStartsItsSleepingDependencies(t *testing.T) {
 	s, r := newRedeployTestServer(t, &fakeRunner{})
 	runner := &recordingRunner{}

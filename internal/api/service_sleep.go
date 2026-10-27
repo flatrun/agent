@@ -264,6 +264,7 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 		meta.ServiceSleep = map[string]models.SleepConfig{}
 	}
 	sleeping := meta.ServiceSleep[service].Sleeping && req.Enabled
+	resume := !req.Enabled && meta.ServiceSleep[service].Sleeping
 	if req.Enabled {
 		meta.ServiceSleep[service] = models.SleepConfig{Enabled: true, IdleMinutes: req.IdleMinutes, Sleeping: sleeping}
 	} else {
@@ -293,6 +294,13 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 					return
 				}
 			}
+		}
+	}
+	// The wake route goes away with the setting, so a service turned off while
+	// asleep must be started here or no request can start it again.
+	if resume {
+		if job, created := s.jobs.createScoped(name, service, "start", actionOptions{}); created {
+			go s.runWakeJob(job)
 		}
 	}
 	cfg := meta.ServiceSleep[service]
