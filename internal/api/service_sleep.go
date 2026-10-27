@@ -264,7 +264,26 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 		meta.ServiceSleep = map[string]models.SleepConfig{}
 	}
 	sleeping := meta.ServiceSleep[service].Sleeping && req.Enabled
-	resume := !req.Enabled && meta.ServiceSleep[service].Sleeping
+	// The wake route goes away with the setting, so a service turned off while
+	// asleep must be started here or no request can start it again. The start
+	// is reserved before anything changes: if another action holds the
+	// service, such as the sweep's stop, the request is refused instead.
+	var resume *ActionJob
+	if !req.Enabled && meta.ServiceSleep[service].Sleeping {
+		job, created := s.jobs.createScoped(name, service, "start", actionOptions{})
+		if !created && job.action != "start" {
+			c.JSON(http.StatusConflict, gin.H{"error": "An action is running for this service, try again when it finishes"})
+			return
+		}
+		if created {
+			resume = job
+		}
+	}
+	release := func() {
+		if resume != nil {
+			s.jobs.finish(resume, JobFailed, "sleep setting was not changed")
+		}
+	}
 	if req.Enabled {
 		meta.ServiceSleep[service] = models.SleepConfig{Enabled: true, IdleMinutes: req.IdleMinutes, Sleeping: sleeping}
 	} else {
@@ -274,6 +293,7 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 		meta.ServiceSleep = nil
 	}
 	if err := s.manager.SaveMetadata(name, meta); err != nil {
+		release()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -288,6 +308,7 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 							log.Printf("warning: failed to restore metadata for %s: %v", name, err)
 						}
 					}
+					release()
 					c.JSON(http.StatusConflict, gin.H{
 						"error": "Proxy update failed, the previous settings are still active: " + err.Error(),
 					})
@@ -296,12 +317,8 @@ func (s *Server) updateServiceSleep(c *gin.Context) {
 			}
 		}
 	}
-	// The wake route goes away with the setting, so a service turned off while
-	// asleep must be started here or no request can start it again.
-	if resume {
-		if job, created := s.jobs.createScoped(name, service, "start", actionOptions{}); created {
-			go s.runWakeJob(job)
-		}
+	if resume != nil {
+		go s.runWakeJob(resume)
 	}
 	cfg := meta.ServiceSleep[service]
 	c.JSON(http.StatusOK, gin.H{

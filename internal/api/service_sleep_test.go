@@ -229,6 +229,32 @@ func TestTurningSleepOffStartsAServiceThatIsAsleep(t *testing.T) {
 	}
 }
 
+func TestSleepCannotBeTurnedOffWhileTheServiceIsBeingPutToSleep(t *testing.T) {
+	s, r := newRedeployTestServer(t, &fakeRunner{})
+	r.PUT("/api/deployments/:name/services/:service/sleep", s.updateServiceSleep)
+	if err := s.manager.CreateDeployment("shop", shopCompose, nil); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := s.manager.GetDeployment("shop")
+	d.Metadata.ServiceSleep = map[string]models.SleepConfig{"worker": {Enabled: true, IdleMinutes: 10, Sleeping: true}}
+	if err := s.manager.SaveMetadata("shop", d.Metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, created := s.jobs.createScoped("shop", "worker", "stop", actionOptions{putToSleep: true}); !created {
+		t.Fatal("could not hold the service with a stop")
+	}
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/deployments/shop/services/worker/sleep", strings.NewReader(`{"enabled":false}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("disable during the stop = %d: %s", rec.Code, rec.Body.String())
+	}
+	d, _ = s.manager.GetDeployment("shop")
+	if !d.Metadata.ServiceSleepEnabled("worker") {
+		t.Fatal("the setting must stay so the wake route can still start the worker")
+	}
+}
+
 func TestStartingAServiceByHandStartsItsSleepingDependencies(t *testing.T) {
 	s, r := newRedeployTestServer(t, &fakeRunner{})
 	runner := &recordingRunner{}
