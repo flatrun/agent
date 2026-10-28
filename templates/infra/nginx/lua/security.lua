@@ -495,10 +495,22 @@ local function send_event(event)
     if not ok then ngx.log(ngx.ERR, "Failed to create timer for security event: ", err) end
 end
 
+-- After an error_page redirect nginx lists one value per upstream tried, as
+-- in "502 : 503"; the last one belongs to the response being sent.
+local function last_upstream_value(value)
+    return (value or ""):match("([^%s,:]+)%s*$") or ""
+end
+
 function _M.prepare_error_response()
     local status = ngx.status
     if status < 400 or status > 599 then return end
     local upstream_status = ngx.var.upstream_status or ""
+    -- The agent's hooks answer with their own page, such as the waking page.
+    -- Keep it unless the agent itself could not be reached.
+    if upstream_status ~= "" and (ngx.var.uri or ""):find("^/api/hooks/") then
+        local answered = last_upstream_value(upstream_status)
+        if answered ~= "502" and answered ~= "504" then return end
+    end
     local upstream_length = tonumber(ngx.var.upstream_response_length or "0") or 0
     local gateway_failure = (status == 502 or status == 503 or status == 504) and upstream_length == 0
     if upstream_status ~= "" and not gateway_failure then return end
@@ -508,7 +520,7 @@ function _M.prepare_error_response()
     local accept = string.lower(ngx.var.http_accept or "")
     local wants_json = accept:find("application/json", 1, true)
         or accept:find("application/problem+json", 1, true)
-        or (ngx.var.uri or ""):find("^/api/")
+        or (ngx.var.request_uri or ""):find("^/api/")
     local message = copy[2] .. " If you expected to see something else, contact the server administrator with this incident ID."
 
     ngx.ctx.flatrun_incident_id = incident_id
