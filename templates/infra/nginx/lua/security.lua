@@ -495,21 +495,16 @@ local function send_event(event)
     if not ok then ngx.log(ngx.ERR, "Failed to create timer for security event: ", err) end
 end
 
--- After an error_page redirect nginx lists one value per upstream tried, as
--- in "502 : 503"; the last one belongs to the response being sent.
-local function last_upstream_value(value)
-    return (value or ""):match("([^%s,:]+)%s*$") or ""
-end
-
 function _M.prepare_error_response()
     local status = ngx.status
     if status < 400 or status > 599 then return end
     local upstream_status = ngx.var.upstream_status or ""
-    -- The agent's hooks answer with their own page, such as the waking page.
-    -- Keep it unless the agent itself could not be reached.
-    if upstream_status ~= "" and (ngx.var.uri or ""):find("^/api/hooks/") then
-        local answered = last_upstream_value(upstream_status)
-        if answered ~= "502" and answered ~= "504" then return end
+    -- Pages the agent serves to visitors, such as the waking page, are sent as
+    -- they are. Their body has not arrived yet, so the length check below
+    -- would take them for a gateway failure.
+    if ngx.var.upstream_http_x_flatrun_page == "agent" then
+        ngx.header["X-Flatrun-Page"] = nil
+        return
     end
     local upstream_length = tonumber(ngx.var.upstream_response_length or "0") or 0
     local gateway_failure = (status == 502 or status == 503 or status == 504) and upstream_length == 0

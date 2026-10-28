@@ -316,3 +316,19 @@ func TestServiceSleepIsNotSavedWhenNginxRejectsTheWakeRoute(t *testing.T) {
 		t.Fatal("sleep saved although nginx has no route to wake the service")
 	}
 }
+
+func TestPagesServedToVisitorsAreMarkedForTheProxy(t *testing.T) {
+	_, tmpDir, ts := setupPlanTestServer(t)
+	createTestDeployment(t, tmpDir, "shop", &models.ServiceMetadata{Name: "shop", Type: "web"})
+
+	for _, path := range []string{"/api/hooks/wake/shop", "/api/hooks/wake/shop/web", "/api/hooks/too-large/shop/site"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get("X-Flatrun-Page"); got != "agent" {
+			t.Errorf("%s: X-Flatrun-Page = %q, the proxy would replace the page", path, got)
+		}
+	}
+}
