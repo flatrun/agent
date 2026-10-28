@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.0-beta.14] - 2026-10-28
+
+### Fixed
+- A visitor to a sleeping project sees the waking page while it starts, instead of a "Service unavailable" error
+
 ## [0.4.0-beta.13] - 2026-10-26
 
 ### Added
