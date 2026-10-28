@@ -505,10 +505,10 @@ func (s *Server) setupRoutes() {
 		// Authenticated by the deployment's webhook secret, not a session.
 		api.POST("/hooks/:provider/:deployment", s.receiveWebhook)
 		// Reached through nginx's fallback when a sleeping deployment is down.
-		api.Any("/hooks/wake/:deployment", s.wakeDeployment)
-		api.Any("/hooks/wake/:deployment/:service", s.wakeService)
+		api.Any("/hooks/wake/:deployment", markProxyPage, s.wakeDeployment)
+		api.Any("/hooks/wake/:deployment/:service", markProxyPage, s.wakeService)
 		// Reached through nginx when a request is over its domain's size limit.
-		api.Any("/hooks/too-large/:deployment/:domain", s.requestTooLarge)
+		api.Any("/hooks/too-large/:deployment/:domain", markProxyPage, s.requestTooLarge)
 
 		// WebSocket endpoint handles its own auth via first-message
 		api.GET("/containers/:id/exec", s.containerExec)

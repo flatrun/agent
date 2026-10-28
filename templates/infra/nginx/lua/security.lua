@@ -499,6 +499,13 @@ function _M.prepare_error_response()
     local status = ngx.status
     if status < 400 or status > 599 then return end
     local upstream_status = ngx.var.upstream_status or ""
+    -- Pages the agent serves to visitors, such as the waking page, are sent as
+    -- they are. Their body has not arrived yet, so the length check below
+    -- would take them for a gateway failure.
+    if ngx.var.upstream_http_x_flatrun_page == "agent" then
+        ngx.header["X-Flatrun-Page"] = nil
+        return
+    end
     local upstream_length = tonumber(ngx.var.upstream_response_length or "0") or 0
     local gateway_failure = (status == 502 or status == 503 or status == 504) and upstream_length == 0
     if upstream_status ~= "" and not gateway_failure then return end
@@ -508,7 +515,7 @@ function _M.prepare_error_response()
     local accept = string.lower(ngx.var.http_accept or "")
     local wants_json = accept:find("application/json", 1, true)
         or accept:find("application/problem+json", 1, true)
-        or (ngx.var.uri or ""):find("^/api/")
+        or (ngx.var.request_uri or ""):find("^/api/")
     local message = copy[2] .. " If you expected to see something else, contact the server administrator with this incident ID."
 
     ngx.ctx.flatrun_incident_id = incident_id

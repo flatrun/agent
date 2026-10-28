@@ -147,6 +147,14 @@ func unavailablePage() string {
 	return brandPage("Unavailable", "", `<h1>Not available right now</h1><p>This site is stopped. Try again later.</p>`, "Served by FlatRun")
 }
 
+// proxyPageHeader marks a page the agent serves through nginx to a visitor,
+// so the proxy's error handler sends it as it is.
+const proxyPageHeader = "X-Flatrun-Page"
+
+func markProxyPage(c *gin.Context) {
+	c.Header(proxyPageHeader, "agent")
+}
+
 // wakeDeployment is reached through nginx when a sleeping deployment's
 // containers are gone. It starts the deployment and serves a page that
 // reloads until the app answers.
