@@ -591,6 +591,7 @@ func (m *Manager) IsNginxRunning() bool {
 // GetDockerHostIP returns the IP address that containers can use to reach the host.
 // It tries multiple methods and falls back to the default Docker bridge gateway.
 func (m *Manager) GetDockerHostIP() string {
+	if m.config.API.PrivateHost!=""{return m.config.API.PrivateHost}
 	// Method 1: Try to get host.docker.internal from nginx container's /etc/hosts
 	if m.config.Nginx.ContainerName != "" && m.IsNginxRunning() {
 		cmd := exec.Command("docker", "exec", m.config.Nginx.ContainerName, "sh", "-c",
@@ -615,7 +616,7 @@ func (m *Manager) GetDockerHostIP() string {
 
 	// Method 2: Try to get the Docker bridge gateway IP
 	cmd := exec.Command("docker", "network", "inspect", "bridge", "-f",
-		"{{range .IPAM.Config}}{{.Gateway}}{{end}}")
+		"{{(index .IPAM.Config 0).Gateway}}")
 	if output, err := cmd.Output(); err == nil {
 		ip := strings.TrimSpace(string(output))
 		if ip != "" {

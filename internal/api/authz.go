@@ -26,10 +26,6 @@ func (s *Server) requireDeploymentAccess(c *gin.Context, deploymentName, level s
 	if actor == nil {
 		return true
 	}
-	if actor.Role == auth.RoleAdmin {
-		return true
-	}
-
 	if !actor.CanAccessDeployment(deploymentName, level) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "No access to this deployment"})
 		return false

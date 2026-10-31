@@ -8,6 +8,7 @@ import (
 
 	"github.com/flatrun/agent/internal/access"
 	"github.com/flatrun/agent/internal/secrets"
+	"github.com/flatrun/agent/internal/securityreview"
 	"github.com/flatrun/agent/internal/workspace"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
@@ -102,6 +103,23 @@ func (s *Server) applyDeploymentDelete(name string, opts deploymentDeleteOptions
 		}
 	}
 
+	s.securityReviewMu.Lock()
+	reviewStore := s.securityReviewStore
+	if reviewStore == nil && s.config.SecurityReviews.StatePath != "" {
+		var err error
+		reviewStore, err = securityreview.NewStore(s.config.SecurityReviews.StatePath, s.config.DeploymentsPath)
+		if err != nil {
+			s.securityReviewMu.Unlock()
+			return deletedItems, err
+		}
+		s.securityReviewStore = reviewStore
+	}
+	s.securityReviewMu.Unlock()
+	if reviewStore != nil {
+		if err := reviewStore.RetireDeployment(name); err != nil {
+			return deletedItems, err
+		}
+	}
 	if err := s.manager.DeleteDeployment(name); err != nil {
 		return deletedItems, err
 	}

@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"github.com/flatrun/agent/pkg/securityprofile"
+	"time"
+)
 
 type Deployment struct {
 	Name      string           `json:"name"`
@@ -72,8 +75,9 @@ type ServiceMetadata struct {
 	Kind string `yaml:"kind,omitempty" json:"kind,omitempty"`
 	Logo Logo   `yaml:"logo,omitempty" json:"logo,omitempty"`
 	// Template is the template the project was created from.
-	Template   string      `yaml:"template,omitempty" json:"template,omitempty"`
-	LogSources []LogSource `yaml:"log_sources,omitempty" json:"log_sources,omitempty"`
+	Template        string                   `yaml:"template,omitempty" json:"template,omitempty"`
+	SecurityProfile *securityprofile.Profile `yaml:"security_profile,omitempty" json:"security_profile,omitempty"`
+	LogSources      []LogSource              `yaml:"log_sources,omitempty" json:"log_sources,omitempty"`
 	// PrimaryService is the user-pinned primary service. When set it overrides
 	// auto-detection for the default-domain upstream and is preserved across
 	// compose updates and re-discovery.

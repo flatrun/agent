@@ -487,7 +487,7 @@ local function send_event(event)
             method = "POST",
             path = "/api/security/events/ingest",
             body = body,
-            headers = { ["Host"] = AGENT_IP .. ":" .. AGENT_PORT, ["Content-Type"] = "application/json" }
+            headers = { ["Host"] = AGENT_IP .. ":" .. AGENT_PORT, ["Content-Type"] = "application/json", ["X-Internal-Token"] = INTERNAL_TOKEN }
         })
         if not res then ngx.log(ngx.ERR, "Failed to send security event: ", req_err) end
         httpc:close()
@@ -587,8 +587,7 @@ function _M.capture_event()
     -- 404 on suspicious paths
     elseif status == 404 and _M.is_suspicious_path(uri) then
         should_capture = true
-    -- Any non-200 on suspicious paths
-    elseif _M.is_suspicious_path(uri) and status ~= 200 then
+    elseif _M.is_suspicious_path(uri) then
         should_capture = true
     end
 
@@ -604,6 +603,7 @@ function _M.capture_event()
     send_event({
         incident_id = ngx.ctx.flatrun_incident_id,
         source_ip = ip,
+        visitor_attributed = not is_trusted_proxy(ip),
         request_path = uri,
         request_method = method,
         status_code = status,

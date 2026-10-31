@@ -111,12 +111,14 @@ const (
 
 // IngestEvent is the payload sent from nginx Lua
 type IngestEvent struct {
-	IncidentID     string `json:"incident_id,omitempty"`
-	SourceIP       string `json:"source_ip"`
-	RequestPath    string `json:"request_path"`
-	RequestMethod  string `json:"request_method"`
-	StatusCode     int    `json:"status_code"`
-	UserAgent      string `json:"user_agent"`
-	DeploymentName string `json:"deployment_name,omitempty"`
-	Timestamp      int64  `json:"timestamp"`
+	VisitorAttributed   bool   `json:"visitor_attributed"`
+	AttributionVerified bool   `json:"-"`
+	IncidentID          string `json:"incident_id,omitempty"`
+	SourceIP            string `json:"source_ip"`
+	RequestPath         string `json:"request_path"`
+	RequestMethod       string `json:"request_method"`
+	StatusCode          int    `json:"status_code"`
+	UserAgent           string `json:"user_agent"`
+	DeploymentName      string `json:"deployment_name,omitempty"`
+	Timestamp           int64  `json:"timestamp"`
 }

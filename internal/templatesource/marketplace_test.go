@@ -2,13 +2,58 @@ package templatesource
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/flatrun/agent/pkg/securityprofile"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestMarketplaceSecurityProfileCapturedHTTPRoundTrip(t *testing.T) {
+	payload, err := os.ReadFile("testdata/marketplace-security-profile.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	source := MarketplaceSource{BaseURL: server.URL, Enabled: true}
+	templates, err := source.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 1 {
+		t.Fatalf("captured templates: %d", len(templates))
+	}
+	var metadata struct {
+		Profile securityprofile.Profile `yaml:"security_profile"`
+	}
+	if err = yaml.Unmarshal(templates[0].Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err = metadata.Profile.Validate(); err != nil {
+		t.Fatal("profile became unsupported during transport", err)
+	}
+	var captured struct {
+		Data []struct {
+			Profile any `json:"security_profile"`
+		} `json:"data"`
+	}
+	if err = json.Unmarshal(payload, &captured); err != nil {
+		t.Fatal(err)
+	}
+	if securityprofile.Digest(metadata.Profile) != securityprofile.Digest(captured.Data[0].Profile) {
+		actual, _ := json.Marshal(metadata.Profile)
+		expected, _ := json.Marshal(captured.Data[0].Profile)
+		t.Fatalf("profile semantics changed during metadata reconstruction\nactual: %s\nexpected: %s", actual, expected)
+	}
+}
 
 // realAgentTemplatesResponse is the AgentTemplateResource collection shape from
 // marketplace-webservice (app/Http/Resources/Api/V1/Agent/AgentTemplateResource.php):

@@ -12,17 +12,11 @@ import (
 // managed by Docker or the operator in other tables are left untouched.
 const tableName = "flatrun_firewall"
 
-// sshSession is the SSH connection the agent is reachable through, if any. It is
-// used to keep that session (and future SSH) alive under a default-deny inbound
-// policy.
 type sshSession struct {
 	clientIP   string
 	serverPort int
 }
 
-// detectSSHSession reads SSH_CONNECTION ("client_ip client_port server_ip
-// server_port"), set by sshd for a session. It reports the SSH port so a
-// default-deny policy never locks the operator out.
 func detectSSHSession() sshSession {
 	parts := strings.Fields(os.Getenv("SSH_CONNECTION"))
 	if len(parts) != 4 {
@@ -83,12 +77,7 @@ func ruleLines(r Rule, addrField string) []string {
 	return lines
 }
 
-// renderNftables translates a firewall config to an `nft -f` script for the
-// FlatRun table. The script is idempotent: it recreates the table from scratch
-// on every apply. Loopback and established/related traffic are always accepted,
-// and the active SSH port is always accepted, so switching to a default-deny
-// inbound policy never drops the operator's connection.
-func renderNftables(cfg *Config, ssh sshSession) string {
+func renderNftables(cfg *Config, _ sshSession) string {
 	inbound := cfg.DefaultInbound
 	if inbound == "" {
 		inbound = PolicyAllow
@@ -112,14 +101,7 @@ func renderNftables(cfg *Config, ssh sshSession) string {
 	b.WriteString("        iif \"lo\" accept\n")
 	b.WriteString("        ct state established,related accept\n")
 	b.WriteString("        ct state invalid drop\n")
-	if inbound == PolicyDeny {
-		// Preserve SSH under a default-deny so the operator is not locked out.
-		port := 22
-		if ssh.serverPort != 0 {
-			port = ssh.serverPort
-		}
-		fmt.Fprintf(&b, "        tcp dport %d accept\n", port)
-	}
+
 	for _, r := range cfg.Rules {
 		if r.Direction != DirInbound {
 			continue
@@ -145,6 +127,40 @@ func renderNftables(cfg *Config, ssh sshSession) string {
 	}
 	b.WriteString("    }\n")
 
+	b.WriteString("    chain docker_inbound {\n")
+	for _, r := range cfg.Rules {
+		if r.Direction != DirInbound {
+			continue
+		}
+		for _, line := range ruleLines(r, "saddr") {
+			if r.Port != 0 {
+				line = strings.ReplaceAll(line, "tcp dport", "meta l4proto tcp ct original proto-dst")
+				line = strings.ReplaceAll(line, "udp dport", "meta l4proto udp ct original proto-dst")
+			}
+			b.WriteString(strings.ReplaceAll(line, " accept", " return") + "\n")
+		}
+	}
+	fmt.Fprintf(&b, "        %s\n    }\n", forwardingVerdict(inbound))
+	b.WriteString("    chain docker_outbound {\n")
+	for _, r := range cfg.Rules {
+		if r.Direction == DirOutbound {
+			for _, line := range ruleLines(r, "daddr") {
+				b.WriteString(strings.ReplaceAll(line, " accept", " return") + "\n")
+			}
+		}
+	}
+	fmt.Fprintf(&b, "        %s\n    }\n", forwardingVerdict(outbound))
+	b.WriteString(`    chain forward {
+        type filter hook forward priority -10; policy accept;
+        ct state established,related accept
+        ct state invalid drop
+        iifname "docker0" jump docker_outbound
+        iifname "br-*" jump docker_outbound
+        oifname "docker0" jump docker_inbound
+        oifname "br-*" jump docker_inbound
+    }
+`)
+
 	b.WriteString("}\n")
 	return b.String()
 }
@@ -154,4 +170,11 @@ func policyVerdict(policy string) string {
 		return "drop"
 	}
 	return "accept"
+}
+
+func forwardingVerdict(policy string) string {
+	if policy == PolicyDeny {
+		return "drop"
+	}
+	return "return"
 }

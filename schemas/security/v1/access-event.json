@@ -1,0 +1,141 @@
+{
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string"
+    },
+    "resource_type": {
+      "type": "string"
+    },
+    "resource_id": {
+      "type": "string"
+    },
+    "subject_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "tenant_id": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "policy_revision": {
+      "type": "string"
+    },
+    "integrity": {
+      "type": "string"
+    },
+    "authenticated": {
+      "type": [
+        "null",
+        "boolean"
+      ]
+    },
+    "at": {
+      "type": "string"
+    },
+    "facts_valid_from": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "facts_valid_until": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "facts": {
+      "type": "object",
+      "properties": {
+        "tenant_member": {
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "resource_owner": {
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "explicit_share": {
+          "type": [
+            "null",
+            "boolean"
+          ]
+        },
+        "roles": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              },
+              "tenant_id": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "required": [
+              "role",
+              "scope",
+              "tenant_id"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "tenant_member",
+        "resource_owner",
+        "explicit_share",
+        "roles"
+      ],
+      "additionalProperties": false
+    },
+    "protected_effect": {
+      "type": "string"
+    }
+  },
+  "$id": "https://flatrun.dev/schemas/security/v1/access-event.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "event_id",
+    "source",
+    "action",
+    "resource_type",
+    "resource_id",
+    "subject_id",
+    "tenant_id",
+    "policy_revision",
+    "integrity",
+    "authenticated",
+    "at",
+    "facts_valid_from",
+    "facts_valid_until",
+    "facts",
+    "protected_effect"
+  ],
+  "additionalProperties": false
+}

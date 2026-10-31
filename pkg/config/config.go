@@ -44,30 +44,44 @@ type CapacityConfig struct {
 }
 
 type Config struct {
-	DeploymentsPath string               `yaml:"deployments_path"`
-	SystemFilesRoot string               `yaml:"system_files_root"`
-	DockerSocket    string               `yaml:"docker_socket"`
-	DefaultTimeout  time.Duration        `yaml:"default_timeout"`
-	API             APIConfig            `yaml:"api"`
-	Auth            AuthConfig           `yaml:"auth"`
-	Domain          DomainConfig         `yaml:"domain"`
-	Nginx           NginxConfig          `yaml:"nginx"`
-	Certbot         CertbotConfig        `yaml:"certbot"`
-	Logging         LoggingConfig        `yaml:"logging"`
-	Health          HealthConfig         `yaml:"health"`
-	Infrastructure  InfrastructureConfig `yaml:"infrastructure"`
-	Security        SecurityConfig       `yaml:"security"`
-	Audit           AuditConfig          `yaml:"audit"`
-	Cluster         ClusterConfig        `yaml:"cluster"`
-	Capacity        CapacityConfig       `yaml:"capacity"`
-	SystemTerminal  SystemTerminalConfig `yaml:"system_terminal"`
-	Cleanup         CleanupConfig        `yaml:"cleanup"`
-	Plans           PlansConfig          `yaml:"plans"`
-	AI              AIConfig             `yaml:"ai"`
-	MCP             MCPConfig            `yaml:"mcp"`
-	Files           FilesConfig          `yaml:"files"`
-	Backup          BackupConfig         `yaml:"backup"`
-	Templates       TemplatesConfig      `yaml:"templates"`
+	ConfigVersion   int                   `yaml:"config_version" json:"config_version"`
+	SecurityReviews SecurityReviewsConfig `yaml:"security_reviews" json:"security_reviews"`
+	DeploymentsPath string                `yaml:"deployments_path"`
+	SystemFilesRoot string                `yaml:"system_files_root"`
+	DockerSocket    string                `yaml:"docker_socket"`
+	DefaultTimeout  time.Duration         `yaml:"default_timeout"`
+	API             APIConfig             `yaml:"api"`
+	Auth            AuthConfig            `yaml:"auth"`
+	Domain          DomainConfig          `yaml:"domain"`
+	Nginx           NginxConfig           `yaml:"nginx"`
+	Certbot         CertbotConfig         `yaml:"certbot"`
+	Logging         LoggingConfig         `yaml:"logging"`
+	Health          HealthConfig          `yaml:"health"`
+	Infrastructure  InfrastructureConfig  `yaml:"infrastructure"`
+	Security        SecurityConfig        `yaml:"security"`
+	Audit           AuditConfig           `yaml:"audit"`
+	Cluster         ClusterConfig         `yaml:"cluster"`
+	Capacity        CapacityConfig        `yaml:"capacity"`
+	SystemTerminal  SystemTerminalConfig  `yaml:"system_terminal"`
+	Cleanup         CleanupConfig         `yaml:"cleanup"`
+	Plans           PlansConfig           `yaml:"plans"`
+	AI              AIConfig              `yaml:"ai"`
+	MCP             MCPConfig             `yaml:"mcp"`
+	Files           FilesConfig           `yaml:"files"`
+	Backup          BackupConfig          `yaml:"backup"`
+	Templates       TemplatesConfig       `yaml:"templates"`
+}
+
+type SecurityReviewsConfig struct {
+	Delivery       SecurityReviewDeliveryConfig `yaml:"delivery" json:"delivery"`
+	StatePath      string                       `yaml:"state_path" json:"state_path"`
+	ApprovedImages []string                     `yaml:"approved_images" json:"approved_images"`
+}
+
+type SecurityReviewDeliveryConfig struct {
+	URL          string   `yaml:"url" json:"url"`
+	AllowedHosts []string `yaml:"allowed_hosts" json:"allowed_hosts"`
+	CredentialID string   `yaml:"credential_id" json:"credential_id"`
 }
 
 // TemplatesConfig controls where the app template catalog is fetched from. The
@@ -176,10 +190,12 @@ type DomainConfig struct {
 }
 
 type APIConfig struct {
-	Host           string   `yaml:"host"`
-	Port           int      `yaml:"port"`
-	EnableCORS     bool     `yaml:"enable_cors"`
-	AllowedOrigins []string `yaml:"allowed_origins"`
+	PrivateHost      string   `yaml:"private_host,omitempty" json:"private_host,omitempty"`
+	PublicManagement bool     `yaml:"public_management,omitempty" json:"public_management"`
+	Host             string   `yaml:"host"`
+	Port             int      `yaml:"port"`
+	EnableCORS       bool     `yaml:"enable_cors"`
+	AllowedOrigins   []string `yaml:"allowed_origins"`
 }
 
 type AuthConfig struct {
@@ -366,6 +382,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	setDefaults(&cfg)
+	if err := ValidateManagement(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -392,7 +411,11 @@ func setDefaults(cfg *Config) {
 		cfg.DockerSocket = detectDockerHost()
 	}
 	if cfg.API.Host == "" {
-		cfg.API.Host = "0.0.0.0"
+		if cfg.ConfigVersion >= 2 {
+			cfg.API.Host = "127.0.0.1"
+		} else {
+			cfg.API.Host = "0.0.0.0"
+		}
 	}
 	if cfg.API.Port == 0 {
 		cfg.API.Port = 8080
@@ -646,6 +669,9 @@ func dockerContextHost() string {
 }
 
 func Save(cfg *Config, path string) error {
+	if err := ValidateManagement(cfg); err != nil {
+		return err
+	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err

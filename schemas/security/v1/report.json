@@ -1,0 +1,210 @@
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string"
+    },
+    "window_start": {
+      "type": "string"
+    },
+    "window_end": {
+      "type": "string"
+    },
+    "queue_state": {
+      "type": "string"
+    },
+    "model_assessment": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "questions": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_refs": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "questions",
+        "evidence_refs"
+      ],
+      "additionalProperties": false
+    },
+    "api_version": {
+      "type": "string",
+      "const": "flatrun.security-report/v1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "deployment": {
+      "type": "string"
+    },
+    "profile_revision": {
+      "type": "string"
+    },
+    "deployment_revision": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "model_status": {
+      "type": "string"
+    },
+    "coverage": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "concern": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "concern",
+          "status",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "findings": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "concern": {
+            "type": "string"
+          },
+          "classification": {
+            "type": "string"
+          },
+          "signal": {
+            "type": "string"
+          },
+          "evidence_id": {
+            "type": "string"
+          },
+          "first_seen": {
+            "type": "string"
+          },
+          "last_seen": {
+            "type": "string"
+          },
+          "occurrences": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "id",
+          "concern",
+          "classification",
+          "signal",
+          "evidence_id",
+          "first_seen",
+          "last_seen",
+          "occurrences"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "requested_at": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "hold": {
+      "type": "boolean"
+    },
+    "delivery_status": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$id": "https://flatrun.dev/schemas/security/v1/report.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "proposal_id",
+    "window_start",
+    "window_end",
+    "api_version",
+    "id",
+    "deployment",
+    "profile_revision",
+    "deployment_revision",
+    "mode",
+    "status",
+    "model_status",
+    "coverage",
+    "findings",
+    "requested_at",
+    "completed_at",
+    "hold",
+    "delivery_status",
+    "limitations"
+  ],
+  "additionalProperties": false
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/flatrun/agent/pkg/securityprofile"
 	"net/http"
 	"strings"
 	"time"
@@ -44,19 +45,24 @@ func (m MarketplaceSource) client() *http.Client {
 // are passed through untouched into the reconstructed metadata.yml, so this
 // source needs no knowledge of their inner shape.
 type agentTemplate struct {
-	ID            string      `json:"id" yaml:"-"`
-	Name          string      `json:"name" yaml:"name"`
-	Description   string      `json:"description" yaml:"description,omitempty"`
-	Icon          string      `json:"icon" yaml:"icon,omitempty"`
-	Logo          string      `json:"logo" yaml:"logo,omitempty"`
-	Category      string      `json:"category" yaml:"category,omitempty"`
-	Priority      int         `json:"priority" yaml:"priority,omitempty"`
-	ContainerPort int         `json:"container_port" yaml:"container_port,omitempty"`
-	Mounts        interface{} `json:"mounts" yaml:"mounts,omitempty"`
-	Files         interface{} `json:"files" yaml:"files,omitempty"`
-	Content       string      `json:"content" yaml:"-"`
-	Version       string      `json:"version" yaml:"-"`
+	ID              string      `json:"id" yaml:"-"`
+	Name            string      `json:"name" yaml:"name"`
+	Description     string      `json:"description" yaml:"description,omitempty"`
+	Icon            string      `json:"icon" yaml:"icon,omitempty"`
+	Logo            string      `json:"logo" yaml:"logo,omitempty"`
+	Category        string      `json:"category" yaml:"category,omitempty"`
+	Priority        int         `json:"priority" yaml:"priority,omitempty"`
+	ContainerPort   int         `json:"container_port" yaml:"container_port,omitempty"`
+	Mounts          interface{} `json:"mounts" yaml:"mounts,omitempty"`
+	Files           interface{} `json:"files" yaml:"files,omitempty"`
+	SecurityProfile interface{} `json:"security_profile" yaml:"security_profile,omitempty"`
+	Content         string      `json:"content" yaml:"-"`
+	Version         string      `json:"version" yaml:"-"`
 }
+
+type profileMetadata struct{ value any }
+
+func (p profileMetadata) MarshalYAML() (any, error) { return securityprofile.YAMLValue(p.value) }
 
 func (m MarketplaceSource) List(ctx context.Context) ([]Template, error) {
 	url := strings.TrimRight(m.BaseURL, "/") + "/agent/templates"
@@ -90,6 +96,9 @@ func (m MarketplaceSource) List(ctx context.Context) ([]Template, error) {
 			// Empty content means the template is backed by an external repo on
 			// the marketplace; skip until repo-backed entries are supported.
 			continue
+		}
+		if at.SecurityProfile != nil {
+			at.SecurityProfile = profileMetadata{value: at.SecurityProfile}
 		}
 		metadata, err := yaml.Marshal(at)
 		if err != nil {

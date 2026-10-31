@@ -248,7 +248,7 @@ local function capture_event()
         should_capture = true
     elseif status == 404 and is_suspicious_path(uri) then
         should_capture = true
-    elseif is_suspicious_path(uri) and status ~= 200 then
+    elseif is_suspicious_path(uri) then
         should_capture = true
     end
 
