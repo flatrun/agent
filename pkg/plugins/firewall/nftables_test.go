@@ -15,8 +15,8 @@ type fakeRunner struct {
 	scripts   []string
 }
 
-func (f *fakeRunner) Available() bool              { return f.available }
-func (f *fakeRunner) ListRuleset() (string, error) { return f.snapshot, nil }
+func (f *fakeRunner) Available() bool            { return f.available }
+func (f *fakeRunner) ListTable() (string, error) { return f.snapshot, nil }
 func (f *fakeRunner) ApplyScript(script string) error {
 	f.scripts = append(f.scripts, script)
 	if f.applyErr != nil && strings.Contains(script, "table inet flatrun_firewall {") {
@@ -33,7 +33,6 @@ func TestRenderNftablesKeepsSSHAndBaseTrafficUnderDeny(t *testing.T) {
 		"policy drop;",
 		`iif "lo" accept`,
 		"ct state established,related accept",
-		"tcp dport 2222 accept",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("deny-inbound ruleset must contain %q, got:\n%s", want, script)
@@ -41,10 +40,10 @@ func TestRenderNftablesKeepsSSHAndBaseTrafficUnderDeny(t *testing.T) {
 	}
 }
 
-func TestRenderNftablesDefaultsToSSHPort22(t *testing.T) {
+func TestRenderNftablesRequiresExplicitSSHRule(t *testing.T) {
 	script := renderNftables(&Config{Enabled: true, DefaultInbound: "deny"}, sshSession{})
-	if !strings.Contains(script, "tcp dport 22 accept") {
-		t.Errorf("without a detected SSH session, port 22 must be kept open, got:\n%s", script)
+	if strings.Contains(script, "tcp dport 22 accept") {
+		t.Errorf("port 22 must require an explicit rule, got:\n%s", script)
 	}
 }
 
@@ -53,8 +52,8 @@ func TestRenderNftablesAllowDefaultIsPermissive(t *testing.T) {
 	if strings.Contains(script, "policy drop;") {
 		t.Errorf("an allow default must not drop, got:\n%s", script)
 	}
-	if strings.Count(script, "policy accept;") != 2 {
-		t.Errorf("both chains should accept by default, got:\n%s", script)
+	if strings.Count(script, "policy accept;") != 3 {
+		t.Errorf("all chains should accept by default, got:\n%s", script)
 	}
 }
 
@@ -92,7 +91,7 @@ func TestApplyNoOpWhenUnavailable(t *testing.T) {
 }
 
 func TestApplyEnforcesWhenEnabled(t *testing.T) {
-	r := &fakeRunner{available: true, snapshot: "table inet other {}"}
+	r := &fakeRunner{available: true, snapshot: ""}
 	enforced, err := Apply(&Config{Enabled: true, DefaultInbound: "deny"}, r)
 	if err != nil || !enforced {
 		t.Fatalf("apply should enforce: enforced=%v err=%v", enforced, err)
@@ -104,14 +103,14 @@ func TestApplyEnforcesWhenEnabled(t *testing.T) {
 }
 
 func TestApplyRestoresSnapshotOnFailure(t *testing.T) {
-	r := &fakeRunner{available: true, snapshot: "table inet other { chain c {} }", applyErr: errBadRuleset}
+	r := &fakeRunner{available: true, snapshot: "table inet flatrun_firewall { chain c {} }", applyErr: errBadRuleset}
 	enforced, err := Apply(&Config{Enabled: true, DefaultInbound: "deny"}, r)
 	if err == nil || enforced {
 		t.Fatalf("a failed apply must report the error: enforced=%v err=%v", enforced, err)
 	}
 	restored := false
 	for _, s := range r.scripts {
-		if strings.Contains(s, "flush ruleset") && strings.Contains(s, "table inet other") {
+		if !strings.Contains(s, "flush ruleset") && strings.Contains(s, "table inet flatrun_firewall { chain c {} }") {
 			restored = true
 		}
 	}
@@ -144,5 +143,18 @@ func TestDetectSSHSession(t *testing.T) {
 	t.Setenv("SSH_CONNECTION", "")
 	if s := detectSSHSession(); s.serverPort != 0 {
 		t.Errorf("no SSH_CONNECTION should yield an empty session, got %+v", s)
+	}
+}
+
+func TestEnforcementStatusDetectsMissingOwnedTable(t *testing.T) {
+	runner := &fakeRunner{available: true, snapshot: "table inet flatrun_firewall {}"}
+	plugin := &Plugin{runner: runner, enforced: true}
+	cfg := &Config{Enabled: true}
+	if plugin.status(cfg) != "applied" {
+		t.Fatal("existing table not reported")
+	}
+	runner.snapshot = ""
+	if plugin.status(cfg) != "unhealthy" {
+		t.Fatal("missing table still reported as applied")
 	}
 }

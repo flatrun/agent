@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "resource_type": {
+            "type": "string"
+          },
+          "require_authentication": {
+            "type": "boolean"
+          },
+          "public": {
+            "type": "boolean"
+          },
+          "allow": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "resource_type",
+          "require_authentication",
+          "public",
+          "allow"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "$id": "https://flatrun.dev/schemas/security/v1/policy.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "version",
+    "actions"
+  ],
+  "additionalProperties": false
+}

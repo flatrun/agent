@@ -257,8 +257,7 @@ function _M.capture_event()
     -- 404 on suspicious paths
     elseif status == 404 and _M.is_suspicious_path(uri) then
         should_capture = true
-    -- Any non-200 on suspicious paths
-    elseif _M.is_suspicious_path(uri) and status ~= 200 then
+    elseif _M.is_suspicious_path(uri) then
         should_capture = true
     end
 
@@ -278,6 +277,7 @@ function _M.capture_event()
 
         local body, encode_err = cjson.encode({
             source_ip = ip,
+            visitor_attributed = not is_trusted_proxy(ip),
             request_path = uri,
             request_method = method,
             status_code = status,
@@ -296,6 +296,7 @@ function _M.capture_event()
             body = body,
             headers = {
                 ["Content-Type"] = "application/json",
+                ["X-Internal-Token"] = INTERNAL_TOKEN,
             }
         })
 

@@ -21,6 +21,7 @@ nginx:
   reload_command: nginx -s reload
 
 security:
+  internal_api_token: flatrun-e2e-internal-token-placeholder
   enabled: true
   realtime_capture: true
   scan_interval: 10s

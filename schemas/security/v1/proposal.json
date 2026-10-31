@@ -1,0 +1,389 @@
+{
+  "type": "object",
+  "properties": {
+    "error": {
+      "type": "string"
+    },
+    "api_version": {
+      "type": "string",
+      "const": "flatrun.security-proposal/v1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "deployment": {
+      "type": "string"
+    },
+    "base_revision": {
+      "type": "string"
+    },
+    "deployment_revision": {
+      "type": "string"
+    },
+    "profile_revision": {
+      "type": "string"
+    },
+    "profile": {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "type": "string",
+          "const": "flatrun.security-profile/v1"
+        },
+        "baseline_version": {
+          "type": "string",
+          "const": "1.0.0"
+        },
+        "version": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "roots": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "metadata_sources": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "service",
+              "roots"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reviews": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "concern": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "runs": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "expectations": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "collect": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "image": {
+                      "type": "string"
+                    },
+                    "command": {
+                      "type": [
+                        "null",
+                        "array"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "snapshot_paths": {
+                      "type": [
+                        "null",
+                        "array"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "metadata_sources": {
+                      "type": [
+                        "null",
+                        "array"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "required": {
+                      "type": "boolean"
+                    },
+                    "signals": {
+                      "type": [
+                        "null",
+                        "array"
+                      ],
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "classification": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "value": true
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "pointer"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "image",
+                    "command",
+                    "snapshot_paths",
+                    "metadata_sources",
+                    "required",
+                    "signals"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "concern",
+              "target",
+              "runs",
+              "expectations",
+              "collect"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "schedule": {
+          "type": "object",
+          "properties": {
+            "incremental": {
+              "type": "string"
+            },
+            "retrospective": {
+              "type": "string"
+            },
+            "full": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "incremental",
+            "retrospective",
+            "full"
+          ],
+          "additionalProperties": false
+        },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "max_file_bytes": {
+              "type": "integer"
+            },
+            "timeout_seconds": {
+              "type": "integer"
+            },
+            "max_output_bytes": {
+              "type": "integer"
+            },
+            "max_files": {
+              "type": "integer"
+            },
+            "max_snapshot_bytes": {
+              "type": "integer"
+            },
+            "model_input_bytes": {
+              "type": "integer"
+            },
+            "model_output_bytes": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "max_file_bytes",
+            "timeout_seconds",
+            "max_output_bytes",
+            "max_files",
+            "max_snapshot_bytes",
+            "model_input_bytes",
+            "model_output_bytes"
+          ],
+          "additionalProperties": false
+        },
+        "access_policy": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "actions": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "resource_type": {
+                    "type": "string"
+                  },
+                  "require_authentication": {
+                    "type": "boolean"
+                  },
+                  "public": {
+                    "type": "boolean"
+                  },
+                  "allow": {
+                    "type": [
+                      "null",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string"
+                        },
+                        "scope": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "resource_type",
+                  "require_authentication",
+                  "public",
+                  "allow"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "version",
+            "actions"
+          ],
+          "additionalProperties": false
+        },
+        "exceptions": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "concern": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "concern",
+              "scope",
+              "reason",
+              "expires_at"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "api_version",
+        "baseline_version",
+        "version",
+        "targets",
+        "reviews",
+        "schedule",
+        "budget",
+        "access_policy"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    }
+  },
+  "$id": "https://flatrun.dev/schemas/security/v1/proposal.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "api_version",
+    "id",
+    "deployment",
+    "base_revision",
+    "deployment_revision",
+    "profile_revision",
+    "profile",
+    "source",
+    "status",
+    "created_at"
+  ],
+  "additionalProperties": false
+}

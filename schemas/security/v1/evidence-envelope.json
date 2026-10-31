@@ -1,0 +1,97 @@
+{
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "type": "string",
+      "const": "flatrun.security-evidence/v1"
+    },
+    "source": {
+      "type": "string"
+    },
+    "source_version": {
+      "type": "string"
+    },
+    "deployment": {
+      "type": "string"
+    },
+    "run": {
+      "type": "string"
+    },
+    "profile_revision": {
+      "type": "string"
+    },
+    "deployment_revision": {
+      "type": "string"
+    },
+    "window_start": {
+      "type": "string"
+    },
+    "window_end": {
+      "type": "string"
+    },
+    "cursor": {
+      "type": "integer"
+    },
+    "next_cursor": {
+      "type": "integer"
+    },
+    "count": {
+      "type": "integer"
+    },
+    "total": {
+      "type": "integer"
+    },
+    "final": {
+      "type": "boolean"
+    },
+    "window_complete": {
+      "type": "boolean"
+    },
+    "items": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
+    "key_id": {
+      "type": "string"
+    },
+    "mac": {
+      "type": "string"
+    }
+  },
+  "$id": "https://flatrun.dev/schemas/security/v1/evidence-envelope.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "api_version",
+    "source",
+    "source_version",
+    "deployment",
+    "run",
+    "profile_revision",
+    "deployment_revision",
+    "window_start",
+    "window_end",
+    "cursor",
+    "next_cursor",
+    "count",
+    "total",
+    "final",
+    "window_complete",
+    "items",
+    "key_id",
+    "mac"
+  ],
+  "additionalProperties": false
+}

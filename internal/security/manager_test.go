@@ -21,7 +21,7 @@ func ingestAuthFailures(t *testing.T, m *Manager, ip, path string, n int) *Inges
 	var last *IngestResult
 	for i := 0; i < n; i++ {
 		var err error
-		last, err = m.IngestEvent(&IngestEvent{
+		last, err = m.IngestEvent(&IngestEvent{AttributionVerified: true,
 			SourceIP:      ip,
 			RequestPath:   path,
 			RequestMethod: "GET",
@@ -58,7 +58,7 @@ func TestIngestEventRecordsRequestsDeniedByExistingBlock(t *testing.T) {
 		t.Fatalf("BlockIP: %v", err)
 	}
 
-	result, err := m.IngestEvent(&IngestEvent{
+	result, err := m.IngestEvent(&IngestEvent{AttributionVerified: true,
 		SourceIP:       "203.0.113.11",
 		RequestPath:    "/status",
 		RequestMethod:  "GET",
@@ -80,7 +80,7 @@ func TestIngestEventRecordsRequestsDeniedByExistingBlock(t *testing.T) {
 func TestIngestEventCanBeFoundByIncidentID(t *testing.T) {
 	m := newTestManager(t)
 	const incidentID = "FR-1234ABCDEF56"
-	result, err := m.IngestEvent(&IngestEvent{
+	result, err := m.IngestEvent(&IngestEvent{AttributionVerified: true,
 		IncidentID:     incidentID,
 		SourceIP:       "203.0.113.21",
 		RequestPath:    "/checkout",
@@ -129,7 +129,7 @@ func TestGetActiveBlockedIPsExcludesExpiredRecords(t *testing.T) {
 func TestIngestEventDoesNotBlockGenericHTTPClient(t *testing.T) {
 	for _, ua := range []string{"curl/8.4.0", "Go-http-client/1.1", "python-requests/2.31.0", "Wget/1.21"} {
 		m := newTestManager(t)
-		result, err := m.IngestEvent(&IngestEvent{
+		result, err := m.IngestEvent(&IngestEvent{AttributionVerified: true,
 			SourceIP:      "203.0.113.20",
 			RequestPath:   "/wp-login.php",
 			RequestMethod: "GET",
@@ -148,7 +148,7 @@ func TestIngestEventDoesNotBlockGenericHTTPClient(t *testing.T) {
 // A tool that names itself as an attack scanner is still blocked on sight.
 func TestIngestEventBlocksNamedScanner(t *testing.T) {
 	m := newTestManager(t)
-	result, err := m.IngestEvent(&IngestEvent{
+	result, err := m.IngestEvent(&IngestEvent{AttributionVerified: true,
 		SourceIP:      "203.0.113.21",
 		RequestPath:   "/",
 		RequestMethod: "GET",
@@ -170,7 +170,7 @@ func TestIngestEventBlockReasonTracesTrigger(t *testing.T) {
 	var last *IngestResult
 	for i := 0; i < 10; i++ {
 		var err error
-		last, err = m.IngestEvent(&IngestEvent{
+		last, err = m.IngestEvent(&IngestEvent{AttributionVerified: true,
 			SourceIP:      "203.0.113.22",
 			RequestPath:   "/missing.php",
 			RequestMethod: "GET",
@@ -257,7 +257,7 @@ func TestIngestEventSkipsSeededPrivateNetworks(t *testing.T) {
 func TestIngestEventSkipsWhitelistedPathPrefix(t *testing.T) {
 	m := newTestManager(t)
 
-	result, err := m.IngestEvent(&IngestEvent{
+	result, err := m.IngestEvent(&IngestEvent{AttributionVerified: true,
 		SourceIP:      "203.0.113.99",
 		RequestPath:   "/api/health",
 		RequestMethod: "GET",

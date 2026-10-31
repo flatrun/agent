@@ -20,8 +20,9 @@ type Entry struct {
 }
 
 var hiddenKeys = map[string]bool{
-	"auth.jwt_secret": true,
-	"auth.api_keys":   true,
+	"security.internal_api_token": true,
+	"auth.jwt_secret":             true,
+	"auth.api_keys":               true,
 }
 
 // sensitiveKeys are masked on read like hiddenKeys but stay writable

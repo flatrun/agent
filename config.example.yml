@@ -1,9 +1,15 @@
+config_version: 2
+security_reviews:
+    state_path: /var/lib/flatrun/security-reviews
+    approved_images: []
 deployments_path: /home/nfebe/flatrun/deployments
 system_files_root: /
 docker_socket: unix:///var/run/docker.sock
 default_timeout: 2m0s
 api:
-    host: 0.0.0.0
+    private_host: ""
+    public_management: false
+    host: 127.0.0.1
     port: 8090
     enable_cors: true
     allowed_origins:

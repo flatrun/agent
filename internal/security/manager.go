@@ -87,7 +87,7 @@ func (m *Manager) IngestEvent(event *IngestEvent, autoBlockDuration time.Duratio
 	}
 	secEvent.ID = id
 	result.Event = secEvent
-	if blocked {
+	if blocked || !event.AttributionVerified || autoBlockDuration <= 0 {
 		return result, nil
 	}
 

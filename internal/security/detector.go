@@ -104,7 +104,7 @@ func (d *Detector) Classify(event *IngestEvent) *SecurityEvent {
 		message = GetSuspiciousPathDescription(event.RequestPath)
 
 	// Suspicious path with any status
-	case IsSuspiciousPath(event.RequestPath) && event.StatusCode != 200:
+	case IsSuspiciousPath(event.RequestPath):
 		eventType = EventTypeSuspiciousPath
 		severity = SeverityLow
 		message = GetSuspiciousPathDescription(event.RequestPath)

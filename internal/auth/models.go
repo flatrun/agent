@@ -137,6 +137,15 @@ type ActorContext struct {
 }
 
 func (a *ActorContext) HasPermission(p Permission) bool {
+	if a.User != nil && a.User.Role != RoleService && !HasPermission(a.User.Role, a.User.Permissions, p) {
+		return false
+	}
+	switch p {
+	case PermSecurityProfilesRead, PermSecurityProfilesWrite, PermSecurityProfilesApprove, PermSecurityReviewsRead, PermSecurityReviewsRun, PermSecurityEvidenceRead:
+		if a.User != nil && !HasPermission(a.User.Role, a.User.Permissions, p) {
+			return false
+		}
+	}
 	if a.Role == RoleAdmin {
 		return true
 	}

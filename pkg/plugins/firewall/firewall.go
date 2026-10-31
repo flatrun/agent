@@ -1,6 +1,4 @@
 // Package firewall is a built-in app modelling a host-wide inbound/outbound firewall.
-// Scaffold only: rules are persisted and validated, Apply is a no-op (enforcement via
-// nftables/iptables is not wired yet).
 package firewall
 
 import (
@@ -22,7 +20,8 @@ const (
 
 // Config is the host firewall policy, stored globally in .flatrun/firewall.yml.
 type Config struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
+	Enforcement string `yaml:"-" json:"enforcement,omitempty"`
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
 	// DefaultInbound / DefaultOutbound are the stance applied to traffic not matched by a
 	// rule: "allow" (default) or "deny".
 	DefaultInbound  string `yaml:"default_inbound,omitempty" json:"default_inbound,omitempty"`
@@ -156,22 +155,12 @@ func Plan(cfg *Config) []string {
 type nftRunner interface {
 	// Available reports whether nft can be used on this host.
 	Available() bool
-	// ListRuleset returns the current full ruleset, for rollback.
-	ListRuleset() (string, error)
+	// ListTable returns only the FlatRun-owned table, or empty when absent.
+	ListTable() (string, error)
 	// ApplyScript loads an `nft -f` script.
 	ApplyScript(script string) error
 }
 
-// Apply enforces the config on the host firewall, or removes FlatRun's rules when
-// the firewall is disabled. It reports whether enforcement actually happened:
-// when nft is unavailable (a non-Linux host, or nft not installed) the config is
-// still saved but not enforced, which is not an error.
-//
-// Before a new ruleset is loaded the current one is snapshotted, and if the load
-// fails the snapshot is restored, so a rejected ruleset never leaves the host in
-// a half-applied state. The generated ruleset always keeps loopback,
-// established/related, and the active SSH port open, so a default-deny inbound
-// policy cannot drop the operator's session.
 func Apply(cfg *Config, runner nftRunner) (enforced bool, err error) {
 	if err := Validate(cfg); err != nil {
 		return false, err
@@ -192,7 +181,7 @@ func Apply(cfg *Config, runner nftRunner) (enforced bool, err error) {
 		return false, nil
 	}
 
-	snapshot, err := runner.ListRuleset()
+	snapshot, err := runner.ListTable()
 	if err != nil {
 		return false, fmt.Errorf("failed to read current firewall state: %w", err)
 	}
@@ -200,8 +189,9 @@ func Apply(cfg *Config, runner nftRunner) (enforced bool, err error) {
 	script := renderNftables(cfg, detectSSHSession())
 	if err := runner.ApplyScript(script); err != nil {
 		if snapshot != "" {
-			// Best-effort restore of the ruleset that was in place before.
-			_ = runner.ApplyScript("flush ruleset\n" + snapshot)
+			if rollbackErr := runner.ApplyScript(fmt.Sprintf("add table inet %s\ndelete table inet %s\n", tableName, tableName) + snapshot); rollbackErr != nil {
+				return false, fmt.Errorf("failed to apply firewall rules: %v; owned-table rollback failed: %w", err, rollbackErr)
+			}
 		}
 		return false, fmt.Errorf("failed to apply firewall rules: %w", err)
 	}

@@ -231,6 +231,8 @@ version.
 
 ## Security
 
+See [Security](docs/SECURITY.md) for report-only profiles, approvals, collector isolation, evidence coverage and private management. Missing application audit evidence remains unknown.
+
 - Use strong, unique API keys.
 - Generate a secure JWT secret (`openssl rand -base64 32`).
 - Run behind a reverse proxy with HTTPS in production.

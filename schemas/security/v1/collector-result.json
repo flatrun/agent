@@ -1,0 +1,114 @@
+{
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "type": "string",
+      "const": "flatrun.collector-result/v1"
+    },
+    "process_status": {
+      "type": "string"
+    },
+    "items": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": [
+          "null",
+          "array"
+        ],
+        "items": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
+    "omissions": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "boundaries": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "limitations": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "declared_observation": {
+          "type": "string"
+        },
+        "manifest_processing": {
+          "type": "string"
+        },
+        "window_coverage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "declared_observation",
+        "manifest_processing",
+        "window_coverage"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://flatrun.dev/schemas/security/v1/collector-result.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "api_version",
+    "process_status",
+    "items",
+    "omissions",
+    "boundaries",
+    "limitations",
+    "coverage"
+  ],
+  "additionalProperties": false
+}

@@ -88,7 +88,12 @@ func (s *Server) applyConfigUpdate(key string, value interface{}) (*configUpdate
 			return nil, apiErrf(http.StatusBadRequest, "%s", err.Error())
 		}
 	}
+	previous := *s.config
 	if err := config.Set(s.config, key, value); err != nil {
+		return nil, apiErrf(http.StatusBadRequest, "%s", err.Error())
+	}
+	if err := config.ValidateManagement(s.config); err != nil {
+		*s.config = previous
 		return nil, apiErrf(http.StatusBadRequest, "%s", err.Error())
 	}
 

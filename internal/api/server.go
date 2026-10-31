@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -55,6 +56,7 @@ import (
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/secrets"
 	"github.com/flatrun/agent/internal/security"
+	"github.com/flatrun/agent/internal/securityreview"
 	"github.com/flatrun/agent/internal/setup"
 	"github.com/flatrun/agent/internal/sleep"
 	"github.com/flatrun/agent/internal/source"
@@ -69,6 +71,7 @@ import (
 	"github.com/flatrun/agent/pkg/plugins"
 	dnsPlugins "github.com/flatrun/agent/pkg/plugins/dns"
 	"github.com/flatrun/agent/pkg/plugins/firewall"
+	"github.com/flatrun/agent/pkg/securityprofile"
 	"github.com/flatrun/agent/pkg/subdomain"
 	"github.com/flatrun/agent/pkg/version"
 	"github.com/flatrun/agent/templates"
@@ -79,63 +82,70 @@ import (
 )
 
 type Server struct {
-	config             *config.Config
-	configPath         string
-	router             *gin.Engine
-	server             *http.Server
-	manager            *docker.Manager
-	certsDiscovery     *certs.Discovery
-	networksManager    *networks.Manager
-	pluginRegistry     *plugins.Registry
-	firewall           *firewall.Plugin
-	builtinDNS         []plugins.Plugin
-	pluginHost         *pluginhost.Host
-	notify             *notify.Service
-	access             *access.Service
-	accessEmailSender  accessEmailSender
-	pluginToken        string
-	authMiddleware     *auth.Middleware
-	authManager        *auth.Manager
-	proxyOrchestrator  *proxy.Orchestrator
-	filesManager       *files.Manager
-	systemFilesManager *files.SystemManager
-	servicesManager    *system.ServicesManager
-	databaseManager    *database.Manager
-	infraManager       *infra.Manager
-	credentialsManager *credentials.Manager
-	sourceRegistry     *source.Registry
-	templateSyncer     *templatesource.Syncer
-	securityManager    *security.Manager
-	trafficManager     *traffic.Manager
-	dashboards         *dashboards.Store
-	backupManager      *backup.Manager
-	schedulerManager   *scheduler.Manager
-	auditManager       *audit.Manager
-	secretStore        *secrets.Store
-	secretRegistry     *secrets.Registry
-	auditMiddleware    *audit.Middleware
-	autoscaleStore     *autoscale.Store
-	powerDNSManager    *dns.PowerDNSManager
-	clusterMu          sync.RWMutex
-	clusterManager     *cluster.Manager
-	probeOrchestrator  func(context.Context, orchestrator.ProviderID) error
-	probeRouting       func(context.Context, routing.ProviderID) error
-	setupManager       *setup.Manager
-	setupHandlers      *setup.Handlers
-	certRenewer        *ssl.Renewer
-	planStore          *plan.Store
-	deploysStore       *deploys.Store
-	builders           *build.Registry
-	webhooks           *webhook.Registry
-	runInBackground    func(func())
-	sleeper            *sleep.Controller
-	uploadRejections   uploadRejections
-	sleepCancel        context.CancelFunc
-	aiProvider         ai.Provider
-	triageBudget       *triageBudget
-	aiSessions         *ai.SessionStore
-	aiAgents           *ai.AgentStore
-	mcpHandler         http.Handler
+	privateServer         *http.Server
+	securityReviewStore   *securityreview.Store
+	securityReviewMu      sync.Mutex
+	securityReviewEngine  *securityreview.Engine
+	securityReviewCancel  context.CancelFunc
+	securityReviewContext context.Context
+	securityProposalSlots chan struct{}
+	config                *config.Config
+	configPath            string
+	router                *gin.Engine
+	server                *http.Server
+	manager               *docker.Manager
+	certsDiscovery        *certs.Discovery
+	networksManager       *networks.Manager
+	pluginRegistry        *plugins.Registry
+	firewall              *firewall.Plugin
+	builtinDNS            []plugins.Plugin
+	pluginHost            *pluginhost.Host
+	notify                *notify.Service
+	access                *access.Service
+	accessEmailSender     accessEmailSender
+	pluginToken           string
+	authMiddleware        *auth.Middleware
+	authManager           *auth.Manager
+	proxyOrchestrator     *proxy.Orchestrator
+	filesManager          *files.Manager
+	systemFilesManager    *files.SystemManager
+	servicesManager       *system.ServicesManager
+	databaseManager       *database.Manager
+	infraManager          *infra.Manager
+	credentialsManager    *credentials.Manager
+	sourceRegistry        *source.Registry
+	templateSyncer        *templatesource.Syncer
+	securityManager       *security.Manager
+	trafficManager        *traffic.Manager
+	dashboards            *dashboards.Store
+	backupManager         *backup.Manager
+	schedulerManager      *scheduler.Manager
+	auditManager          *audit.Manager
+	secretStore           *secrets.Store
+	secretRegistry        *secrets.Registry
+	auditMiddleware       *audit.Middleware
+	autoscaleStore        *autoscale.Store
+	powerDNSManager       *dns.PowerDNSManager
+	clusterMu             sync.RWMutex
+	clusterManager        *cluster.Manager
+	probeOrchestrator     func(context.Context, orchestrator.ProviderID) error
+	probeRouting          func(context.Context, routing.ProviderID) error
+	setupManager          *setup.Manager
+	setupHandlers         *setup.Handlers
+	certRenewer           *ssl.Renewer
+	planStore             *plan.Store
+	deploysStore          *deploys.Store
+	builders              *build.Registry
+	webhooks              *webhook.Registry
+	runInBackground       func(func())
+	sleeper               *sleep.Controller
+	uploadRejections      uploadRejections
+	sleepCancel           context.CancelFunc
+	aiProvider            ai.Provider
+	triageBudget          *triageBudget
+	aiSessions            *ai.SessionStore
+	aiAgents              *ai.AgentStore
+	mcpHandler            http.Handler
 
 	runAutoscaleActivation func(context.Context, string) (autoscale.Activation, error)
 	autoscaleCancel        context.CancelFunc
@@ -547,6 +557,8 @@ func (s *Server) setupRoutes() {
 		}
 		s.registerWorkspaceRoutes(bodiless)
 		s.registerSecretRoutes(bodiless)
+		s.registerSecurityReviewRoutes(bodiless)
+		bodiless.GET("/security/management-preview", s.authMiddleware.RequirePermission(auth.PermSettingsRead), s.managementSecurityPreview)
 		{
 			// Deployment endpoints
 			protected.GET("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listDeployments)
@@ -1062,11 +1074,34 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) Start() error {
-	addr := fmt.Sprintf("%s:%d", s.config.API.Host, s.config.API.Port)
+	if err := config.ValidateManagement(s.config); err != nil {
+		return err
+	}
+	if s.config.SecurityReviews.StatePath != "" && s.securityReviewStore == nil {
+		store, err := securityreview.NewStore(s.config.SecurityReviews.StatePath, s.config.DeploymentsPath)
+		if err != nil {
+			log.Printf("security reviews: private state unavailable: %v", err)
+		} else {
+			s.securityReviewStore = store
+			if _, err = s.reviewEngine(store); err != nil {
+				log.Printf("security reviews: execution unavailable: %v", err)
+			}
+		}
+	}
+	addr := net.JoinHostPort(s.config.API.Host, strconv.Itoa(s.config.API.Port))
 
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.Handler(),
+	}
+	if s.config.API.PrivateHost != "" && s.config.API.PrivateHost != s.config.API.Host {
+		listener, err := net.Listen("tcp", net.JoinHostPort(s.config.API.PrivateHost, strconv.Itoa(s.config.API.Port)))
+		if err != nil {
+			return fmt.Errorf("private management listener unavailable: %w", err)
+		}
+		s.privateServer = &http.Server{Handler: s.Handler()}
+		go func() { _ = s.privateServer.Serve(listener) }()
+		defer listener.Close()
 	}
 
 	go func() {
@@ -1103,6 +1138,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	if s.securityReviewCancel != nil {
+		s.securityReviewCancel()
+	}
 	if s.sleepCancel != nil {
 		s.sleepCancel()
 	}
@@ -1123,6 +1161,9 @@ func (s *Server) Stop() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if s.privateServer != nil {
+		_ = s.privateServer.Shutdown(ctx)
+	}
 	return s.server.Shutdown(ctx)
 }
 
@@ -1562,6 +1603,9 @@ func (s *Server) createDeployment(c *gin.Context) {
 			}
 		}
 		req.Metadata.Template = req.TemplateID
+		if templateMetadata, err := s.loadTemplateMetadata(req.TemplateID); err == nil && req.Metadata.SecurityProfile == nil {
+			req.Metadata.SecurityProfile = templateMetadata.SecurityProfile
+		}
 		if req.Metadata.Logo == "" {
 			req.Metadata.Logo = s.copyTemplateLogo(req.Name, req.TemplateID)
 		}
@@ -4363,17 +4407,18 @@ type TemplateFile struct {
 }
 
 type TemplateMetadata struct {
-	Name          string               `yaml:"name"`
-	Description   string               `yaml:"description"`
-	Logo          models.Logo          `yaml:"logo"`
-	Category      string               `yaml:"category"`
-	Type          string               `yaml:"type"`
-	ObjectStore   *TemplateObjectStore `yaml:"object_store"`
-	Priority      int                  `yaml:"priority"`
-	ContainerPort int                  `yaml:"container_port"`
-	Mounts        []TemplateMount      `yaml:"mounts"`
-	Files         []TemplateFile       `yaml:"files"`
-	Env           TemplateEnv          `yaml:"env"`
+	SecurityProfile *securityprofile.Profile `yaml:"security_profile" json:"security_profile,omitempty"`
+	Name            string                   `yaml:"name"`
+	Description     string                   `yaml:"description"`
+	Logo            models.Logo              `yaml:"logo"`
+	Category        string                   `yaml:"category"`
+	Type            string                   `yaml:"type"`
+	ObjectStore     *TemplateObjectStore     `yaml:"object_store"`
+	Priority        int                      `yaml:"priority"`
+	ContainerPort   int                      `yaml:"container_port"`
+	Mounts          []TemplateMount          `yaml:"mounts"`
+	Files           []TemplateFile           `yaml:"files"`
+	Env             TemplateEnv              `yaml:"env"`
 }
 
 // TemplateObjectStore is a template's declaration that it runs an S3-compatible
@@ -4432,17 +4477,18 @@ func templateMountHostPath(m TemplateMount) string {
 }
 
 type Template struct {
-	ID            string               `json:"id"`
-	Name          string               `json:"name" yaml:"name"`
-	Description   string               `json:"description" yaml:"description"`
-	Logo          string               `json:"logo" yaml:"logo"`
-	Category      string               `json:"category" yaml:"category"`
-	ObjectStore   *TemplateObjectStore `json:"object_store,omitempty" yaml:"object_store,omitempty"`
-	Priority      int                  `json:"priority" yaml:"priority"`
-	ContainerPort int                  `json:"container_port" yaml:"container_port"`
-	Mounts        []TemplateMount      `json:"mounts" yaml:"mounts"`
-	Files         []TemplateFile       `json:"files" yaml:"files"`
-	Content       string               `json:"content"`
+	SecurityProfile *securityprofile.Profile `yaml:"security_profile,omitempty" json:"security_profile,omitempty"`
+	ID              string                   `json:"id"`
+	Name            string                   `json:"name" yaml:"name"`
+	Description     string                   `json:"description" yaml:"description"`
+	Logo            string                   `json:"logo" yaml:"logo"`
+	Category        string                   `json:"category" yaml:"category"`
+	ObjectStore     *TemplateObjectStore     `json:"object_store,omitempty" yaml:"object_store,omitempty"`
+	Priority        int                      `json:"priority" yaml:"priority"`
+	ContainerPort   int                      `json:"container_port" yaml:"container_port"`
+	Mounts          []TemplateMount          `json:"mounts" yaml:"mounts"`
+	Files           []TemplateFile           `json:"files" yaml:"files"`
+	Content         string                   `json:"content"`
 }
 
 func (s *Server) listTemplates(c *gin.Context) {
@@ -4521,17 +4567,18 @@ func (s *Server) listTemplates(c *gin.Context) {
 			}
 
 			templateList = append(templateList, Template{
-				ID:            templateID,
-				Name:          metadata.Name,
-				Description:   metadata.Description,
-				Logo:          templateLogo(templateID, metadata.Logo),
-				Category:      metadata.Category,
-				ObjectStore:   metadata.ObjectStore,
-				Priority:      metadata.Priority,
-				ContainerPort: metadata.ContainerPort,
-				Mounts:        metadata.Mounts,
-				Files:         metadata.Files,
-				Content:       string(composeContent),
+				ID:              templateID,
+				Name:            metadata.Name,
+				Description:     metadata.Description,
+				Logo:            templateLogo(templateID, metadata.Logo),
+				Category:        metadata.Category,
+				ObjectStore:     metadata.ObjectStore,
+				Priority:        metadata.Priority,
+				ContainerPort:   metadata.ContainerPort,
+				Mounts:          metadata.Mounts,
+				Files:           metadata.Files,
+				SecurityProfile: metadata.SecurityProfile,
+				Content:         string(composeContent),
 			})
 		}
 	}
@@ -4636,10 +4683,15 @@ func (s *Server) getTemplateCompose(c *gin.Context) {
 		return
 	}
 
+	var profile *securityprofile.Profile
+	if metadata, err := s.loadTemplateMetadata(tid); err == nil {
+		profile = metadata.SecurityProfile
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"template_id": tid,
-		"name":        name,
-		"content":     content,
+		"template_id":      tid,
+		"security_profile": profile,
+		"name":             name,
+		"content":          content,
 	})
 }
 
@@ -4707,13 +4759,18 @@ func (s *Server) generateTemplateCompose(c *gin.Context) {
 		return
 	}
 
+	var profile *securityprofile.Profile
+	if metadata, err := s.loadTemplateMetadata(tid); err == nil {
+		profile = metadata.SecurityProfile
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"template_id":    tid,
-		"name":           req.Name,
-		"content":        content,
-		"container_port": req.ContainerPort,
-		"map_ports":      req.MapPorts,
-		"host_port":      req.HostPort,
+		"template_id":      tid,
+		"security_profile": profile,
+		"name":             req.Name,
+		"content":          content,
+		"container_port":   req.ContainerPort,
+		"map_ports":        req.MapPorts,
+		"host_port":        req.HostPort,
 	})
 }
 

@@ -15,8 +15,14 @@ const (
 	PermNetworksWrite  Permission = "networks:write"
 	PermNetworksDelete Permission = "networks:delete"
 
-	PermSecurityRead  Permission = "security:read"
-	PermSecurityWrite Permission = "security:write"
+	PermSecurityRead            Permission = "security:read"
+	PermSecurityWrite           Permission = "security:write"
+	PermSecurityProfilesRead    Permission = "security_profiles:read"
+	PermSecurityProfilesWrite   Permission = "security_profiles:write"
+	PermSecurityProfilesApprove Permission = "security_profiles:approve"
+	PermSecurityReviewsRead     Permission = "security_reviews:read"
+	PermSecurityReviewsRun      Permission = "security_reviews:run"
+	PermSecurityEvidenceRead    Permission = "security_evidence:read"
 
 	PermBackupsRead   Permission = "backups:read"
 	PermBackupsWrite  Permission = "backups:write"
@@ -100,6 +106,8 @@ const (
 )
 
 var adminPermissions = []Permission{
+	PermSecurityProfilesRead, PermSecurityProfilesWrite, PermSecurityProfilesApprove,
+	PermSecurityReviewsRead, PermSecurityReviewsRun, PermSecurityEvidenceRead,
 	PermDeploymentsRead, PermDeploymentsWrite, PermDeploymentsDelete,
 	PermCertificatesRead, PermCertificatesWrite, PermCertificatesDelete,
 	PermNetworksRead, PermNetworksWrite, PermNetworksDelete,
@@ -131,6 +139,7 @@ var adminPermissions = []Permission{
 }
 
 var operatorPermissions = []Permission{
+	PermSecurityProfilesRead, PermSecurityProfilesWrite, PermSecurityReviewsRead, PermSecurityReviewsRun,
 	PermDeploymentsRead, PermDeploymentsWrite,
 	PermCertificatesRead, PermCertificatesWrite,
 	PermNetworksRead,
@@ -154,6 +163,7 @@ var operatorPermissions = []Permission{
 }
 
 var viewerPermissions = []Permission{
+	PermSecurityProfilesRead, PermSecurityReviewsRead,
 	PermDeploymentsRead,
 	PermCertificatesRead,
 	PermNetworksRead,

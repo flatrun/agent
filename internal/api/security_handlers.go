@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"os/exec"
 	"strconv"
 	"time"
@@ -18,6 +21,11 @@ import (
 
 // ingestSecurityEvent handles real-time security event ingestion from nginx Lua
 func (s *Server) ingestSecurityEvent(c *gin.Context) {
+	expected := s.config.Security.InternalAPIToken
+	if expected == "" || subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Internal-Token")), []byte(expected)) != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authenticated proxy exporter required"})
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -31,7 +39,23 @@ func (s *Server) ingestSecurityEvent(c *gin.Context) {
 		return
 	}
 
-	result, err := s.securityManager.IngestEvent(&event, s.config.Security.AutoBlockDuration)
+	addr, parseErr := netip.ParseAddr(event.SourceIP)
+	event.AttributionVerified = parseErr == nil && event.VisitorAttributed
+	if parseErr == nil {
+		for _, proxy := range s.config.Security.TrustedProxies {
+			if prefix, err := netip.ParsePrefix(proxy); err == nil && prefix.Contains(addr) {
+				event.AttributionVerified = false
+			}
+			if ip, err := netip.ParseAddr(proxy); err == nil && ip == addr {
+				event.AttributionVerified = false
+			}
+		}
+	}
+	duration := s.config.Security.AutoBlockDuration
+	if !s.config.Security.AutoBlockEnabled {
+		duration = 0
+	}
+	result, err := s.securityManager.IngestEvent(&event, duration)
 	if err != nil {
 		log.Printf("Security ingest: failed to process event from IP %s (path=%s, method=%s): %v",
 			event.SourceIP, event.RequestPath, event.RequestMethod, err)
@@ -60,6 +84,9 @@ func (s *Server) ingestSecurityEvent(c *gin.Context) {
 
 // getSecurityStats returns security statistics
 func (s *Server) getSecurityStats(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -93,7 +120,7 @@ func (s *Server) listSecurityEvents(c *gin.Context) {
 		}
 	} else {
 		actor := auth.GetActorFromContext(c)
-		if actor != nil && actor.Role != auth.RoleAdmin {
+		if actor != nil && !securityGlobalActor(actor) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Deployment filter required"})
 			return
 		}
@@ -166,6 +193,9 @@ func (s *Server) getSecurityEvent(c *gin.Context) {
 
 // cleanupSecurityEvents removes old security events
 func (s *Server) cleanupSecurityEvents(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -195,6 +225,9 @@ func (s *Server) cleanupSecurityEvents(c *gin.Context) {
 
 // listBlockedIPs returns all blocked IPs
 func (s *Server) listBlockedIPs(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -214,11 +247,15 @@ func (s *Server) listBlockedIPsInternal(c *gin.Context) {
 	token := c.GetHeader("X-Internal-Token")
 	expectedToken := s.config.Security.InternalAPIToken
 
-	if token == "" || token != expectedToken {
+	if expectedToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) != 1 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid internal token"})
 		return
 	}
 
+	if s.securityManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
+		return
+	}
 	ips, err := s.securityManager.GetActiveBlockedIPs()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -230,6 +267,9 @@ func (s *Server) listBlockedIPsInternal(c *gin.Context) {
 
 // blockIP blocks an IP address
 func (s *Server) blockIP(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -245,6 +285,12 @@ func (s *Server) blockIP(c *gin.Context) {
 		return
 	}
 
+	address, parseErr := netip.ParseAddr(req.IP)
+	if parseErr != nil || address.Zone() != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Valid IP address required"})
+		return
+	}
+	req.IP = address.Unmap().String()
 	id, err := s.securityManager.BlockIP(req.IP, req.Reason, req.Duration)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -261,20 +307,33 @@ func (s *Server) blockIP(c *gin.Context) {
 
 // unblockIP unblocks an IP address
 func (s *Server) unblockIP(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
 	}
 
 	ip := c.Param("ip")
-	if ip == "" {
+	address, parseErr := netip.ParseAddr(ip)
+	if parseErr != nil || address.Zone() != "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "IP address required"})
 		return
 	}
 
+	rawIP := ip
+	ip = address.Unmap().String()
 	if err := s.securityManager.UnblockIP(ip); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	if rawIP != ip {
+		if err := s.securityManager.UnblockIP(rawIP); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Unable to clear legacy IP block"})
+			return
+		}
 	}
 
 	// Notify nginx to immediately unblock the IP
@@ -286,6 +345,9 @@ func (s *Server) unblockIP(c *gin.Context) {
 }
 
 func (s *Server) listWhitelist(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -301,6 +363,9 @@ func (s *Server) listWhitelist(c *gin.Context) {
 }
 
 func (s *Server) addWhitelistEntry(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -331,6 +396,9 @@ func (s *Server) addWhitelistEntry(c *gin.Context) {
 }
 
 func (s *Server) removeWhitelistEntry(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -355,11 +423,12 @@ func (s *Server) listWhitelistInternal(c *gin.Context) {
 	token := c.GetHeader("X-Internal-Token")
 	expectedToken := s.config.Security.InternalAPIToken
 
-	if token == "" || token != expectedToken {
+	if expectedToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) != 1 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid internal token"})
 		return
 	}
 
+	c.Set("security_internal", true)
 	s.listWhitelist(c)
 }
 
@@ -381,11 +450,24 @@ func (s *Server) getEventsByIP(c *gin.Context) {
 		return
 	}
 
+	actor := auth.GetActorFromContext(c)
+	if actor != nil && !securityGlobalActor(actor) {
+		filtered := events[:0]
+		for _, event := range events {
+			if event.DeploymentName != "" && actor.CanAccessDeployment(event.DeploymentName, auth.AccessLevelRead) {
+				filtered = append(filtered, event)
+			}
+		}
+		events = filtered
+	}
 	c.JSON(http.StatusOK, gin.H{"events": events, "ip": ip})
 }
 
 // listProtectedRoutes returns all protected routes
 func (s *Server) listProtectedRoutes(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -402,6 +484,9 @@ func (s *Server) listProtectedRoutes(c *gin.Context) {
 
 // addProtectedRoute adds a new protected route
 func (s *Server) addProtectedRoute(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -437,6 +522,9 @@ func (s *Server) addProtectedRoute(c *gin.Context) {
 
 // updateProtectedRoute updates an existing protected route
 func (s *Server) updateProtectedRoute(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -465,6 +553,9 @@ func (s *Server) updateProtectedRoute(c *gin.Context) {
 
 // deleteProtectedRoute deletes a protected route
 func (s *Server) deleteProtectedRoute(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if s.securityManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Security module not enabled"})
 		return
@@ -615,6 +706,9 @@ func (s *Server) getRealtimeCaptureStatus(c *gin.Context) {
 
 // setRealtimeCaptureStatus enables or disables realtime capture
 func (s *Server) setRealtimeCaptureStatus(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
@@ -691,11 +785,20 @@ func (s *Server) getSecurityHealth(c *gin.Context) {
 	}
 
 	health := s.infraManager.CheckSecurityHealth()
+	preview := config.PreviewManagement(s.config)
+	health.Issues = append(health.Issues, preview.Warnings...)
+	if len(preview.Warnings) > 0 && health.Status == "healthy" {
+		health.Status = "degraded"
+	}
+	health.Details["management_migration"] = preview
 	c.JSON(http.StatusOK, health)
 }
 
 // updateSecuritySettings handles dedicated security settings updates
 func (s *Server) updateSecuritySettings(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	var req struct {
 		Enabled            *bool  `json:"enabled"`
 		RealtimeCapture    *bool  `json:"realtime_capture"`
@@ -887,12 +990,8 @@ func (s *Server) notifyNginxBlockIP(ip string, ttlSeconds int) error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	curlCmd := fmt.Sprintf(
-		`curl -s -X POST -H "Content-Type: application/json" -d '%s' http://127.0.0.1:8081/_internal/security/block-ip`,
-		string(jsonPayload),
-	)
-
-	cmd := exec.Command("docker", "exec", s.config.Nginx.ContainerName, "sh", "-c", curlCmd)
+	cmd := exec.Command("docker", "exec", "-i", s.config.Nginx.ContainerName, "curl", "--fail", "-s", "-X", "POST", "-H", "Content-Type: application/json", "--data-binary", "@-", "http://127.0.0.1:8081/_internal/security/block-ip")
+	cmd.Stdin = bytes.NewReader(jsonPayload)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to notify nginx: %s - %w", string(output), err)
@@ -916,12 +1015,8 @@ func (s *Server) notifyNginxUnblockIP(ip string) error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	curlCmd := fmt.Sprintf(
-		`curl -s -X POST -H "Content-Type: application/json" -d '%s' http://127.0.0.1:8081/_internal/security/unblock-ip`,
-		string(jsonPayload),
-	)
-
-	cmd := exec.Command("docker", "exec", s.config.Nginx.ContainerName, "sh", "-c", curlCmd)
+	cmd := exec.Command("docker", "exec", "-i", s.config.Nginx.ContainerName, "curl", "--fail", "-s", "-X", "POST", "-H", "Content-Type: application/json", "--data-binary", "@-", "http://127.0.0.1:8081/_internal/security/unblock-ip")
+	cmd.Stdin = bytes.NewReader(jsonPayload)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to notify nginx: %s - %w", string(output), err)
@@ -933,6 +1028,9 @@ func (s *Server) notifyNginxUnblockIP(ip string) error {
 
 // refreshSecurityScripts regenerates Lua scripts with correct agent IP and reloads nginx
 func (s *Server) refreshSecurityScripts(c *gin.Context) {
+	if !securityGlobalAccess(c) {
+		return
+	}
 	if !s.config.Security.Enabled {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Security module not enabled",
@@ -957,4 +1055,22 @@ func (s *Server) refreshSecurityScripts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func securityGlobalActor(actor *auth.ActorContext) bool {
+	return actor != nil && actor.Role == auth.RoleAdmin && (actor.User == nil || actor.User.Role == auth.RoleAdmin) && (actor.APIKey == nil || len(actor.APIKey.Deployments) == 0)
+}
+func securityGlobalAccess(c *gin.Context) bool {
+	if c.GetBool("security_internal") {
+		return true
+	}
+	actor := auth.GetActorFromContext(c)
+	if actor == nil {
+		return true
+	}
+	if securityGlobalActor(actor) {
+		return true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "Global security access required"})
+	return false
 }

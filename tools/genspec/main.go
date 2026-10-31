@@ -444,6 +444,10 @@ func boundRequestType(api *packages.Package, fn *ast.FuncDecl) (types.Type, stri
 		if !ok {
 			return true
 		}
+		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "securityJSON" && len(call.Args) == 2 {
+			found = api.TypesInfo.TypeOf(call.Args[1])
+			return false
+		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
 		if !ok || (sel.Sel.Name != "ShouldBindJSON" && sel.Sel.Name != "BindJSON" && sel.Sel.Name != "ShouldBind") {
 			return true
