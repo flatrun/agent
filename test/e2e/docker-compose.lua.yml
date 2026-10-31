@@ -26,6 +26,7 @@ services:
     ports:
       - "18082:80"
     environment:
+      - FLATRUN_INTERNAL_TOKEN=flatrun-e2e-internal-token-placeholder
       - FLATRUN_AGENT_URL=http://flatrun-e2e-lua-agent:8090
       - FLATRUN_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
     volumes:

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -172,6 +173,43 @@ func TestLuaRealtimeCapture(t *testing.T) {
 			t.Errorf("Expected event count to increase for scanner UA, was %d, now %d", initialCount, newCount)
 		}
 		t.Logf("Event count increased from %d to %d", initialCount, newCount)
+	})
+
+	t.Run("successful suspicious requests are captured", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%s/debug/capture-success", luaNginxPort), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 FlatRunTest")
+		req.Header.Set("X-Forwarded-For", "203.0.113.55")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("fixture status %d", response.StatusCode)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			for _, event := range getEvents(t) {
+				if event.RequestPath == "/debug/capture-success" && event.StatusCode == http.StatusOK {
+					return
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatal("successful suspicious request was not captured")
+	})
+	t.Run("ingest requires exporter authentication", func(t *testing.T) {
+		response, err := http.Post(fmt.Sprintf("http://localhost:%s/api/security/events/ingest", luaAPIPort), "application/json", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated exporter accepted: %d", response.StatusCode)
+		}
 	})
 
 	t.Run("events have correct data", func(t *testing.T) {
