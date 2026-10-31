@@ -27,10 +27,12 @@
       "type": "object",
       "properties": {
         "api_version": {
-          "type": "string"
+          "type": "string",
+          "const": "flatrun.security-profile/v1"
         },
         "baseline_version": {
-          "type": "string"
+          "type": "string",
+          "const": "1.0.0"
         },
         "version": {
           "type": "string"

@@ -35,6 +35,7 @@ func main() {
 			value := any(securityprofile.BaselineVersion)
 			schema.Properties["baseline_version"].Const = &value
 		}
+		constrainProfiles(schema, map[*jsonschema.Schema]bool{})
 		schema.ID = "https://flatrun.dev/schemas/security/v1/" + name + ".json"
 		data, err := json.MarshalIndent(schema, "", "  ")
 		if err != nil {
@@ -42,6 +43,32 @@ func main() {
 		}
 		if err = os.WriteFile(filepath.Join(destination, name+".json"), append(data, '\n'), 0644); err != nil {
 			log.Fatal(err)
+		}
+	}
+}
+
+func constrainProfiles(schema *jsonschema.Schema, seen map[*jsonschema.Schema]bool) {
+	if schema == nil || seen[schema] {
+		return
+	}
+	seen[schema] = true
+	if schema.Properties["baseline_version"] != nil && schema.Properties["targets"] != nil && schema.Properties["reviews"] != nil {
+		version := any(securityprofile.APIVersion)
+		baseline := any(securityprofile.BaselineVersion)
+		schema.Properties["api_version"].Const = &version
+		schema.Properties["baseline_version"].Const = &baseline
+	}
+	for _, child := range schema.Properties {
+		constrainProfiles(child, seen)
+	}
+	for _, child := range schema.Defs {
+		constrainProfiles(child, seen)
+	}
+	constrainProfiles(schema.Items, seen)
+	constrainProfiles(schema.AdditionalProperties, seen)
+	for _, children := range [][]*jsonschema.Schema{schema.AllOf, schema.AnyOf, schema.OneOf, schema.PrefixItems} {
+		for _, child := range children {
+			constrainProfiles(child, seen)
 		}
 	}
 }
