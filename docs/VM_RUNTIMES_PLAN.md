@@ -115,6 +115,8 @@ Measured so far, 1 vCPU and 256 MiB unless stated:
 | ext4 root filesystem from `node:22-alpine` (159 MiB of files) | 0.99 to 1.19 s, 182 MiB on disk, 3 runs |
 | Cold boot from the `busybox` filesystem, run `sh -c echo`, shut down | 0.71 s wall time |
 | Cold boot from the `node` filesystem, run `node -e`, shut down | 0.81 s wall time |
+| Docker daemon in a microVM, from `docker:29-dind`, 2 vCPUs and 1024 MiB | Ready 0.37 s after it starts, 0.96 s after boot |
+| Cold boot, start Docker, load and run a `busybox` container, shut down | 1.41 s wall time |
 
 Guest memory is only backed on the host once the guest touches it, so a large
 configured size costs little while the VM is idle.
@@ -122,7 +124,12 @@ configured size costs little while the VM is idle.
 A root filesystem is built by exporting a container created from the image and
 writing the files into an ext4 image with `mkfs.ext4 -d`. This needs no root and
 no loop device. A program from the image can run as the guest's first process,
-with no init system in the image.
+with no init system in the image. The kernel starts that process with no
+`PATH`, and Firecracker exits on a guest reboot, not on a power off.
+
+The guest kernel has what a Docker daemon needs: overlayfs, cgroup v2, the
+namespaces, bridge, veth and NAT. A run can start its own Docker daemon inside
+the VM and run containers there, with images loaded from a second drive.
 
 Still to answer:
 
@@ -130,8 +137,6 @@ Still to answer:
 - Whether a vsock guest init can stream output, report the exit code and serve
   a tar copy of a path after the command exits.
 - Whether headless Chrome runs inside a microVM and saves a screenshot.
-- Whether a Docker daemon runs inside a microVM, for runs that start a Compose
-  backend.
 - Whether GitHub hosted Linux runners expose `/dev/kvm`, so CI can run the
   Firecracker tests.
 
