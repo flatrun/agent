@@ -18,11 +18,13 @@ func TestDockerManagerRestartAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err = d.Available(ctx); err != nil {
+	probe, cancelProbe := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelProbe()
+	if err = d.Available(probe); err != nil {
 		t.Skipf("Docker unreachable: %v", err)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	d.Scope = uuid.NewString()
 	d.EgressSubnet = os.Getenv("FLATRUN_TEST_EGRESS_SUBNET")
 	root := t.TempDir()
