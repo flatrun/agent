@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-type Kind string
+type Type string
 
 const (
-	KindDocker      Kind = "docker"
-	KindFirecracker Kind = "firecracker"
+	TypeDocker      Type = "docker"
+	TypeFirecracker Type = "firecracker"
 )
 
 var ErrUnavailable = errors.New("runtime unavailable")
@@ -45,7 +45,7 @@ type Exit struct {
 }
 
 type Runtime interface {
-	Kind() Kind
+	Type() Type
 	// Available returns nil when the runtime can run instances here, or an
 	// error wrapping ErrUnavailable that says why not.
 	Available(ctx context.Context) error

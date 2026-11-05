@@ -2,7 +2,7 @@
 
 ## Goal
 
-FlatRun deploys long running Compose services as Docker containers. Two new kinds of work need more than that:
+FlatRun deploys long running Compose services as Docker containers. Two new types of work need more than that:
 
 1. **Untrusted, run to completion work.** A CI job clones a repository, builds and starts the application, drives a browser against it and uploads what it produced. The code is not the operator's, so it must not share a kernel with anything else.
 2. **Long running services in virtual machines.** A service that should be isolated from its neighbours by a VM boundary, but otherwise deploys, routes and rolls back like any other service.
@@ -50,11 +50,11 @@ The runtime knows how to create, run and destroy one isolated instance. It knows
 ```go
 package runtimes
 
-type Kind string
+type Type string
 
 const (
-	KindDocker      Kind = "docker"
-	KindFirecracker Kind = "firecracker"
+	TypeDocker      Type = "docker"
+	TypeFirecracker Type = "firecracker"
 )
 
 type Spec struct {
@@ -68,7 +68,7 @@ type Spec struct {
 }
 
 type Runtime interface {
-	Kind() Kind
+	Type() Type
 	Available(ctx context.Context) error // explains why not, e.g. no /dev/kvm
 	Create(ctx context.Context, spec Spec) (Instance, error)
 }
@@ -109,7 +109,7 @@ A run is a runtime instance plus a lifecycle: queued, started, watched, timed ou
 package runs
 
 type Spec struct {
-	Runtime        runtimes.Kind // docker today
+	Runtime        runtimes.Type // docker today
 	Image          string
 	Command        []string
 	Env            map[string]string

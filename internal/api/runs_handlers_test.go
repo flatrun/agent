@@ -167,23 +167,25 @@ func TestRunsHTTPCompletionArtifactsLogsAndSecrets(t *testing.T) {
 			t.Fatalf("secret found in %s", p)
 		}
 	}
-	events, _, err := am.GetEvents(&audit.AuditFilter{Limit: 100})
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := false
-	for _, event := range events {
-		if event.Path == "/api/runs" && event.Method == "POST" {
-			seen = true
-			if strings.Contains(event.RequestBody, secret) {
-				t.Fatal("audit contains secret")
-			}
-			if event.RequestBody != "" {
-				t.Fatalf("audit body: %s", event.RequestBody)
+	if !waitFor(func() bool {
+		events, _, err := am.GetEvents(&audit.AuditFilter{Limit: 100})
+		if err != nil {
+			return false
+		}
+		seen := false
+		for _, event := range events {
+			if event.Path == "/api/runs" && event.Method == "POST" {
+				seen = true
+				if strings.Contains(event.RequestBody, secret) {
+					t.Fatal("audit contains secret")
+				}
+				if event.RequestBody != "" {
+					t.Fatalf("audit body: %s", event.RequestBody)
+				}
 			}
 		}
-	}
-	if !seen {
+		return seen
+	}) {
 		t.Fatal("run submission not audited")
 	}
 }
@@ -387,7 +389,7 @@ func TestRunsHTTPListLimitAndTimeoutSeconds(t *testing.T) {
 
 type blockingCreateRuntime struct{}
 
-func (blockingCreateRuntime) Kind() runtimes.Kind             { return runtimes.KindDocker }
+func (blockingCreateRuntime) Type() runtimes.Type             { return runtimes.TypeDocker }
 func (blockingCreateRuntime) Available(context.Context) error { return nil }
 func (blockingCreateRuntime) Create(ctx context.Context, _ runtimes.Spec) (runtimes.Instance, error) {
 	<-ctx.Done()

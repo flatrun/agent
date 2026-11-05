@@ -32,7 +32,7 @@ func (s Status) Finished() bool {
 }
 
 type Spec struct {
-	Runtime        runtimes.Kind     `json:"runtime"`
+	Runtime        runtimes.Type     `json:"runtime"`
 	Image          string            `json:"image"`
 	Command        []string          `json:"command,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
@@ -46,9 +46,9 @@ type Spec struct {
 
 func (s *Spec) Validate() error {
 	if s.Runtime == "" {
-		s.Runtime = runtimes.KindDocker
+		s.Runtime = runtimes.TypeDocker
 	}
-	if s.Runtime != runtimes.KindDocker {
+	if s.Runtime != runtimes.TypeDocker {
 		return errors.New("unsupported runtime")
 	}
 	if s.Image == "" {
@@ -86,7 +86,7 @@ type Run struct {
 	ID            string        `json:"id"`
 	OwnerUserID   int64         `json:"owner_user_id"`
 	OwnerUsername string        `json:"owner_username"`
-	Runtime       runtimes.Kind `json:"runtime"`
+	Runtime       runtimes.Type `json:"runtime"`
 	Spec          Spec          `json:"spec"`
 	Status        Status        `json:"status"`
 	ExitCode      *int          `json:"exit_code"`

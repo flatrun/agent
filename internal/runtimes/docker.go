@@ -48,7 +48,7 @@ func NewDockerWithHost(host string) (*Docker, error) {
 	return &Docker{cli: cli}, nil
 }
 
-func (d *Docker) Kind() Kind { return KindDocker }
+func (d *Docker) Type() Type { return TypeDocker }
 
 func (d *Docker) Available(ctx context.Context) error {
 	if _, err := d.cli.Ping(ctx); err != nil {
