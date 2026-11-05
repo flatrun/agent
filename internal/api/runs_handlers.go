@@ -10,11 +10,13 @@ import (
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/runs"
+	"github.com/flatrun/agent/internal/runtimes"
 	"github.com/gin-gonic/gin"
 )
 
 func (s *Server) registerRunRoutes(group *gin.RouterGroup) {
 	group.POST("/runs", s.authMiddleware.RequirePermission(auth.PermRunsWrite), s.createRun)
+	group.GET("/runs/runtimes", s.authMiddleware.RequirePermission(auth.PermRunsRead), s.listRunRuntimes)
 	group.GET("/runs", s.authMiddleware.RequirePermission(auth.PermRunsRead), s.listRuns)
 	group.GET("/runs/:id", s.authMiddleware.RequirePermission(auth.PermRunsRead), s.getRun)
 	group.GET("/runs/:id/logs", s.authMiddleware.RequirePermission(auth.PermRunsRead), s.runLogs)
@@ -73,6 +75,14 @@ func (s *Server) createRun(c *gin.Context) {
 	run, err := s.runsManager.Submit(actor.UserID, username, request.Spec, request.SecretEnv)
 	if err != nil {
 		status := http.StatusInternalServerError
+		if errors.Is(err, runs.ErrUnknownRuntime) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, runtimes.ErrUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
 		if errors.Is(err, runs.ErrQueueFull) || errors.Is(err, runs.ErrClosed) {
 			status = http.StatusServiceUnavailable
 		}
@@ -178,4 +188,11 @@ func (s *Server) runLogs(c *gin.Context) {
 			return
 		}
 	}
+}
+
+func (s *Server) listRunRuntimes(c *gin.Context) {
+	if !s.runsAvailable(c) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": s.runsManager.Runtimes(c.Request.Context())})
 }

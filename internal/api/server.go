@@ -494,7 +494,8 @@ func New(cfg *config.Config, configPath string) *Server {
 			scopeHash := sha256.Sum256([]byte(deploymentsPath))
 			runtime.Scope = fmt.Sprintf("%x", scopeHash[:12])
 			runtime.EgressSubnet = cfg.Runs.EgressSubnet
-			s.runsManager, runErr = runs.NewManager(cfg.DeploymentsPath, runtime, cfg.Runs.Workers)
+			firecracker := runtimes.NewFirecracker(cfg.Runs.Firecracker, runtime, runtime.Scope)
+			s.runsManager, runErr = runs.NewManager(cfg.DeploymentsPath, runtime, cfg.Runs.Workers, firecracker)
 		}
 	}
 	if runErr != nil {

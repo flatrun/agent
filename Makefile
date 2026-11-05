@@ -1,4 +1,4 @@
-.PHONY: help build run test test-unit test-e2e test-e2e-docker test-e2e-setup test-e2e-run test-e2e-short test-e2e-cleanup test-e2e-security test-e2e-security-setup test-e2e-security-cleanup test-e2e-lua test-e2e-lua-setup test-e2e-lua-cleanup test-coverage clean deps lint lint-install fmt vet
+.PHONY: help build run test test-unit test-e2e test-e2e-docker test-e2e-setup test-e2e-run test-e2e-short test-e2e-cleanup test-e2e-security test-e2e-security-setup test-e2e-security-cleanup test-e2e-lua test-e2e-lua-setup test-e2e-lua-cleanup test-coverage clean deps lint lint-install fmt vet guest-init
 
 BINARY_NAME=flatrun-agent
 VERSION?=$(shell cat VERSION 2>/dev/null || echo "dev")
@@ -38,7 +38,10 @@ deps:
 	go mod download
 	go mod tidy
 
-build: deps
+guest-init:
+	GOOS=linux CGO_ENABLED=0 go build -o flatrun-guest-init ./cmd/guest-init
+
+build: deps guest-init
 	go build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/agent
 
 run: deps

@@ -162,3 +162,15 @@ templates:
         # Enable once the marketplace API is ready; it then takes priority over GitHub.
         enabled: false
         url: ""
+
+runs:
+  workers: 2
+  egress_subnet: ""
+  firecracker:
+    binary: firecracker
+    jailer: jailer
+    kernel: ""
+    state_dir: /var/lib/flatrun/firecracker
+    chroot_base_dir: /srv/jailer
+    guest_init: ""
+    default_memory: 268435456

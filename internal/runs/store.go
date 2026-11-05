@@ -48,9 +48,6 @@ func (s *Spec) Validate() error {
 	if s.Runtime == "" {
 		s.Runtime = runtimes.TypeDocker
 	}
-	if s.Runtime != runtimes.TypeDocker {
-		return errors.New("unsupported runtime")
-	}
 	if s.Image == "" {
 		return errors.New("image is required")
 	}

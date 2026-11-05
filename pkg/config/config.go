@@ -44,8 +44,9 @@ type CapacityConfig struct {
 }
 
 type RunsConfig struct {
-	Workers      int    `yaml:"workers" json:"workers"`
-	EgressSubnet string `yaml:"egress_subnet" json:"egress_subnet"`
+	Firecracker  FirecrackerConfig `yaml:"firecracker" json:"firecracker"`
+	Workers      int               `yaml:"workers" json:"workers"`
+	EgressSubnet string            `yaml:"egress_subnet" json:"egress_subnet"`
 }
 
 type Config struct {
@@ -376,6 +377,22 @@ func Load(path string) (*Config, error) {
 }
 
 func setDefaults(cfg *Config) {
+	if cfg.Runs.Firecracker.Binary == "" {
+		cfg.Runs.Firecracker.Binary = "firecracker"
+	}
+	if cfg.Runs.Firecracker.Jailer == "" {
+		cfg.Runs.Firecracker.Jailer = "jailer"
+	}
+	if cfg.Runs.Firecracker.ChrootBaseDir == "" {
+		cfg.Runs.Firecracker.ChrootBaseDir = "/srv/jailer"
+	}
+	if cfg.Runs.Firecracker.StateDir == "" {
+		cfg.Runs.Firecracker.StateDir = "/var/lib/flatrun/firecracker"
+	}
+	if cfg.Runs.Firecracker.DefaultMemory == 0 {
+		cfg.Runs.Firecracker.DefaultMemory = 256 << 20
+	}
+
 	if cfg.Runs.Workers <= 0 {
 		cfg.Runs.Workers = 2
 	}
