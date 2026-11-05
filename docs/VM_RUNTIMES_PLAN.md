@@ -111,14 +111,22 @@ Measured so far, 1 vCPU and 256 MiB unless stated:
 | Host memory of an idle VM | 48 MiB at 256 MiB configured, 61 MiB at 1024 MiB |
 | Snapshot of a running VM | 256 ms to save; a 256 MiB memory file and 14 KB of state |
 | Restore from that snapshot and resume | 23 to 41 ms, 3 runs |
+| ext4 root filesystem from `busybox:latest` (4 MiB of files) | 0.17 to 0.21 s, 9 MiB on disk, 3 runs |
+| ext4 root filesystem from `node:22-alpine` (159 MiB of files) | 0.99 to 1.19 s, 182 MiB on disk, 3 runs |
+| Cold boot from the `busybox` filesystem, run `sh -c echo`, shut down | 0.71 s wall time |
+| Cold boot from the `node` filesystem, run `node -e`, shut down | 0.81 s wall time |
 
 Guest memory is only backed on the host once the guest touches it, so a large
 configured size costs little while the VM is idle.
 
+A root filesystem is built by exporting a container created from the image and
+writing the files into an ext4 image with `mkfs.ext4 -d`. This needs no root and
+no loop device. A program from the image can run as the guest's first process,
+with no init system in the image.
+
 Still to answer:
 
-- Time to build a root filesystem from an OCI image, for example
-  `busybox:latest` and an image with headless Chrome, and its size on disk.
+- Time and size of a root filesystem for an image with headless Chrome.
 - Whether a vsock guest init can stream output, report the exit code and serve
   a tar copy of a path after the command exits.
 - Whether headless Chrome runs inside a microVM and saves a screenshot.
