@@ -2,12 +2,10 @@
 
 ## What they are
 
-A **runtime** creates, starts and destroys an isolated instance. Runs pick one
-with the `runtime` field. Docker is one runtime, and it is the only one
-available today: each instance is one container. Other runtimes, such as a
-Firecracker microVM, plug in behind the same interface. Docker shares the host
-kernel, so it is not an isolation boundary for untrusted code. Use it only for
-trusted code. `docs/VM_RUNTIMES_PLAN.md` describes the planned VM runtimes.
+A **runtime** creates, starts and destroys an isolated instance. Runs pick
+`docker` or `firecracker` with the `runtime` field. Docker shares the host
+kernel and should execute trusted code. Firecracker runs each instance in a
+microVM with its own kernel.
 
 A **run** executes work once, records its result and collects its output. For
 example, a run can build a project, run a browser test or generate a report.
@@ -17,7 +15,7 @@ Three layers describe the work:
 
 | Layer | Question | Current behaviour |
 | --- | --- | --- |
-| Runtime | What executes the code? | Docker container |
+| Runtime | What executes the code? | Docker container or Firecracker microVM |
 | Lifecycle | How long does the work live? | A run executes once and records its outcome |
 | Placement | Where does it execute? | Runs execute on the receiving agent; deployment placement is unchanged |
 
@@ -31,14 +29,14 @@ inside `spec`.
 
 | Field | Meaning and default |
 | --- | --- |
-| `runtime` | `docker` is the only value accepted today. Omitted or empty means `docker`. |
+| `runtime` | `docker` or `firecracker`. Omitted or empty means `docker`. |
 | `image` | Required, non-empty image reference. A missing local image is pulled. |
 | `command` | Array of command arguments passed as the container command. |
 | `env` | Map of environment variable names to values. Stored in the run record. |
 | `secret_env` | Map of environment variable names to secret values. Overrides matching names in `env` when the instance is created. |
 | `workdir` | Working directory inside the container. |
-| `cpus` | CPU limit, for example `1.5`. Zero or omitted means no CPU limit. Negative values are rejected. |
-| `memory_bytes` | Memory limit in bytes. Zero or omitted means no memory limit. |
+| `cpus` | CPU limit, for example `1.5`. Docker has no CPU limit when omitted. Firecracker rounds up to whole vCPUs and defaults to one. Negative values are rejected. |
+| `memory_bytes` | Memory limit in bytes. Docker has no memory limit when omitted. Firecracker uses its configured default and rounds up to MiB. |
 | `egress` | Whether the container has network access. Defaults to `false`. |
 | `timeout_seconds` | Execution timeout in whole seconds. Zero or omitted means 600. Allowed values are 1 to 3600. |
 | `artifact_paths` | Up to 16 absolute paths inside the container. Each must have a unique base name. Root, dot base names and paths containing a NUL byte are rejected. |
@@ -175,6 +173,14 @@ Configure runs in the agent config:
 runs:
   workers: 2
   egress_subnet: ""
+  firecracker:
+    binary: firecracker
+    jailer: jailer
+    kernel: ""
+    state_dir: /var/lib/flatrun/firecracker
+    chroot_base_dir: /srv/jailer
+    guest_init: ""
+    default_memory: 268435456
 ```
 
 `runs.workers` sets the number of concurrent workers. Values at or below zero
@@ -183,5 +189,39 @@ use the default of 2. The waiting queue holds 128 runs.
 `runs.egress_subnet` supplies a CIDR when creating the egress bridge. Empty lets
 Docker choose the subnet. It does not change an existing bridge.
 
-If the Docker runtime or run storage cannot initialize, run endpoints return
-`503` after authorization. The server continues to initialize its other routes.
+`GET /api/runs/runtimes` requires `runs.read` and returns an `items` array of
+objects with `type`, `available`, and an optional `reason`. Unknown runtime
+values return `400`. A known runtime that is unavailable returns `503` with its
+availability reason. One unavailable runtime does not disable another.
+
+Firecracker stays disabled until `kernel` names a readable guest kernel.
+It requires Linux with pidfd support (5.3 or newer), root, `/dev/kvm`, matching
+static Firecracker and jailer binaries, `mkfs.ext4`, `ip`, `iptables`, and
+`ip6tables`. The guest kernel must support ext4, virtio block, virtio vsock,
+virtio net, and IP autoconfiguration (`CONFIG_IP_PNP`). Build the static init
+with `make guest-init`. Install it beside the agent, or set `guest_init` to its
+absolute path. `default_memory` is in bytes and defaults to 256 MiB.
+
+The runtime exports an OCI image through Docker and caches an ext4 filesystem
+by image digest and init content. Each instance receives its own writable
+reflink clone when supported, with a sparse copy as fallback. Kernels are
+cached read-only and hard linked into jails on the same filesystem. VM API and
+vsock sockets live in a scoped jail below `/srv/jailer` so their paths fit the
+Unix socket limit. Set `chroot_base_dir` to change this base; its filesystem
+must allow device nodes (`nodev` must be absent). Instance metadata lives below
+`state_dir` and is written before allocating resources. Startup cleanup uses
+that metadata and acts only on the agent's scope.
+
+Without egress the VM has no network device. Egress requires IPv4 forwarding
+already enabled on the host. Each tap receives a free `/30` subnet from
+`100.64.0.0/10`, excluding existing host routes. Outbound IPv4 uses NAT.
+Firewall rules deny host access, private destinations, traffic between VM
+taps, and IPv6. Teardown removes the per-instance rules and tap.
+
+The guest stays alive after the command exits or is stopped so artifacts can
+be collected. Stop signals the command's process group and other guest
+processes, then escalates to SIGKILL after the grace period. Destroy removes
+the VM process, jail, sockets, filesystem copy, tap, and instance metadata.
+
+If run storage cannot initialize, run endpoints return `503` after
+authorization. Other routes continue to initialize.

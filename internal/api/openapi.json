@@ -9591,6 +9591,20 @@
         "x-permission": "runs:write"
       }
     },
+    "/api/runs/runtimes": {
+      "get": {
+        "operationId": "get-runs-runtimes",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "runs"
+        ],
+        "x-permission": "runs:read"
+      }
+    },
     "/api/runs/{id}": {
       "delete": {
         "operationId": "delete-runs-by-id",

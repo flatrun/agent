@@ -1,5 +1,6 @@
 # Binaries
 flatrun-agent
+flatrun-guest-init
 /agent
 flatrun-linux-*
 *.exe

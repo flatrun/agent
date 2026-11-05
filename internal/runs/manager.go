@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 )
 
 var ErrQueueFull = errors.New("run queue is full")
+
+var knownRuntimeTypes = []runtimes.Type{runtimes.TypeDocker, runtimes.TypeFirecracker}
 
 var ErrClosed = errors.New("runs manager is closed")
 
@@ -28,17 +31,18 @@ type pending struct {
 }
 
 type Manager struct {
-	Store   *Store
-	root    string
-	runtime runtimes.Runtime
-	mu      sync.Mutex
-	queue   chan *pending
-	active  map[string]*pending
-	closed  bool
-	wg      sync.WaitGroup
+	Store          *Store
+	root           string
+	runtimes       map[runtimes.Type]runtimes.Runtime
+	recoveryErrors map[runtimes.Type]error
+	mu             sync.Mutex
+	queue          chan *pending
+	active         map[string]*pending
+	closed         bool
+	wg             sync.WaitGroup
 }
 
-func NewManager(root string, runtime runtimes.Runtime, workers int) (*Manager, error) {
+func NewManager(root string, runtime runtimes.Runtime, workers int, additional ...runtimes.Runtime) (*Manager, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	store, err := NewStore(root)
@@ -54,29 +58,42 @@ func NewManager(root string, runtime runtimes.Runtime, workers int) (*Manager, e
 	if err := store.Recover(); err != nil {
 		return nil, err
 	}
-	if err := runtime.Available(ctx); err != nil {
-		return nil, err
+	runtimeMap := map[runtimes.Type]runtimes.Runtime{}
+	for _, rt := range append([]runtimes.Runtime{runtime}, additional...) {
+		runtimeMap[rt.Type()] = rt
 	}
-	if cleaner, ok := runtime.(runtimes.LeftoverCleaner); ok {
-		ids, err := cleaner.Leftovers(ctx)
-		if err != nil {
-			return nil, err
+	recoveryErrors := map[runtimes.Type]error{}
+	for _, kind := range knownRuntimeTypes {
+		rt, ok := runtimeMap[kind]
+		if !ok {
+			continue
 		}
-		for _, id := range ids {
-			if err := cleaner.DestroyByID(ctx, id); err != nil {
-				return nil, err
+		if cleaner, ok := rt.(runtimes.LeftoverCleaner); ok {
+			ids, err := cleaner.Leftovers(ctx)
+			if err != nil {
+				recoveryErrors[kind] = err
+				continue
 			}
+			for _, id := range ids {
+				if err := cleaner.DestroyByID(ctx, id); err != nil {
+					recoveryErrors[kind] = errors.Join(recoveryErrors[kind], err)
+				}
+			}
+		}
+		if err := rt.Available(ctx); err != nil {
+			log.Printf("Run runtime %s: %v", kind, err)
 		}
 	}
 	if workers <= 0 {
 		workers = 2
 	}
 	manager := &Manager{
-		Store:   store,
-		root:    filepath.Join(root, ".flatrun", "runs"),
-		runtime: runtime,
-		queue:   make(chan *pending, 128),
-		active:  map[string]*pending{},
+		Store:          store,
+		root:           filepath.Join(root, ".flatrun", "runs"),
+		runtimes:       runtimeMap,
+		recoveryErrors: recoveryErrors,
+		queue:          make(chan *pending, 128),
+		active:         map[string]*pending{},
 	}
 	for range workers {
 		manager.wg.Add(1)
@@ -88,6 +105,9 @@ func NewManager(root string, runtime runtimes.Runtime, workers int) (*Manager, e
 
 func (m *Manager) Submit(owner int64, username string, spec Spec, secrets map[string]string) (*Run, error) {
 	if err := spec.Validate(); err != nil {
+		return nil, err
+	}
+	if err := m.CheckRuntime(context.Background(), spec.Runtime); err != nil {
 		return nil, err
 	}
 	environment := map[string]string{}
@@ -285,7 +305,7 @@ func (m *Manager) startRun(ctx context.Context, queued *pending, run *Run) (runt
 	clear(queued.secrets)
 	queued.secrets = nil
 	defer clear(environment)
-	instance, err := m.runtime.Create(ctx, runtimes.Spec{
+	instance, err := m.runtimes[run.Runtime].Create(ctx, runtimes.Spec{
 		Image:     run.Spec.Image,
 		Command:   run.Spec.Command,
 		Env:       environment,
@@ -377,4 +397,44 @@ func (m *Manager) collectArtifacts(run *Run, instance runtimes.Instance, directo
 		}
 		run.Artifacts = append(run.Artifacts, Artifact{Name: name, Size: size})
 	}
+}
+
+var ErrUnknownRuntime = errors.New("unknown runtime")
+
+type RuntimeStatus struct {
+	Type      runtimes.Type `json:"type"`
+	Available bool          `json:"available"`
+	Reason    string        `json:"reason,omitempty"`
+}
+
+func (m *Manager) CheckRuntime(ctx context.Context, kind runtimes.Type) error {
+	rt, ok := m.runtimes[kind]
+	if !ok {
+		for _, known := range knownRuntimeTypes {
+			if known == kind {
+				return fmt.Errorf("%w: %s: not configured on this node", runtimes.ErrUnavailable, kind)
+			}
+		}
+		return fmt.Errorf("%w: %s", ErrUnknownRuntime, kind)
+	}
+	if err := m.recoveryErrors[kind]; err != nil {
+		return fmt.Errorf("%w: %s recovery: %v", runtimes.ErrUnavailable, kind, err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return rt.Available(ctx)
+}
+
+func (m *Manager) Runtimes(ctx context.Context) []RuntimeStatus {
+	result := []RuntimeStatus{}
+	for _, kind := range knownRuntimeTypes {
+		status := RuntimeStatus{Type: kind, Available: true}
+		if err := m.CheckRuntime(ctx, kind); err != nil {
+			status.Available = false
+			status.Reason = err.Error()
+		}
+		result = append(result, status)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Type < result[j].Type })
+	return result
 }
