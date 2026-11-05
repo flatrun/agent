@@ -1,231 +1,187 @@
 # Runtimes and runs
 
-## Goal
+## What they are
 
-FlatRun deploys long running Compose services as Docker containers. Two new types of work need more than that:
+A **runtime** creates, starts and destroys an isolated instance. Runs pick one
+with the `runtime` field. Docker is one runtime, and it is the only one
+available today: each instance is one container. Other runtimes, such as a
+Firecracker microVM, plug in behind the same interface. Docker shares the host
+kernel, so it is not an isolation boundary for untrusted code. Use it only for
+trusted code. `docs/VM_RUNTIMES_PLAN.md` describes the planned VM runtimes.
 
-1. **Untrusted, run to completion work.** A CI job clones a repository, builds and starts the application, drives a browser against it and uploads what it produced. The code is not the operator's, so it must not share a kernel with anything else.
-2. **Long running services in virtual machines.** A service that should be isolated from its neighbours by a VM boundary, but otherwise deploys, routes and rolls back like any other service.
+A **run** executes work once, records its result and collects its output. For
+example, a run can build a project, run a browser test or generate a report.
+It has a timeout and can save files as artifacts before its container is removed.
 
-Both need a VM runtime underneath. They differ in how long the work lives. This plan keeps those two questions apart.
+Three layers describe the work:
 
-## Model
-
-Three independent choices describe any workload:
-
-| Layer | Question | Options |
+| Layer | Question | Current behaviour |
 | --- | --- | --- |
-| Runtime | What isolates the code | Docker container (today), Firecracker microVM (new) |
-| Lifecycle | How long it lives and what success means | Service (today), Run (new) |
-| Placement | Which node it lands on | Standalone, Swarm, k3s (today, `orchestrator.Provider`) |
+| Runtime | What executes the code? | Docker container |
+| Lifecycle | How long does the work live? | A run executes once and records its outcome |
+| Placement | Where does it execute? | Runs execute on the receiving agent; deployment placement is unchanged |
 
-A **service** has a desired state: it is kept running, restarted, health checked, routed and rolled back. This is what a deployment is today.
+Runs use the runtime interface. Existing Compose deployments keep their own
+execution path.
 
-A **run** executes once to completion. It has a hard timeout, collects artifacts before teardown, and is always destroyed afterwards, whatever its outcome.
+## Creating a run
 
-Every runtime serves every lifecycle:
+Send a JSON object to `POST /api/runs`. The fields are at the top level, not
+inside `spec`.
 
-| | Docker | Firecracker |
-| --- | --- | --- |
-| Service | Deployments today | Services in VMs |
-| Run | Trusted one off work | CI jobs, untrusted code |
+| Field | Meaning and default |
+| --- | --- |
+| `runtime` | `docker` is the only value accepted today. Omitted or empty means `docker`. |
+| `image` | Required, non-empty image reference. A missing local image is pulled. |
+| `command` | Array of command arguments passed as the container command. |
+| `env` | Map of environment variable names to values. Stored in the run record. |
+| `secret_env` | Map of environment variable names to secret values. Overrides matching names in `env` when the instance is created. |
+| `workdir` | Working directory inside the container. |
+| `cpus` | CPU limit, for example `1.5`. Zero or omitted means no CPU limit. Negative values are rejected. |
+| `memory_bytes` | Memory limit in bytes. Zero or omitted means no memory limit. |
+| `egress` | Whether the container has network access. Defaults to `false`. |
+| `timeout_seconds` | Execution timeout in whole seconds. Zero or omitted means 600. Allowed values are 1 to 3600. |
+| `artifact_paths` | Up to 16 absolute paths inside the container. Each must have a unique base name. Root, dot base names and paths containing a NUL byte are rejected. |
 
-Placement is unchanged by this plan. A node advertises which runtimes it has, and placement only offers it work it can run.
+The request body is limited to 1 MiB. Invalid JSON or an invalid spec returns
+`400`. A queued run returns `202` with its run record. A full queue or a closed
+run manager returns `503`.
 
-## Constraints
+For example, this request writes a report and saves it as an artifact:
 
-- A project stays a directory with a Compose file. A service chooses its runtime with the `runtime` field the Compose spec already defines (`ServiceConfig.Runtime` in compose-go). A project must keep working under plain `docker compose` on any host where that runtime is installed.
-- "Job" already names the in-memory action jobs on deployments (`internal/api/jobs.go`), and "task" names scheduler entries. The new lifecycle is called a **run** and lives under `/api/runs`.
-- Firecracker needs `/dev/kvm`: bare metal, or a host that exposes nested virtualisation.
-- A run may execute untrusted code. Nothing from the host enters it except what its spec lists. Outbound network is denied by default and opened per run. Secrets are passed when the run starts and are never written to the run record.
-- Runs get their own permissions (`runs:read`, `runs:write`), following the authorization rules in `AGENTS.md`. Placing runs across the fleet adds a cluster capability (`runs.execute`) in Phase 5.
-- Existing deployments, their API and their on-disk layout do not change.
-
-## Interfaces
-
-### Runtime
-
-The runtime knows how to create, run and destroy one isolated instance. It knows nothing about services, runs, routing or schedules. It lives in `internal/runtimes`.
-
-```go
-package runtimes
-
-type Type string
-
-const (
-	TypeDocker      Type = "docker"
-	TypeFirecracker Type = "firecracker"
-)
-
-type Spec struct {
-	Image     string // OCI reference; Firecracker builds a root filesystem from it
-	Command   []string
-	Env       map[string]string
-	WorkDir   string
-	Resources Resources // CPUs and memory bytes; zero means no limit
-	Network   Network   // no network unless Egress is set
-	Labels    map[string]string
-}
-
-type Runtime interface {
-	Type() Type
-	Available(ctx context.Context) error // explains why not, e.g. no /dev/kvm
-	Create(ctx context.Context, spec Spec) (Instance, error)
-}
-
-type Instance interface {
-	ID() string
-	Start(ctx context.Context) error
-	Wait(ctx context.Context) (Exit, error)
-	Logs(ctx context.Context, follow bool) (io.ReadCloser, error)
-	CopyOut(ctx context.Context, path string) (io.ReadCloser, error) // tar stream
-	Stop(ctx context.Context, grace time.Duration) error
-	Destroy(ctx context.Context) error // removes every resource the instance created
-}
-
-// Implemented by runtimes that can find instances a previous process left behind.
-type LeftoverCleaner interface {
-	Leftovers(ctx context.Context) ([]string, error)
-	DestroyByID(ctx context.Context, id string) error
+```json
+{
+  "runtime": "docker",
+  "image": "alpine:3.21",
+  "command": ["sh", "-c", "mkdir -p /out; echo complete > /out/report.txt"],
+  "egress": false,
+  "timeout_seconds": 60,
+  "artifact_paths": ["/out/report.txt"]
 }
 ```
 
-Every instance carries two labels: its own ID and a scope. The agent sets the scope from a hash of its deployments path, so `Leftovers` and `DestroyByID` only ever touch instances of the agent that created them, even when several agents share one Docker daemon.
+## API
 
-Docker networking:
+| Method and path | Permission | Behaviour |
+| --- | --- | --- |
+| `POST /api/runs` | `runs:write` | Queue a run. |
+| `GET /api/runs` | `runs:read` | List visible runs, newest first, in an `items` array. |
+| `GET /api/runs/:id` | `runs:read` | Read a run record. |
+| `GET /api/runs/:id/logs` | `runs:read` | Read output as plain text. `follow=true` streams until the run finishes or the client disconnects. |
+| `GET /api/runs/:id/artifacts/:name` | `runs:read` | Download a collected artifact as a tar archive. |
+| `DELETE /api/runs/:id` | `runs:write` | Request cancellation and return the current record. Does not delete stored data. |
 
-- An instance without egress gets no network at all (`none`).
-- Instances with egress share one bridge, `flatrun-runs-egress`, with traffic between containers disabled. Instances cannot reach each other, and the node does not spend an address pool per instance. On a host whose default pools are used up, `runs.egress_subnet` pins the bridge to a free CIDR.
+The list accepts `limit`, which defaults to 100. Values above 500 are capped at
+500. Non-integer values and values below 1 return `400`.
 
-Containers share the host kernel, so the Docker runtime is not a boundary for untrusted code. It serves trusted runs and is the reference the Firecracker runtime must match.
+A record contains `id`, `owner_user_id`, `owner_username`, `runtime`, `spec`,
+`status`, `exit_code`, `artifacts` and `created_at`. It also contains `error` when
+non-empty, `started_at` when the instance has started and `finished_at` when the
+run has finished. `exit_code` is null until an exit code is recorded. Each
+artifact has a `name` and a `size` in bytes.
 
-Planned for Phase 3, once Firecracker exists: `Exec`, explicit mounts, and a `Snapshotter` for runtimes that can boot from a saved memory image.
+## Permissions and visibility
 
-### Run
+Admins and operators have `runs:read` and `runs:write` by default. Viewers have
+`runs:read`. Permissions control the operation; ownership controls which runs
+are visible.
 
-A run is a runtime instance plus a lifecycle: queued, started, watched, timed out, harvested, destroyed. It lives in `internal/runs`.
+A run belongs to the submitting user. An actor with the effective `admin` role
+can see all runs unless its API key has deployment restrictions. All other
+actors see only runs owned by their user ID. An API key's non-empty role becomes
+the effective role; otherwise the user's role applies.
 
-```go
-package runs
+These rules apply to listing, reading, logs, artifacts and cancellation. A run
+outside the actor's view returns `404`, as does a missing run. A deployment
+restriction on an admin API key removes access to other users' runs; it does not
+associate runs with those deployments.
 
-type Spec struct {
-	Runtime        runtimes.Type // docker today
-	Image          string
-	Command        []string
-	Env            map[string]string
-	WorkDir        string
-	CPUs           float64
-	MemoryBytes    uint64
-	Egress         bool
-	TimeoutSeconds int      // whole run, image pull included; default 600, at most 3600
-	ArtifactPaths  []string // absolute, at most 16, unique base names
-}
+## Lifecycle
 
-type Status string
+| Status | Meaning |
+| --- | --- |
+| `queued` | Waiting for a worker. |
+| `starting` | Creating and starting the instance. |
+| `running` | The instance has started. |
+| `succeeded` | The process exited with code zero and log collection and cleanup succeeded. Artifact collection can still report an error. |
+| `failed` | A non-zero exit, execution error, log collection failure, cleanup failure or restart recovery. |
+| `timed_out` | The execution timeout expired. Cleanup failure can change this to `failed`. |
+| `cancelled` | Cancellation was processed. Cleanup failure can change this to `failed`. |
 
-const (
-	StatusQueued    Status = "queued"
-	StatusStarting  Status = "starting"
-	StatusRunning   Status = "running"
-	StatusSucceeded Status = "succeeded"
-	StatusFailed    Status = "failed"
-	StatusTimedOut  Status = "timed_out"
-	StatusCancelled Status = "cancelled"
-)
+The timeout starts when a worker takes the run, before image setup. Time spent
+in the queue does not count. Log collection, artifact collection and container
+cleanup use separate deadlines, so finalization can outlast the execution timeout.
+
+Cancellation stops active work. A cancelled queued run does not start.
+Cancellation of a finished run leaves it unchanged. Cancellation of active work
+can finish after the DELETE response, so read the record again for its final
+status.
+
+After execution, the agent collects logs and requested artifacts, then attempts
+to remove the container. Runtime errors are recorded in `error`. Artifact
+collection errors do not change the execution status. For example, a run can
+remain `succeeded` when a requested file is missing. Log collection or container
+cleanup failure can change a successful run to `failed`.
+
+On startup, stored `queued`, `starting` and `running` records become `failed`
+with `error: "agent restarted"`. The agent then removes leftover containers in
+its runtime scope. It does not resume those runs.
+
+## Network and container settings
+
+With `egress: false`, the container uses Docker's `none` network. With
+`egress: true`, it joins the shared bridge `flatrun-runs-egress`. When creating
+that bridge, the agent disables inter-container communication. An existing
+bridge with that name is reused without changing its settings.
+
+Containers have no host mounts, use `no-new-privileges` and have a process limit
+of 1024. Inputs come from the image, command and environment.
+
+Each container has `dev.flatrun.runtime.instance` and
+`dev.flatrun.runtime.scope` labels. The scope is derived from the absolute
+deployments path. Leftover discovery and removal filter by that scope, so agents
+with different deployments paths do not clean up each other's containers.
+
+## Secrets and audit
+
+`secret_env` is kept in memory for instance creation. It is not included in the
+run record or run database. Values supplied in `env` are stored, even if the
+same name also appears in `secret_env`.
+
+Exact non-empty secret values are replaced with `[REDACTED]` in collected output
+and runtime error messages. Artifacts are copied without redaction. Do not write
+secrets into files requested as artifacts.
+
+Run routes use audit capture without request bodies. Events depend on the
+audit configuration and successful audit initialization.
+
+## Storage and configuration
+
+Run records are stored in SQLite. Logs and artifacts stay on the receiving node:
+
+```text
+<deployments_path>/.flatrun/runs.db
+<deployments_path>/.flatrun/runs/<id>/output.log
+<deployments_path>/.flatrun/runs/<id>/artifacts/<base-name>.tar
 ```
 
-| Method and path | Permission | Does |
-| --- | --- | --- |
-| `POST /api/runs` | `runs:write` | Queues a run |
-| `GET /api/runs` | `runs:read` | Lists runs, newest first; `limit` defaults to 100, at most 500 |
-| `GET /api/runs/:id` | `runs:read` | Status, exit code, error, timings, artifact list |
-| `GET /api/runs/:id/logs` | `runs:read` | Output as text; `follow=true` streams until the run ends |
-| `GET /api/runs/:id/artifacts/:name` | `runs:read` | Downloads one artifact as a tar archive |
-| `DELETE /api/runs/:id` | `runs:write` | Cancels a queued or running run |
+Each collected path becomes a tar archive named from its base name. For example,
+`/out/report.txt` becomes `report.txt.tar`. Finished run records, logs and
+artifacts are not cleaned up automatically.
 
-Behaviour:
+Configure runs in the agent config:
 
-- **Ownership.** A run belongs to the user who submitted it. Only an admin whose credential carries no deployment restriction sees every run; everyone else, including an admin's API key limited to some deployments, sees only their own. A run outside the actor's view answers 404, the same as a missing one. The effective role is the API key's role when a key is used, so a key can narrow its user's view but never widen it.
-- **Secrets.** `secret_env` in the request is merged into the instance environment at start. Its values are never written to the run record, the database or the audit log (run routes are audited without bodies), and they are masked as `[REDACTED]` in the output and in error messages.
-- **Storage.** Records live in SQLite at `<deployments>/.flatrun/runs.db`. Output and artifacts live in `<deployments>/.flatrun/runs/<id>/`.
-- **Restarts.** On start the agent marks every unfinished run `failed` with "agent restarted" and destroys its own leftover instances.
-- **Failures.** A failed run carries the runtime's error, for example the image pull error. A run that succeeded but could not collect a requested artifact keeps `succeeded` and records the missing path in `error`.
-- **Unavailable runtime.** If the runtime or storage cannot start, run endpoints answer 503 and the rest of the agent keeps working.
-- **Configuration.** `runs.workers` (default 2) sets how many runs execute at once. Further runs wait in a queue of 128.
+```yaml
+runs:
+  workers: 2
+  egress_subnet: ""
+```
 
-### Services on a VM runtime
+`runs.workers` sets the number of concurrent workers. Values at or below zero
+use the default of 2. The waiting queue holds 128 runs.
 
-Two ways to give a Compose service a VM boundary. Phase 0 decides between them.
+`runs.egress_subnet` supplies a CIDR when creating the egress bridge. Empty lets
+Docker choose the subnet. It does not change an existing bridge.
 
-- **A: VM backed container runtime.** Kata Containers, configured with Firecracker as its hypervisor, is registered as a Docker runtime on the node. A service sets `runtime: kata-fc`. The deployment code path is unchanged: FlatRun validates that the node has the runtime and places the service accordingly.
-- **B: FlatRun drives Firecracker itself.** The service lifecycle gains a second backend beside `docker compose`, built on the runtime interface above.
-
-A is preferred. It keeps the Compose file as the source of truth and keeps the project portable.
-
-## Phases
-
-Each phase merges on its own and leaves existing deployments untouched.
-
-### 0. Spike on one KVM host
-
-Answer, with measurements:
-
-- Cold boot time and boot time from a snapshot.
-- Memory overhead of an idle microVM.
-- Whether a Docker daemon runs inside a microVM, for runs that start a Compose backend.
-- Whether headless Chrome runs inside a microVM.
-- Whether Kata with Firecracker, registered as a Docker runtime, runs an existing FlatRun project with one service switched by `runtime:`.
-
-Output: the numbers, and a choice between A and B for services.
-
-### 1. Runtime interface, Docker implementation
-
-Built. The `runtimes` package with a Docker implementation. Only runs use it; deployments keep their current path.
-
-Covered by tests against Docker: a run to completion with logs and a copied out file, a non zero exit, stop of a long running instance, no network by default, instances on the egress bridge unable to reach each other, removal of leftovers, and cleanup that leaves another scope's running instance alone.
-
-### 2. Runs on Docker
-
-Built: run storage, queue, timeout, cancellation, log streaming, local artifacts, secrets, permissions, and the Runs page in the UI.
-
-Covered by tests through HTTP:
-
-- A run that writes a file and exits reports `succeeded`, and the file downloads as an artifact.
-- A run past its timeout is killed and reports `timed_out`, including one still stuck in setup.
-- A cancelled run stops and reports `cancelled`; a cancelled queued run never starts.
-- Each user sees and cancels only their own runs, and an API key scoped narrower than its user cannot widen it.
-- A secret value never appears in the run JSON, the record, the output or the audit log.
-- A run whose image does not exist reports `failed` with the pull error.
-
-Not built yet: upload of artifacts to an object store (`docs/OBJECT_STORES.md`), the final status webhook, retention of old runs, and the `runs.execute` cluster capability, which belongs to Phase 5.
-
-### 3. Firecracker runtime
-
-Root filesystem built from an OCI image and cached, jailer, tap networking with a default deny policy, optional snapshot pool. Nodes advertise the runtime when `Available` succeeds.
-
-Done when:
-
-- The phase 2 tests pass with `runtime: firecracker`.
-- A run that starts headless Chrome and saves a screenshot succeeds.
-- After every run, no VM process, tap device, socket or root filesystem copy remains.
-- A run cannot reach the host, the node's other runs, or the network beyond its policy.
-
-### 4. Services on a VM runtime
-
-Path A or B, as Phase 0 decided. The UI offers a runtime per service, limited to runtimes the target node has.
-
-Done when: a Compose service on the VM runtime deploys, routes over HTTPS, restarts on failure and rolls back like a container service.
-
-### 5. Runs across the fleet
-
-The cluster places runs on nodes that have the runtime, the capacity and the `runs.execute` capability, and queues them when none has room.
-
-Done when: runs submitted to one node execute on a peer that has capacity, and their logs and artifacts are reachable from the submitting node.
-
-## Open questions
-
-- Root filesystem format: an ext4 image per OCI image, cached, or a devmapper thin pool.
-- Whether runs also use Kata, if Phase 0 shows it meets the boot time and teardown needs, or always use FlatRun's own Firecracker runtime.
-- Usage metering per run (CPU seconds, memory, wall time) for operators who bill for runs.
-- Secrets by reference to the secrets store, alongside inline `secret_env`.
-- How long finished runs, their output and their artifacts are kept on the node.
+If the Docker runtime or run storage cannot initialize, run endpoints return
+`503` after authorization. The server continues to initialize its other routes.
