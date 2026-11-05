@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	cryptoRand "crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -52,6 +53,8 @@ import (
 	"github.com/flatrun/agent/internal/pluginhost"
 	"github.com/flatrun/agent/internal/proxy"
 	"github.com/flatrun/agent/internal/routing"
+	"github.com/flatrun/agent/internal/runs"
+	"github.com/flatrun/agent/internal/runtimes"
 	"github.com/flatrun/agent/internal/scheduler"
 	"github.com/flatrun/agent/internal/secrets"
 	"github.com/flatrun/agent/internal/security"
@@ -109,6 +112,7 @@ type Server struct {
 	trafficManager     *traffic.Manager
 	dashboards         *dashboards.Store
 	backupManager      *backup.Manager
+	runsManager        *runs.Manager
 	schedulerManager   *scheduler.Manager
 	auditManager       *audit.Manager
 	secretStore        *secrets.Store
@@ -482,6 +486,20 @@ func New(cfg *config.Config, configPath string) *Server {
 		}
 	}
 
+	runtime, runErr := runtimes.NewDockerWithHost(cfg.DockerSocket)
+	if runErr == nil {
+		var deploymentsPath string
+		deploymentsPath, runErr = filepath.Abs(cfg.DeploymentsPath)
+		if runErr == nil {
+			scopeHash := sha256.Sum256([]byte(deploymentsPath))
+			runtime.Scope = fmt.Sprintf("%x", scopeHash[:12])
+			runtime.EgressSubnet = cfg.Runs.EgressSubnet
+			s.runsManager, runErr = runs.NewManager(cfg.DeploymentsPath, runtime, cfg.Runs.Workers)
+		}
+	}
+	if runErr != nil {
+		log.Printf("Warning: runs unavailable: %v", runErr)
+	}
 	s.setupRoutes()
 
 	return s
@@ -547,6 +565,7 @@ func (s *Server) setupRoutes() {
 		}
 		s.registerWorkspaceRoutes(bodiless)
 		s.registerSecretRoutes(bodiless)
+		s.registerRunRoutes(bodiless)
 		{
 			// Deployment endpoints
 			protected.GET("/deployments", s.authMiddleware.RequirePermission(auth.PermDeploymentsRead), s.listDeployments)
@@ -1103,6 +1122,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	if s.runsManager != nil {
+		_ = s.runsManager.Close()
+	}
 	if s.sleepCancel != nil {
 		s.sleepCancel()
 	}
