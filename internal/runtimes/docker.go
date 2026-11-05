@@ -156,8 +156,6 @@ func decodeImagePull(stream io.Reader) error {
 	return jsonmessage.DisplayJSONMessagesStream(stream, io.Discard, 0, false, nil)
 }
 
-// Leftovers lists the IDs of instances that still have a container, so they
-// can be destroyed after the agent restarts.
 func (d *Docker) Leftovers(ctx context.Context) ([]string, error) {
 	f := filters.NewArgs(filters.Arg("label", Label), filters.Arg("label", ScopeLabel+"="+d.Scope))
 	containers, err := d.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
@@ -172,8 +170,6 @@ func (d *Docker) Leftovers(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// DestroyByID removes whatever is left of an instance this process no longer
-// holds a handle to.
 func (d *Docker) DestroyByID(ctx context.Context, id string) error {
 	f := filters.NewArgs(filters.Arg("label", Label+"="+id), filters.Arg("label", ScopeLabel+"="+d.Scope))
 	containers, err := d.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})

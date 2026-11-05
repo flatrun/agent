@@ -17,7 +17,6 @@ const (
 	KindFirecracker Kind = "firecracker"
 )
 
-// ErrUnavailable wraps the reason a runtime cannot run anything on this node.
 var ErrUnavailable = errors.New("runtime unavailable")
 
 type Resources struct {
@@ -25,8 +24,6 @@ type Resources struct {
 	Memory uint64  `json:"memory,omitempty"`
 }
 
-// Network is denied unless Egress is set. Instances never share a network
-// with each other or with deployments.
 type Network struct {
 	Egress bool `json:"egress,omitempty"`
 }
