@@ -9470,6 +9470,250 @@
         "x-permission": "registries:write"
       }
     },
+    "/api/runs": {
+      "get": {
+        "operationId": "get-runs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "runs"
+        ],
+        "x-permission": "runs:read"
+      },
+      "post": {
+        "operationId": "post-runs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "artifact_paths": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "command": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "cpus": {
+                    "type": "number"
+                  },
+                  "egress": {
+                    "type": "boolean"
+                  },
+                  "env": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "image": {
+                    "type": "string"
+                  },
+                  "memory_bytes": {
+                    "type": "integer"
+                  },
+                  "runtime": {
+                    "type": "string"
+                  },
+                  "secret_env": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "timeout_seconds": {
+                    "type": "integer"
+                  },
+                  "workdir": {
+                    "type": "string"
+                  }
+                },
+                "type": "object",
+                "x-columns": [
+                  "runtime",
+                  "image",
+                  "workdir",
+                  "cpus",
+                  "memory_bytes",
+                  "egress",
+                  "timeout_seconds"
+                ],
+                "x-property-order": [
+                  "runtime",
+                  "image",
+                  "command",
+                  "env",
+                  "workdir",
+                  "cpus",
+                  "memory_bytes",
+                  "egress",
+                  "timeout_seconds",
+                  "artifact_paths",
+                  "secret_env"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runs.Run"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "runs"
+        ],
+        "x-permission": "runs:write"
+      }
+    },
+    "/api/runs/{id}": {
+      "delete": {
+        "operationId": "delete-runs-by-id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runs.Run"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "runs"
+        ],
+        "x-permission": "runs:write"
+      },
+      "get": {
+        "operationId": "get-runs-by-id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runs.Run"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "runs"
+        ],
+        "x-permission": "runs:read"
+      }
+    },
+    "/api/runs/{id}/artifacts/{name}": {
+      "get": {
+        "operationId": "get-runs-by-id-artifacts-by-name",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "runs"
+        ],
+        "x-permission": "runs:read"
+      }
+    },
+    "/api/runs/{id}/logs": {
+      "get": {
+        "operationId": "get-runs-by-id-logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "follow",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "runs"
+        ],
+        "x-permission": "runs:read"
+      }
+    },
     "/api/scheduler/executions": {
       "get": {
         "operationId": "get-scheduler-executions",
@@ -18207,6 +18451,163 @@
           "domain",
           "path",
           "protocol"
+        ]
+      },
+      "runs.Artifact": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "name",
+          "size"
+        ],
+        "x-columns": [
+          "name",
+          "size"
+        ]
+      },
+      "runs.Run": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/runs.Artifact"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "owner_user_id": {
+            "type": "integer"
+          },
+          "owner_username": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/runs.Spec"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "owner_user_id",
+          "owner_username",
+          "runtime",
+          "spec",
+          "status",
+          "exit_code",
+          "error",
+          "artifacts",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ],
+        "x-columns": [
+          "id",
+          "owner_user_id",
+          "owner_username",
+          "runtime",
+          "status",
+          "exit_code",
+          "error",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ]
+      },
+      "runs.Spec": {
+        "type": "object",
+        "properties": {
+          "artifact_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cpus": {
+            "type": "number"
+          },
+          "egress": {
+            "type": "boolean"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "image": {
+            "type": "string"
+          },
+          "memory_bytes": {
+            "type": "integer"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer"
+          },
+          "workdir": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "runtime",
+          "image",
+          "command",
+          "env",
+          "workdir",
+          "cpus",
+          "memory_bytes",
+          "egress",
+          "timeout_seconds",
+          "artifact_paths"
+        ],
+        "x-columns": [
+          "runtime",
+          "image",
+          "workdir",
+          "cpus",
+          "memory_bytes",
+          "egress",
+          "timeout_seconds"
         ]
       },
       "scheduler.AgentTaskConfig": {

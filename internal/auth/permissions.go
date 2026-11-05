@@ -3,6 +3,8 @@ package auth
 type Permission string
 
 const (
+	PermRunsRead          Permission = "runs:read"
+	PermRunsWrite         Permission = "runs:write"
 	PermDeploymentsRead   Permission = "deployments:read"
 	PermDeploymentsWrite  Permission = "deployments:write"
 	PermDeploymentsDelete Permission = "deployments:delete"
@@ -100,6 +102,7 @@ const (
 )
 
 var adminPermissions = []Permission{
+	PermRunsRead, PermRunsWrite,
 	PermDeploymentsRead, PermDeploymentsWrite, PermDeploymentsDelete,
 	PermCertificatesRead, PermCertificatesWrite, PermCertificatesDelete,
 	PermNetworksRead, PermNetworksWrite, PermNetworksDelete,
@@ -131,6 +134,7 @@ var adminPermissions = []Permission{
 }
 
 var operatorPermissions = []Permission{
+	PermRunsRead, PermRunsWrite,
 	PermDeploymentsRead, PermDeploymentsWrite,
 	PermCertificatesRead, PermCertificatesWrite,
 	PermNetworksRead,
@@ -154,6 +158,7 @@ var operatorPermissions = []Permission{
 }
 
 var viewerPermissions = []Permission{
+	PermRunsRead,
 	PermDeploymentsRead,
 	PermCertificatesRead,
 	PermNetworksRead,

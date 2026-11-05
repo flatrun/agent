@@ -43,6 +43,11 @@ type CapacityConfig struct {
 	OfferToFleet               bool    `yaml:"offer_to_fleet" json:"offer_to_fleet"`
 }
 
+type RunsConfig struct {
+	Workers      int    `yaml:"workers" json:"workers"`
+	EgressSubnet string `yaml:"egress_subnet" json:"egress_subnet"`
+}
+
 type Config struct {
 	DeploymentsPath string               `yaml:"deployments_path"`
 	SystemFilesRoot string               `yaml:"system_files_root"`
@@ -61,6 +66,7 @@ type Config struct {
 	Cluster         ClusterConfig        `yaml:"cluster"`
 	Capacity        CapacityConfig       `yaml:"capacity"`
 	SystemTerminal  SystemTerminalConfig `yaml:"system_terminal"`
+	Runs            RunsConfig           `yaml:"runs" json:"runs"`
 	Cleanup         CleanupConfig        `yaml:"cleanup"`
 	Plans           PlansConfig          `yaml:"plans"`
 	AI              AIConfig             `yaml:"ai"`
@@ -370,6 +376,9 @@ func Load(path string) (*Config, error) {
 }
 
 func setDefaults(cfg *Config) {
+	if cfg.Runs.Workers <= 0 {
+		cfg.Runs.Workers = 2
+	}
 	if cfg.DeploymentsPath == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			cfg.DeploymentsPath = home + "/flatrun/deployments"
