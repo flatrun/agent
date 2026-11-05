@@ -168,7 +168,7 @@ func TestRunsHTTPCompletionArtifactsLogsAndSecrets(t *testing.T) {
 		}
 	}
 	if !waitFor(func() bool {
-		events, _, err := am.GetEvents(&audit.AuditFilter{Limit: 100})
+		events, _, err := am.GetEvents(&audit.AuditFilter{Action: "runs.create", Limit: 100})
 		if err != nil {
 			return false
 		}
