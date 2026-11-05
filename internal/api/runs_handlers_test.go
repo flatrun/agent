@@ -136,11 +136,13 @@ func awaitRun(t *testing.T, client workspaceClient, id, want string) map[string]
 		timeout = 10 * time.Minute
 	}
 	deadline := time.Now().Add(timeout)
+	var last map[string]any
 	for time.Now().Before(deadline) {
 		status, r := client.do("GET", "/runs/"+id, "", nil)
 		if status != http.StatusOK {
 			t.Fatalf("get = %d %v", status, r)
 		}
+		last = r
 		if r["status"] == want {
 			return r
 		}
@@ -149,7 +151,7 @@ func awaitRun(t *testing.T, client workspaceClient, id, want string) map[string]
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("run never reached %s", want)
+	t.Fatalf("run never reached %s after %s: %v", want, timeout, last)
 	return nil
 }
 
