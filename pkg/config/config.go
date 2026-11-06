@@ -50,6 +50,7 @@ type RunsConfig struct {
 }
 
 type Config struct {
+	Events          EventsConfig         `yaml:"events" json:"events"`
 	DeploymentsPath string               `yaml:"deployments_path"`
 	SystemFilesRoot string               `yaml:"system_files_root"`
 	DockerSocket    string               `yaml:"docker_socket"`
@@ -373,10 +374,14 @@ func Load(path string) (*Config, error) {
 	}
 
 	setDefaults(&cfg)
+	if err := cfg.Events.Validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
 func setDefaults(cfg *Config) {
+	cfg.Events.SetDefaults()
 	if cfg.Runs.Firecracker.Binary == "" {
 		cfg.Runs.Firecracker.Binary = "firecracker"
 	}

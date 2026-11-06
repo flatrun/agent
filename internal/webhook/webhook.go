@@ -27,6 +27,7 @@ const (
 // address the host gave for the repository, so it can be matched against the
 // one the deployment was created from.
 type Event struct {
+	Envelope *Envelope
 	Kind     EventKind
 	RepoURLs []string
 	Branch   string

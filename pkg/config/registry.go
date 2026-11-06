@@ -20,8 +20,11 @@ type Entry struct {
 }
 
 var hiddenKeys = map[string]bool{
-	"auth.jwt_secret": true,
-	"auth.api_keys":   true,
+	"auth.jwt_secret":                    true,
+	"events.endpoints":                   true,
+	"events.github_app.app_id":           true,
+	"events.github_app.private_key_file": true,
+	"auth.api_keys":                      true,
 }
 
 // sensitiveKeys are masked on read like hiddenKeys but stay writable
@@ -67,7 +70,7 @@ func Get(cfg *Config, key string) (Entry, error) {
 }
 
 func Set(cfg *Config, key string, raw interface{}) error {
-	if hiddenKeys[key] {
+	if hiddenKeys[key] || key == "events" || strings.HasPrefix(key, "events.") {
 		return fmt.Errorf("config key %q is not editable through this API", key)
 	}
 	field, err := resolveField(reflect.ValueOf(cfg).Elem(), reflect.TypeOf(*cfg), key)
