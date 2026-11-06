@@ -21,11 +21,12 @@ import (
 )
 
 type deliveryRecord struct {
-	ID      string    `json:"id"`
-	Source  string    `json:"source"`
-	Type    string    `json:"type"`
-	Time    time.Time `json:"time"`
-	Outcome string    `json:"outcome"`
+	ID            string            `json:"id"`
+	Source        string            `json:"source"`
+	Type          string            `json:"type"`
+	Time          time.Time         `json:"time"`
+	Outcome       string            `json:"outcome"`
+	Subscriptions map[string]string `json:"subscriptions"`
 }
 
 type deliveryState struct {
@@ -86,19 +87,34 @@ func (s *Server) receiveEvent(c *gin.Context) {
 	go func() {
 		defer state.wg.Done()
 		outcome := "ignored"
+		outcomes := make(map[string]string, len(record.Subscriptions))
+		for name, result := range record.Subscriptions {
+			outcomes[name] = result
+		}
 		for _, subscription := range s.config.Events.Subscriptions {
+			if len(record.Subscriptions) > 0 && record.Subscriptions[subscription.Name] == "" {
+				continue
+			}
+			if outcomes[subscription.Name] == "succeeded" {
+				if outcome != "failed" {
+					outcome = "succeeded"
+				}
+				continue
+			}
 			if !event.Matches(subscription.Source, subscription.Type, subscription.Attributes, subscription.Labels) {
 				continue
 			}
 			if err := s.actOnEvent(subscription, event); err != nil {
 				outcome = "failed"
+				outcomes[subscription.Name] = "failed"
 				continue
 			}
+			outcomes[subscription.Name] = "succeeded"
 			if outcome != "failed" {
 				outcome = "succeeded"
 			}
 		}
-		state.finish(record, outcome)
+		state.finish(record, outcome, outcomes)
 	}()
 	c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
 }
@@ -218,10 +234,14 @@ func (state *deliveryState) begin(event *webhook.Envelope, limit int) (*delivery
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	retry := -1
+	outcomes := map[string]string{}
 	for i, record := range state.records {
 		if record.ID == event.ID && record.Source == event.Source {
 			if record.Outcome != "failed" {
 				return nil, true, nil
+			}
+			for name, outcome := range record.Subscriptions {
+				outcomes[name] = outcome
 			}
 			retry = i
 			break
@@ -252,16 +272,17 @@ func (state *deliveryState) begin(event *webhook.Envelope, limit int) (*delivery
 			return nil, false, errors.New("event queue full")
 		}
 	}
-	record := &deliveryRecord{ID: event.ID, Source: event.Source, Type: event.Type, Time: event.Time, Outcome: "processing"}
+	record := &deliveryRecord{ID: event.ID, Source: event.Source, Type: event.Type, Time: event.Time, Outcome: "processing", Subscriptions: outcomes}
 	state.records = append(state.records, record)
 	state.active++
 	state.wg.Add(1)
 	return record, false, nil
 }
 
-func (state *deliveryState) finish(record *deliveryRecord, outcome string) {
+func (state *deliveryState) finish(record *deliveryRecord, outcome string, outcomes map[string]string) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	record.Outcome = outcome
+	record.Subscriptions = outcomes
 	state.active--
 }

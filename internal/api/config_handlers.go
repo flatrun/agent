@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/flatrun/agent/internal/ai"
+	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,16 @@ import (
 
 func (s *Server) listConfig(c *gin.Context) {
 	entries := config.Walk(s.config)
+	actor := auth.GetActorFromContext(c)
+	if actor == nil || !hasGlobalRunAccess(actor) {
+		filtered := make([]config.Entry, 0, len(entries))
+		for _, entry := range entries {
+			if !isEventsConfigKey(entry.Key) {
+				filtered = append(filtered, entry)
+			}
+		}
+		entries = filtered
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"config":  entries,
 		"runtime": s.runtimeConfigKeys(),
@@ -21,6 +32,9 @@ func (s *Server) listConfig(c *gin.Context) {
 
 func (s *Server) getConfigKey(c *gin.Context) {
 	key := normalizeConfigKey(c.Param("key"))
+	if isEventsConfigKey(key) && !globalEventsAccess(c) {
+		return
+	}
 	entry, err := config.Get(s.config, key)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -184,4 +198,8 @@ func (s *Server) runtimeConfigKeys() map[string]bool {
 
 func normalizeConfigKey(raw string) string {
 	return strings.Trim(raw, "/")
+}
+
+func isEventsConfigKey(key string) bool {
+	return key == "events" || strings.HasPrefix(key, "events.")
 }

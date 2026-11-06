@@ -239,7 +239,9 @@ func TestEventHTTPRunner(t *testing.T) {
 
 func TestEventReadHTTPAuthorization(t *testing.T) {
 	s, client := setupWorkspaceTestServer(t)
-	s.config.Events.Subscriptions = []config.EventSubscription{{Name: "private", Action: "notify"}}
+	s.config.Events.Subscriptions = []config.EventSubscription{{Name: "private", Action: "run", Run: config.EventRunSpec{Command: []string{"private-command"}, Env: map[string]string{"PRIVATE": "private-value"}}}}
+	s.config.Events.Endpoints = []config.EventEndpoint{{Name: "private-endpoint", Secret: "endpoint-secret"}}
+	s.config.Events.GitHubApp.PrivateKeyFile = "/private/app-key.pem"
 	admin := client.login("admin", "admin-pass")
 	for _, path := range []string{"/config/events", "/config/events.subscriptions"} {
 		status, _ := admin.do("PUT", path, "", map[string]any{"value": nil})
@@ -280,6 +282,54 @@ func TestEventReadHTTPAuthorization(t *testing.T) {
 			t.Fatalf("scoped admin key: %d", status)
 		}
 	}
+	for _, global := range []bool{false, true} {
+		reader := scoped
+		if global {
+			reader = admin
+		}
+		for _, path := range []string{"/config", "/config/events.subscriptions", "/config/events.endpoints", "/config/events.github_app.private_key_file"} {
+			status, body := reader.do("GET", path, "", nil)
+			if !global && path != "/config" {
+				if status != 403 {
+					t.Fatalf("scoped config read %s: %d %v", path, status, body)
+				}
+				continue
+			}
+			if status != 200 {
+				t.Fatalf("config read %s: %d %v", path, status, body)
+			}
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{"endpoint-secret", "/private/app-key.pem"} {
+				if bytes.Contains(raw, []byte(secret)) {
+					t.Fatalf("config exposed %s", secret)
+				}
+			}
+			if !global {
+				var listing struct {
+					Config []config.Entry `json:"config"`
+				}
+				if err := json.Unmarshal(raw, &listing); err != nil {
+					t.Fatal(err)
+				}
+				for _, entry := range listing.Config {
+					if strings.HasPrefix(entry.Key, "events.") {
+						t.Fatalf("scoped listing exposed %s", entry.Key)
+					}
+				}
+				if bytes.Contains(raw, []byte("private-command")) || bytes.Contains(raw, []byte("private-value")) {
+					t.Fatal("scoped listing exposed subscription")
+				}
+			} else if path == "/config" || path == "/config/events.subscriptions" {
+				if !bytes.Contains(raw, []byte("private-command")) || !bytes.Contains(raw, []byte("private-value")) {
+					t.Fatalf("global config missing subscriptions: %s", raw)
+				}
+			}
+		}
+	}
+
 }
 
 func TestEventHTTPEnvironmentAndRetention(t *testing.T) {
@@ -439,5 +489,100 @@ func TestEventHTTPUnavailableRunnerAndRedelivery(t *testing.T) {
 	case <-rt.specs:
 		t.Fatal("duplicate created an extra run")
 	default:
+	}
+}
+
+func TestEventHTTPPartialFailureRedelivery(t *testing.T) {
+	s, client := setupWorkspaceTestServer(t)
+	rt := &eventRuntime{specs: make(chan runtimes.Spec, 4)}
+	manager, err := runs.NewManager(t.TempDir(), rt, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	s.runsManager = manager
+	s.webhooks = webhook.DefaultRegistry()
+	s.config.Events = config.EventsConfig{
+		Endpoints: []config.EventEndpoint{{Name: "retry", Provider: "github", Secret: "test-secret"}},
+		Subscriptions: []config.EventSubscription{
+			{Name: "first", Type: "github.push", Action: "run", Run: config.EventRunSpec{Runtime: "firecracker", Image: "first", Command: []string{"echo", "ok"}}},
+			{Name: "second", Type: "github.push", Action: "run", Run: config.EventRunSpec{Runtime: "docker", Image: "second", Command: []string{"echo", "ok"}}},
+		},
+	}
+	payload, err := os.ReadFile("../webhook/testdata/github-push.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliver := func() {
+		t.Helper()
+		req, err := http.NewRequest("POST", client.url+"/api/event-hooks/retry", bytes.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-GitHub-Event", "push")
+		req.Header.Set("X-GitHub-Delivery", "partial")
+		mac := hmac.New(sha256.New, []byte("test-secret"))
+		mac.Write(payload)
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 202 {
+			t.Fatalf("delivery: %d", resp.StatusCode)
+		}
+		s.deliveries.wg.Wait()
+	}
+	admin := client.login("admin", "admin-pass")
+	check := func(outcome, second string) {
+		t.Helper()
+		status, body := admin.do("GET", "/events/deliveries", "", nil)
+		if status != 200 {
+			t.Fatalf("delivery log: %d %v", status, body)
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var listing struct {
+			Deliveries []deliveryRecord `json:"deliveries"`
+		}
+		if err := json.Unmarshal(raw, &listing); err != nil {
+			t.Fatal(err)
+		}
+		if len(listing.Deliveries) != 1 {
+			t.Fatalf("deliveries: %s", raw)
+		}
+		record := listing.Deliveries[0]
+		if record.Outcome != outcome || record.Subscriptions["first"] != "succeeded" || record.Subscriptions["second"] != second {
+			t.Fatalf("outcomes: %s", raw)
+		}
+	}
+	deliver()
+	check("failed", "failed")
+	s.config.Events.Subscriptions[1].Run.Runtime = "firecracker"
+	deliver()
+	check("succeeded", "succeeded")
+	status, body := admin.do("GET", "/runs", "", nil)
+	if status != 200 {
+		t.Fatalf("runs: %d %v", status, body)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listing struct {
+		Runs []runs.Run `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &listing); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, run := range listing.Runs {
+		counts[run.Spec.Image]++
+	}
+	if len(listing.Runs) != 2 || counts["first"] != 1 || counts["second"] != 1 {
+		t.Fatalf("runs after redelivery: %s", raw)
 	}
 }

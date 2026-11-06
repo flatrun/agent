@@ -85,7 +85,7 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 			if c.Writer.Status() >= 400 {
 				outcome = "failed"
 			}
-			s.deliveries.finish(record, outcome)
+			s.deliveries.finish(record, outcome, nil)
 		}()
 	}
 	if !event.MatchesRepo(src.Ref) {
