@@ -130,6 +130,8 @@ type Server struct {
 	planStore          *plan.Store
 	deploysStore       *deploys.Store
 	builders           *build.Registry
+	deliveries         deliveryState
+	githubApp          *webhook.GitHubApp
 	webhooks           *webhook.Registry
 	runInBackground    func(func())
 	sleeper            *sleep.Controller
@@ -523,6 +525,7 @@ func (s *Server) setupRoutes() {
 		api.POST("/access/code", s.redeemApplicationAccessCode)
 		// Authenticated by the deployment's webhook secret, not a session.
 		api.POST("/hooks/:provider/:deployment", s.receiveWebhook)
+		api.POST("/event-hooks/:endpoint", s.receiveEvent)
 		// Reached through nginx's fallback when a sleeping deployment is down.
 		api.Any("/hooks/wake/:deployment", markProxyPage, s.wakeDeployment)
 		api.Any("/hooks/wake/:deployment/:service", markProxyPage, s.wakeService)
@@ -664,6 +667,8 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/notifications/rules", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.updateNotificationRules)
 			protected.PUT("/notifications/targets", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.updateNotificationTargets)
 			protected.POST("/notifications/test", s.authMiddleware.RequirePermission(auth.PermNotificationsWrite), s.testNotification)
+			protected.GET("/events/subscriptions", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listEventSubscriptions)
+			protected.GET("/events/deliveries", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listEventDeliveries)
 			protected.GET("/config", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.listConfig)
 			protected.GET("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigRead), s.getConfigKey)
 			protected.PUT("/config/*key", s.authMiddleware.RequirePermission(auth.PermConfigWrite), s.updateConfigKey)
@@ -1123,6 +1128,10 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
+	s.deliveries.mu.Lock()
+	s.deliveries.closed = true
+	s.deliveries.mu.Unlock()
+	s.deliveries.wg.Wait()
 	if s.runsManager != nil {
 		_ = s.runsManager.Close()
 	}

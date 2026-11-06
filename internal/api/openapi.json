@@ -3937,6 +3937,57 @@
         }
       }
     },
+    "/api/event-hooks/{endpoint}": {
+      "post": {
+        "operationId": "post-event-hooks-by-endpoint",
+        "tags": [
+          "event-hooks"
+        ],
+        "parameters": [
+          {
+            "name": "endpoint",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/events/deliveries": {
+      "get": {
+        "operationId": "get-events-deliveries",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "events"
+        ],
+        "x-permission": "config:read"
+      }
+    },
+    "/api/events/subscriptions": {
+      "get": {
+        "operationId": "get-events-subscriptions",
+        "responses": {
+          "200": {
+            "description": "Success"
+          }
+        },
+        "tags": [
+          "events"
+        ],
+        "x-permission": "config:read"
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "get-health",

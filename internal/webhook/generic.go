@@ -22,13 +22,17 @@ func (Generic) Verify(h http.Header, _ []byte, secret string) error {
 
 func (Generic) Parse(_ http.Header, body []byte) (*Event, error) {
 	var p struct {
-		Branch   string `json:"branch"`
-		Revision string `json:"revision"`
+		Type       string            `json:"type"`
+		Subject    string            `json:"subject"`
+		Attributes map[string]string `json:"attributes"`
+		Labels     []string          `json:"labels"`
+		Branch     string            `json:"branch"`
+		Revision   string            `json:"revision"`
 	}
 	if len(body) > 0 {
 		if err := json.Unmarshal(body, &p); err != nil {
 			return nil, err
 		}
 	}
-	return &Event{Kind: EventPush, Branch: p.Branch, Revision: p.Revision}, nil
+	return &Event{Kind: EventPush, Branch: p.Branch, Revision: p.Revision, Envelope: &Envelope{Type: p.Type, Subject: p.Subject, Attributes: p.Attributes, Labels: p.Labels}}, nil
 }

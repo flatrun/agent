@@ -52,7 +52,7 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 		return
 	}
 
-	event, err := provider.Parse(c.Request.Header, body)
+	envelope, err := webhook.Normalize(provider, "deployments/"+name, c.Request.Header, body)
 	if errors.Is(err, webhook.ErrUnsupported) {
 		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "event type not handled"})
 		return
@@ -61,22 +61,48 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload: " + err.Error()})
 		return
 	}
+	event := envelope.Event
+	if c.GetHeader("X-GitHub-Delivery") != "" || c.GetHeader("X-Gitlab-Event-UUID") != "" || c.GetHeader("X-Delivery-ID") != "" {
+		limit := 1000
+		if s.config != nil {
+			limit = s.config.Events.DeliveryLimit
+		}
+		record, duplicate, err := s.deliveries.begin(envelope, limit)
+		if duplicate {
+			c.JSON(http.StatusOK, gin.H{"status": "duplicate"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "event queue full"})
+			return
+		}
+		defer s.deliveries.wg.Done()
+		defer func() {
+			outcome := "succeeded"
+			if c.Writer.Status() == http.StatusOK {
+				outcome = "ignored"
+			}
+			if c.Writer.Status() >= 400 {
+				outcome = "failed"
+			}
+			s.deliveries.finish(record, outcome)
+		}()
+	}
 	if !event.MatchesRepo(src.Ref) {
 		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "repository does not match this deployment"})
 		return
 	}
 
-	switch event.Kind {
-	case webhook.EventPush:
-		s.handlePushEvent(c, name, src, provider.Name(), event)
-	case webhook.EventPROpened, webhook.EventPRSynced, webhook.EventPRClosed:
-		s.handlePullRequestEvent(c, name, src, event)
-	default:
-		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "nothing to deploy for this event"})
+	for _, subscription := range builtinWebhookSubscriptions {
+		if subscription.matches(event.Kind) {
+			s.applyWebhookSubscription(c, subscription.action, name, src, provider.Name(), event)
+			return
+		}
 	}
+	c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "nothing to deploy for this event"})
 }
 
-func (s *Server) handlePushEvent(c *gin.Context, name string, src *models.SourceConfig, provider string, event *webhook.Event) {
+func (s *Server) handlePushEvent(c webhookResponse, name string, src *models.SourceConfig, provider string, event *webhook.Event) {
 	// The generic hook is an explicit deploy request for this deployment; host
 	// pushes deploy every target that follows the pushed branch and opted in.
 	explicit := provider == "generic"
@@ -261,7 +287,7 @@ func previewEnvironmentName(pr int) string {
 // created when it opens, redeployed at each new head commit, deleted when it
 // closes or merges. Work happens in the background because a first fetch and
 // build outlast a git host's delivery timeout.
-func (s *Server) handlePullRequestEvent(c *gin.Context, base string, src *models.SourceConfig, event *webhook.Event) {
+func (s *Server) handlePullRequestEvent(c webhookResponse, base string, src *models.SourceConfig, event *webhook.Event) {
 	if !src.Previews {
 		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "previews are off"})
 		return
@@ -332,3 +358,32 @@ func (s *Server) background(work func()) {
 	}
 	go work()
 }
+
+type builtinWebhookSubscription struct {
+	action string
+	kinds  []webhook.EventKind
+}
+
+var builtinWebhookSubscriptions = []builtinWebhookSubscription{
+	{action: "deploy", kinds: []webhook.EventKind{webhook.EventPush}},
+	{action: "preview", kinds: []webhook.EventKind{webhook.EventPROpened, webhook.EventPRSynced, webhook.EventPRClosed}},
+}
+
+func (s builtinWebhookSubscription) matches(kind webhook.EventKind) bool {
+	for _, candidate := range s.kinds {
+		if kind == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) applyWebhookSubscription(c webhookResponse, action, name string, src *models.SourceConfig, provider string, event *webhook.Event) {
+	if action == "deploy" {
+		s.handlePushEvent(c, name, src, provider, event)
+	} else {
+		s.handlePullRequestEvent(c, name, src, event)
+	}
+}
+
+type webhookResponse interface{ JSON(int, any) }
