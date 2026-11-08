@@ -20,11 +20,9 @@ func TestEventsConfigLoad(t *testing.T) {
   subscriptions:
     - name: runner
       source: github/ci
-      type: github.workflow_job.queued
+      action: github_runner
       labels: [self-hosted, flatrun]
-      action: run
-      github_runner: true
-      run:
+      github_runner:
         timeout_seconds: 120
 `), 0600); err != nil {
 		t.Fatal(err)
@@ -34,7 +32,7 @@ func TestEventsConfigLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := cfg.Events.Subscriptions[0]
-	if s.Run.Runtime != "firecracker" || s.Run.Image != "ghcr.io/actions/actions-runner" || s.RunnerGroupID != 1 || s.Run.TimeoutSeconds != 120 || cfg.Events.DeliveryLimit != 1000 {
+	if s.GitHubRunner.Runtime != "firecracker" || s.GitHubRunner.Image != "ghcr.io/actions/actions-runner" || s.GitHubRunner.RunnerGroupID != 1 || s.GitHubRunner.TimeoutSeconds != 120 || cfg.Events.DeliveryLimit != 1000 {
 		t.Fatalf("defaults: %+v", cfg.Events)
 	}
 	entry, err := Get(cfg, "events.endpoints")
@@ -58,15 +56,17 @@ func TestEventsConfigLoad(t *testing.T) {
 		t.Fatalf("unlabelled runner accepted: %v", err)
 	}
 
-	if err := os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), "      run:\n", "      run:\n        runtime: docker\n")), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), "      github_runner:\n", "      github_runner:\n        runtime: docker\n")), 0600); err != nil {
 		t.Fatal(err)
 	}
 	explicit, err := Load(path)
-	if err != nil || explicit.Events.Subscriptions[0].Run.Runtime != "docker" {
+	if err != nil || explicit.Events.Subscriptions[0].GitHubRunner.Runtime != "docker" {
 		t.Fatalf("explicit Docker runtime changed: %v", err)
 	}
-	cfg.Events.Subscriptions[0].Type = "github.workflow_job.completed"
-	if cfg.Events.Validate() == nil {
-		t.Fatal("runner accepted nonqueued events")
+	for _, kind := range []string{"github.workflow_job.queued", "github.workflow_job.completed"} {
+		cfg.Events.Subscriptions[0].Type = kind
+		if err := cfg.Events.Validate(); err == nil || !strings.Contains(err.Error(), "event type is implicit") {
+			t.Fatalf("runner accepted explicit type %q: %v", kind, err)
+		}
 	}
 }

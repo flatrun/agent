@@ -6,18 +6,18 @@ import (
 	"testing"
 )
 
-func TestWorkflowEnvelope(t *testing.T) {
+func TestWorkflowEvent(t *testing.T) {
 	body, err := os.ReadFile("testdata/queued.payload.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	headers := http.Header{"X-Github-Event": []string{"workflow_job"}, "X-Github-Delivery": []string{"published-delivery"}}
-	e, err := Normalize(GitHub{}, "ci", headers, body)
+	e, _, err := Normalize(GitHub{}, "ci", headers, body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Type != "github.workflow_job.queued" || e.Subject != "Codertocat/Hello-World" || e.InstallationID != 3456996 || e.Attributes["branch"] != "main" || e.Attributes["job_id"] != "289782451" || e.ID != "published-delivery" {
-		t.Fatalf("envelope: %+v", e)
+	if e.Type != "github.workflow_job.queued" || e.Attribute("subject") != "Codertocat/Hello-World" || e.Attributes["installation_id"] != int64(3456996) || e.Attributes["branch"] != "main" || e.Attributes["job_id"] != "289782451" || e.ID != "published-delivery" {
+		t.Fatalf("event: %+v", e)
 	}
 	if !e.Matches("github/ci", e.Type, map[string]string{"branch": "main"}, []string{"ubuntu-latest"}) {
 		t.Fatal("matching filters rejected")

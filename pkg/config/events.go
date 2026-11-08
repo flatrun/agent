@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/flatrun/agent/internal/runs"
+	"github.com/flatrun/agent/internal/runtimes"
 	"github.com/flatrun/agent/internal/webhook"
 )
 
@@ -26,16 +28,24 @@ type EventEndpoint struct {
 }
 
 type EventSubscription struct {
-	Name          string            `yaml:"name" json:"name"`
-	Source        string            `yaml:"source" json:"source"`
-	Type          string            `yaml:"type" json:"type"`
-	Attributes    map[string]string `yaml:"attributes" json:"attributes,omitempty"`
-	Labels        []string          `yaml:"labels" json:"labels,omitempty"`
-	Action        string            `yaml:"action" json:"action"`
-	Deployment    string            `yaml:"deployment" json:"deployment,omitempty"`
-	Run           EventRunSpec      `yaml:"run" json:"run,omitempty"`
-	GitHubRunner  bool              `yaml:"github_runner" json:"github_runner,omitempty"`
-	RunnerGroupID int64             `yaml:"runner_group_id" json:"runner_group_id,omitempty"`
+	Name         string            `yaml:"name" json:"name"`
+	Source       string            `yaml:"source" json:"source"`
+	Type         string            `yaml:"type" json:"type,omitempty"`
+	Attributes   map[string]string `yaml:"attributes" json:"attributes,omitempty"`
+	Labels       []string          `yaml:"labels" json:"labels,omitempty"`
+	Action       string            `yaml:"action" json:"action"`
+	Deployment   string            `yaml:"deployment" json:"deployment,omitempty"`
+	Run          runs.Spec         `yaml:"run" json:"run,omitempty"`
+	GitHubRunner GitHubRunnerSpec  `yaml:"github_runner" json:"github_runner,omitempty"`
+}
+
+type GitHubRunnerSpec struct {
+	RunnerGroupID  int64         `yaml:"runner_group_id" json:"runner_group_id"`
+	Runtime        runtimes.Type `yaml:"runtime" json:"runtime"`
+	Image          string        `yaml:"image" json:"image"`
+	TimeoutSeconds int           `yaml:"timeout_seconds" json:"timeout_seconds"`
+	CPUs           float64       `yaml:"cpus" json:"cpus,omitempty"`
+	MemoryBytes    uint64        `yaml:"memory_bytes" json:"memory_bytes,omitempty"`
 }
 
 func (c *EventsConfig) SetDefaults() {
@@ -47,34 +57,25 @@ func (c *EventsConfig) SetDefaults() {
 	}
 	for i := range c.Subscriptions {
 		s := &c.Subscriptions[i]
-		if s.GitHubRunner {
-			if s.Run.Runtime == "" {
-				s.Run.Runtime = "firecracker"
-			}
-			if s.Run.Image == "" {
-				s.Run.Image = "ghcr.io/actions/actions-runner"
-			}
-			if s.RunnerGroupID == 0 {
-				s.RunnerGroupID = 1
-			}
-		}
 		if s.Run.TimeoutSeconds == 0 {
 			s.Run.TimeoutSeconds = 600
 		}
+		if s.Action == "github_runner" {
+			r := &s.GitHubRunner
+			if r.Runtime == "" {
+				r.Runtime = runtimes.TypeFirecracker
+			}
+			if r.Image == "" {
+				r.Image = "ghcr.io/actions/actions-runner"
+			}
+			if r.RunnerGroupID == 0 {
+				r.RunnerGroupID = 1
+			}
+			if r.TimeoutSeconds == 0 {
+				r.TimeoutSeconds = 600
+			}
+		}
 	}
-}
-
-type EventRunSpec struct {
-	ArtifactPaths  []string          `yaml:"artifact_paths" json:"artifact_paths"`
-	Runtime        string            `yaml:"runtime" json:"runtime"`
-	Image          string            `yaml:"image" json:"image"`
-	Command        []string          `yaml:"command" json:"command"`
-	Env            map[string]string `yaml:"env" json:"env"`
-	WorkDir        string            `yaml:"workdir" json:"workdir"`
-	CPUs           float64           `yaml:"cpus" json:"cpus"`
-	MemoryBytes    uint64            `yaml:"memory_bytes" json:"memory_bytes"`
-	Egress         bool              `yaml:"egress" json:"egress"`
-	TimeoutSeconds int               `yaml:"timeout_seconds" json:"timeout_seconds"`
 }
 
 func (c EventsConfig) Validate() error {
@@ -104,24 +105,37 @@ func (c EventsConfig) Validate() error {
 			}
 		case "notify":
 		case "run":
-			if s.Run.Image == "" {
-				return errors.New("event run image is required")
+			if err := validateEventRun(s.Run); err != nil {
+				return err
 			}
-			if s.Run.Runtime != "" && s.Run.Runtime != "docker" && s.Run.Runtime != "firecracker" {
-				return errors.New("unknown event run runtime")
+		case "github_runner":
+			r := s.GitHubRunner
+			if len(s.Labels) == 0 {
+				return errors.New("GitHub runner subscriptions require at least one label")
 			}
-			if s.Run.TimeoutSeconds < 1 || s.Run.TimeoutSeconds > 3600 {
-				return errors.New("event run timeout must be 1 to 3600 seconds")
+			if c.GitHubApp.AppID <= 0 || c.GitHubApp.PrivateKeyFile == "" || r.RunnerGroupID <= 0 {
+				return errors.New("GitHub runners require GitHub App credentials and a positive runner group")
 			}
+			if s.Type != "" {
+				return errors.New("GitHub runner event type is implicit")
+			}
+			if err := validateEventRun(runs.Spec{Runtime: r.Runtime, Image: r.Image, TimeoutSeconds: r.TimeoutSeconds, CPUs: r.CPUs, MemoryBytes: r.MemoryBytes}); err != nil {
+				return err
+			}
+
 		default:
 			return errors.New("unknown event action")
 		}
-		if s.GitHubRunner && len(s.Labels) == 0 {
-			return errors.New("GitHub runner subscriptions require at least one label")
-		}
-		if s.GitHubRunner && (s.Action != "run" || s.Type != "github.workflow_job.queued" || c.GitHubApp.AppID <= 0 || c.GitHubApp.PrivateKeyFile == "" || s.RunnerGroupID <= 0) {
-			return errors.New("GitHub runners require a queued job run subscription and GitHub App credentials")
-		}
 	}
 	return nil
+}
+
+func validateEventRun(spec runs.Spec) error {
+	if spec.Runtime != "" && spec.Runtime != runtimes.TypeDocker && spec.Runtime != runtimes.TypeFirecracker {
+		return errors.New("unknown event run runtime")
+	}
+	if spec.TimeoutSeconds < 1 {
+		return errors.New("event run timeout must be 1 to 3600 seconds")
+	}
+	return spec.Validate()
 }

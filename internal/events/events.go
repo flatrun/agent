@@ -2,6 +2,7 @@ package events
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -166,4 +167,38 @@ func CorrelationKey(event Event) string {
 		return "deployment:" + event.Scope.Deployment
 	}
 	return event.Source + ":" + event.Type
+}
+
+func (e Event) Attribute(key string) string {
+	value, _ := e.Attributes[key].(string)
+	return value
+}
+
+func (e Event) Labels() []string {
+	labels, _ := e.Attributes["labels"].([]string)
+	return labels
+}
+
+func (e Event) Matches(source, kind string, attrs map[string]string, labels []string) bool {
+	if source != "" && source != e.Source || kind != "" && kind != e.Type {
+		return false
+	}
+	for k, v := range attrs {
+		if e.Attribute(k) != v {
+			return false
+		}
+	}
+	for _, want := range labels {
+		found := false
+		for _, got := range e.Labels() {
+			if strings.EqualFold(want, got) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

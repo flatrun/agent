@@ -52,7 +52,7 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 		return
 	}
 
-	envelope, err := webhook.Normalize(provider, "deployments/"+name, c.Request.Header, body)
+	normalized, event, err := webhook.Normalize(provider, "deployments/"+name, c.Request.Header, body)
 	if errors.Is(err, webhook.ErrUnsupported) {
 		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "event type not handled"})
 		return
@@ -61,13 +61,12 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload: " + err.Error()})
 		return
 	}
-	event := envelope.Event
 	if c.GetHeader("X-GitHub-Delivery") != "" || c.GetHeader("X-Gitlab-Event-UUID") != "" || c.GetHeader("X-Delivery-ID") != "" {
 		limit := 1000
 		if s.config != nil {
 			limit = s.config.Events.DeliveryLimit
 		}
-		record, duplicate, err := s.deliveries.begin(envelope, limit)
+		record, duplicate, err := s.beginDelivery(normalized, limit)
 		if duplicate {
 			c.JSON(http.StatusOK, gin.H{"status": "duplicate"})
 			return

@@ -14,27 +14,19 @@ import (
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/events"
 	"github.com/flatrun/agent/internal/runs"
-	"github.com/flatrun/agent/internal/runtimes"
 	"github.com/flatrun/agent/internal/webhook"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
 )
 
-type deliveryRecord struct {
-	ID            string            `json:"id"`
-	Source        string            `json:"source"`
-	Type          string            `json:"type"`
-	Time          time.Time         `json:"time"`
-	Outcome       string            `json:"outcome"`
-	Subscriptions map[string]string `json:"subscriptions"`
-}
+type deliveryRecord = events.Delivery
 
 type deliveryState struct {
-	mu      sync.Mutex
-	records []*deliveryRecord
-	active  int
-	wg      sync.WaitGroup
-	closed  bool
+	mu     sync.Mutex
+	store  *events.Store
+	active int
+	wg     sync.WaitGroup
+	closed bool
 }
 
 func (s *Server) receiveEvent(c *gin.Context) {
@@ -65,7 +57,7 @@ func (s *Server) receiveEvent(c *gin.Context) {
 		notFound()
 		return
 	}
-	event, err := webhook.Normalize(provider, endpoint.Name, c.Request.Header, body)
+	event, parsed, err := webhook.Normalize(provider, endpoint.Name, c.Request.Header, body)
 	if errors.Is(err, webhook.ErrUnsupported) {
 		c.JSON(http.StatusOK, gin.H{"status": "ignored"})
 		return
@@ -75,7 +67,7 @@ func (s *Server) receiveEvent(c *gin.Context) {
 		return
 	}
 	state := &s.deliveries
-	record, duplicate, err := state.begin(event, s.config.Events.DeliveryLimit)
+	record, duplicate, err := s.beginDelivery(event, s.config.Events.DeliveryLimit)
 	if duplicate {
 		c.JSON(http.StatusOK, gin.H{"status": "duplicate"})
 		return
@@ -101,10 +93,14 @@ func (s *Server) receiveEvent(c *gin.Context) {
 				}
 				continue
 			}
-			if !event.Matches(subscription.Source, subscription.Type, subscription.Attributes, subscription.Labels) {
+			kind := subscription.Type
+			if subscription.Action == "github_runner" {
+				kind = "github.workflow_job.queued"
+			}
+			if !event.Matches(subscription.Source, kind, subscription.Attributes, subscription.Labels) {
 				continue
 			}
-			if err := s.actOnEvent(subscription, event); err != nil {
+			if err := s.actOnEvent(subscription, event, parsed); err != nil {
 				outcome = "failed"
 				outcomes[subscription.Name] = "failed"
 				continue
@@ -119,28 +115,30 @@ func (s *Server) receiveEvent(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
 }
 
-func (s *Server) actOnEvent(subscription config.EventSubscription, e *webhook.Envelope) error {
+func (s *Server) actOnEvent(subscription config.EventSubscription, e events.Event, parsed *webhook.Event) error {
 	switch subscription.Action {
-	case "run":
+	case "run", "github_runner":
 		if s.runsManager == nil {
 			return errors.New("runs unavailable")
 		}
-		template := subscription.Run
-		spec := runs.Spec{Runtime: runtimes.Type(template.Runtime), Image: template.Image, Command: append([]string(nil), template.Command...), Env: map[string]string{}, WorkDir: template.WorkDir, ArtifactPaths: append([]string(nil), template.ArtifactPaths...), CPUs: template.CPUs, MemoryBytes: template.MemoryBytes, Egress: template.Egress, TimeoutSeconds: template.TimeoutSeconds}
-		for k, v := range template.Env {
+		spec := subscription.Run
+		if subscription.Action == "github_runner" {
+			r := subscription.GitHubRunner
+			spec = runs.Spec{Runtime: r.Runtime, Image: r.Image, TimeoutSeconds: r.TimeoutSeconds, CPUs: r.CPUs, MemoryBytes: r.MemoryBytes}
+		}
+		spec.Env = make(map[string]string, len(subscription.Run.Env)+5)
+		for k, v := range subscription.Run.Env {
 			spec.Env[k] = v
 		}
-		spec.Env["FLATRUN_EVENT_BRANCH"] = e.Attributes["branch"]
-		spec.Env["FLATRUN_EVENT_REVISION"] = e.Attributes["revision"]
-		spec.Env["FLATRUN_EVENT_JOB_ID"] = e.Attributes["job_id"]
+		spec.Env["FLATRUN_EVENT_BRANCH"] = e.Attribute("branch")
+		spec.Env["FLATRUN_EVENT_REVISION"] = e.Attribute("revision")
+		spec.Env["FLATRUN_EVENT_JOB_ID"] = e.Attribute("job_id")
 		spec.Env["FLATRUN_EVENT_TYPE"] = e.Type
-		spec.Env["FLATRUN_EVENT_SUBJECT"] = e.Subject
+		spec.Env["FLATRUN_EVENT_SUBJECT"] = e.Attribute("subject")
+
 		secrets := map[string]string{}
 		defer clear(secrets)
-		if subscription.GitHubRunner {
-			if e.Type != "github.workflow_job.queued" {
-				return nil
-			}
+		if subscription.Action == "github_runner" {
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer cancel()
 			app := s.githubApp
@@ -151,7 +149,7 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e *webhook.En
 				log.Printf("Event runner delivery failed: runtime %s unavailable: %v", spec.Runtime, err)
 				return fmt.Errorf("runner runtime %s unavailable: %w", spec.Runtime, err)
 			}
-			jit, err := app.JIT(ctx, e, subscription.RunnerGroupID)
+			jit, err := app.JIT(ctx, e, subscription.GitHubRunner.RunnerGroupID, subscription.Labels)
 			if err != nil {
 				return err
 			}
@@ -159,13 +157,7 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e *webhook.En
 			spec.Command = []string{"sh", "-c", `exec ./run.sh --jitconfig "$JIT"`}
 			spec.WorkDir = "/home/runner"
 			spec.Egress = true
-			if spec.Env == nil {
-				spec.Env = map[string]string{}
-			}
 			spec.Env["RUNNER_ALLOW_RUNASROOT"] = "1"
-			if spec.Image == "" {
-				spec.Image = "ghcr.io/actions/actions-runner"
-			}
 		}
 		_, err := s.runsManager.Submit(0, "events", spec, secrets)
 		return err
@@ -174,20 +166,20 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e *webhook.En
 		if err != nil {
 			return err
 		}
-		if deployment.Metadata == nil || deployment.Metadata.Source == nil || !e.Event.MatchesRepo(deployment.Metadata.Source.Ref) {
+		if deployment.Metadata == nil || deployment.Metadata.Source == nil || !parsed.MatchesRepo(deployment.Metadata.Source.Ref) {
 			return errors.New("deployment source mismatch")
 		}
 		recorder := &eventActionResponse{}
 		allowed := false
 		for _, builtin := range builtinWebhookSubscriptions {
-			if builtin.action == subscription.Action && builtin.matches(e.Event.Kind) {
+			if builtin.action == subscription.Action && builtin.matches(parsed.Kind) {
 				allowed = true
 			}
 		}
 		if !allowed {
 			return errors.New("event does not support deployment action")
 		}
-		s.applyWebhookSubscription(recorder, subscription.Action, subscription.Deployment, deployment.Metadata.Source, strings.SplitN(e.Source, "/", 2)[0], e.Event)
+		s.applyWebhookSubscription(recorder, subscription.Action, subscription.Deployment, deployment.Metadata.Source, strings.SplitN(e.Source, "/", 2)[0], parsed)
 		if recorder.status >= 400 {
 			return fmt.Errorf("action returned %d", recorder.status)
 		}
@@ -196,7 +188,7 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e *webhook.En
 		if s.notify == nil {
 			return errors.New("notifications unavailable")
 		}
-		_, err := s.notify.Publish(events.Event{ID: e.ID, Source: e.Source, Type: e.Type, Title: e.Type, Message: e.Subject, Severity: events.SeverityInfo, OccurredAt: e.Time})
+		_, err := s.notify.Publish(e)
 		return err
 	default:
 		return errors.New("unknown event action")
@@ -207,15 +199,22 @@ func (s *Server) listEventSubscriptions(c *gin.Context) {
 	if !globalEventsAccess(c) {
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"subscriptions": s.config.Events.Subscriptions})
+	c.JSON(http.StatusOK, struct {
+		Subscriptions []config.EventSubscription `json:"subscriptions"`
+	}{Subscriptions: s.config.Events.Subscriptions})
 }
 func (s *Server) listEventDeliveries(c *gin.Context) {
 	if !globalEventsAccess(c) {
 		return
 	}
-	s.deliveries.mu.Lock()
-	defer s.deliveries.mu.Unlock()
-	c.JSON(http.StatusOK, gin.H{"deliveries": s.deliveries.records})
+	records, err := s.deliveryRecords()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "delivery log unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, struct {
+		Deliveries []events.Delivery `json:"deliveries"`
+	}{Deliveries: records})
 }
 func globalEventsAccess(c *gin.Context) bool {
 	actor := auth.GetActorFromContext(c)
@@ -230,50 +229,54 @@ type eventActionResponse struct{ status int }
 
 func (w *eventActionResponse) JSON(status int, _ any) { w.status = status }
 
-func (state *deliveryState) begin(event *webhook.Envelope, limit int) (*deliveryRecord, bool, error) {
+func (s *Server) deliveryStore() (*events.Store, error) {
+	if s.deliveries.store != nil {
+		return s.deliveries.store, nil
+	}
+	if s.notify != nil {
+		store, err := s.notify.EventStore()
+		if err != nil {
+			return nil, err
+		}
+		s.deliveries.store = store
+	} else {
+		if s.config == nil || s.config.DeploymentsPath == "" {
+			return nil, errors.New("event store path unavailable")
+		}
+		store, err := events.NewStore(s.config.DeploymentsPath)
+		if err != nil {
+			return nil, err
+		}
+		s.deliveries.store = store
+	}
+	return s.deliveries.store, nil
+}
+
+func (s *Server) deliveryRecords() ([]events.Delivery, error) {
+	s.deliveries.mu.Lock()
+	defer s.deliveries.mu.Unlock()
+	store, err := s.deliveryStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.ListDeliveries()
+}
+
+func (s *Server) beginDelivery(event events.Event, limit int) (*deliveryRecord, bool, error) {
+	state := &s.deliveries
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	retry := -1
-	outcomes := map[string]string{}
-	for i, record := range state.records {
-		if record.ID == event.ID && record.Source == event.Source {
-			if record.Outcome != "failed" {
-				return nil, true, nil
-			}
-			for name, outcome := range record.Subscriptions {
-				outcomes[name] = outcome
-			}
-			retry = i
-			break
-		}
+	store, err := s.deliveryStore()
+	if err != nil {
+		return nil, false, err
 	}
 	if state.closed || state.active >= 128 {
 		return nil, false, errors.New("event queue full")
 	}
-	if retry >= 0 {
-		state.records = append(state.records[:retry], state.records[retry+1:]...)
+	record, duplicate, err := store.BeginDelivery(event, limit)
+	if err != nil || duplicate {
+		return record, duplicate, err
 	}
-	if limit <= 0 {
-		limit = 1000
-	}
-	if limit > 10000 {
-		limit = 10000
-	}
-	if len(state.records) >= limit {
-		removed := false
-		for i, record := range state.records {
-			if record.Outcome != "processing" {
-				state.records = append(state.records[:i], state.records[i+1:]...)
-				removed = true
-				break
-			}
-		}
-		if !removed {
-			return nil, false, errors.New("event queue full")
-		}
-	}
-	record := &deliveryRecord{ID: event.ID, Source: event.Source, Type: event.Type, Time: event.Time, Outcome: "processing", Subscriptions: outcomes}
-	state.records = append(state.records, record)
 	state.active++
 	state.wg.Add(1)
 	return record, false, nil
@@ -282,7 +285,9 @@ func (state *deliveryState) begin(event *webhook.Envelope, limit int) (*delivery
 func (state *deliveryState) finish(record *deliveryRecord, outcome string, outcomes map[string]string) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	record.Outcome = outcome
-	record.Subscriptions = outcomes
+	record.Outcome, record.Subscriptions = outcome, outcomes
+	if err := state.store.FinishDelivery(*record); err != nil {
+		log.Printf("Record event delivery: %v", err)
+	}
 	state.active--
 }

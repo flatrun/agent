@@ -3965,6 +3965,24 @@
         "operationId": "get-events-deliveries",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "deliveries": {
+                      "items": {
+                        "$ref": "#/components/schemas/events.Delivery"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object",
+                  "x-property-order": [
+                    "deliveries"
+                  ]
+                }
+              }
+            },
             "description": "Success"
           }
         },
@@ -3979,6 +3997,24 @@
         "operationId": "get-events-subscriptions",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "subscriptions": {
+                      "items": {
+                        "$ref": "#/components/schemas/config.EventSubscription"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object",
+                  "x-property-order": [
+                    "subscriptions"
+                  ]
+                }
+              }
+            },
             "description": "Success"
           }
         },
@@ -16037,6 +16073,101 @@
           "enabled"
         ]
       },
+      "config.EventSubscription": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "deployment": {
+            "type": "string"
+          },
+          "github_runner": {
+            "$ref": "#/components/schemas/config.GitHubRunnerSpec"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "run": {
+            "$ref": "#/components/schemas/runs.Spec"
+          },
+          "source": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "name",
+          "source",
+          "type",
+          "attributes",
+          "labels",
+          "action",
+          "deployment",
+          "run",
+          "github_runner"
+        ],
+        "x-columns": [
+          "name",
+          "source",
+          "type",
+          "action",
+          "deployment"
+        ]
+      },
+      "config.GitHubRunnerSpec": {
+        "type": "object",
+        "properties": {
+          "cpus": {
+            "type": "number"
+          },
+          "image": {
+            "type": "string"
+          },
+          "memory_bytes": {
+            "type": "integer"
+          },
+          "runner_group_id": {
+            "type": "integer"
+          },
+          "runtime": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer"
+          }
+        },
+        "x-property-order": [
+          "runner_group_id",
+          "runtime",
+          "image",
+          "timeout_seconds",
+          "cpus",
+          "memory_bytes"
+        ],
+        "x-columns": [
+          "runner_group_id",
+          "runtime",
+          "image",
+          "timeout_seconds",
+          "cpus",
+          "memory_bytes"
+        ]
+      },
       "config.K3sConfig": {
         "type": "object",
         "properties": {
@@ -16547,6 +16678,48 @@
           "memory_swap",
           "cpus",
           "cpu_shares"
+        ]
+      },
+      "events.Delivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "subscriptions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "x-property-order": [
+          "id",
+          "source",
+          "type",
+          "time",
+          "outcome",
+          "subscriptions"
+        ],
+        "x-columns": [
+          "id",
+          "source",
+          "type",
+          "time",
+          "outcome"
         ]
       },
       "files.ArchiveEntry": {

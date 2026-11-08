@@ -117,8 +117,7 @@ func (m *Middleware) handleAPIKey(c *gin.Context, token string) bool {
 				c.Set(contextkeys.APIKeyPrefix, apiKey.KeyPrefix)
 				c.Set(contextkeys.Actor, actor)
 
-				clientIP := c.ClientIP()
-				go func() { _ = m.manager.UpdateAPIKeyLastUsed(apiKey.ID, clientIP) }()
+				go func() { _ = m.manager.UpdateAPIKeyLastUsed(apiKey.ID, c.ClientIP()) }()
 				return true
 			}
 		}

@@ -108,7 +108,7 @@ func TestEventHTTPRunner(t *testing.T) {
 				Work   string   `json:"work_folder"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if !strings.HasPrefix(body.Name, "flatrun-") || body.Group != 1 || body.Work != "_work" || !reflect.DeepEqual(body.Labels, []string{"ubuntu-latest"}) {
+			if !strings.HasPrefix(body.Name, "flatrun-") || body.Group != 1 || body.Work != "_work" || !reflect.DeepEqual(body.Labels, []string{"UBUNTU-latest"}) {
 				t.Errorf("JIT request: %+v", body)
 			}
 			w.WriteHeader(201)
@@ -133,7 +133,7 @@ func TestEventHTTPRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	cfg := &config.Config{Events: config.EventsConfig{Endpoints: []config.EventEndpoint{{Name: "ci", Provider: "github", Secret: "test-secret"}}, Subscriptions: []config.EventSubscription{{Name: "runner", Source: "github/ci", Type: "github.workflow_job.queued", Labels: []string{"ubuntu-latest"}, Action: "run", GitHubRunner: true, Run: config.EventRunSpec{TimeoutSeconds: 120}}}}}
+	cfg := &config.Config{DeploymentsPath: t.TempDir(), Events: config.EventsConfig{Endpoints: []config.EventEndpoint{{Name: "ci", Provider: "github", Secret: "test-secret"}}, Subscriptions: []config.EventSubscription{{Name: "runner", Source: "github/ci", Action: "github_runner", Labels: []string{"UBUNTU-latest"}, GitHubRunner: config.GitHubRunnerSpec{TimeoutSeconds: 120}}}}}
 	cfg.Events.SetDefaults()
 	s := &Server{config: cfg, webhooks: webhook.DefaultRegistry(), runsManager: manager, githubApp: &webhook.GitHubApp{AppID: 42, PrivateKeyFile: keyPath, BaseURL: github.URL}}
 	router := gin.New()
@@ -164,6 +164,15 @@ func TestEventHTTPRunner(t *testing.T) {
 			t.Fatalf("unsigned delivery: %d", status)
 		}
 	}
+	cfg.Events.Subscriptions[0].Labels = []string{"unmatched-runner"}
+	if status := deliver("unmatched", "queued.payload.json", "test-secret"); status != 202 {
+		t.Fatalf("unmatched: %d", status)
+	}
+	s.deliveries.wg.Wait()
+	if apiCalls.Load() != 0 {
+		t.Fatalf("unmatched labels triggered GitHub API: %d", apiCalls.Load())
+	}
+	cfg.Events.Subscriptions[0].Labels = []string{"UBUNTU-latest"}
 	if status := deliver("one", "queued.payload.json", "test-secret"); status != 202 {
 		t.Fatalf("queued: %d", status)
 	}
@@ -220,7 +229,7 @@ func TestEventHTTPRunner(t *testing.T) {
 		t.Fatal("run runtime or timeout changed")
 	}
 	raw, _ := json.Marshal(records)
-	deliveryLog, _ := json.Marshal(s.deliveries.records)
+	deliveryLog, _ := json.Marshal(eventDeliveryLog(t, s))
 	output, err := os.ReadFile(manager.LogPath(records[0].ID))
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +248,7 @@ func TestEventHTTPRunner(t *testing.T) {
 
 func TestEventReadHTTPAuthorization(t *testing.T) {
 	s, client := setupWorkspaceTestServer(t)
-	s.config.Events.Subscriptions = []config.EventSubscription{{Name: "private", Action: "run", Run: config.EventRunSpec{Command: []string{"private-command"}, Env: map[string]string{"PRIVATE": "private-value"}}}}
+	s.config.Events.Subscriptions = []config.EventSubscription{{Name: "private", Action: "run", Run: runs.Spec{Command: []string{"private-command"}, Env: map[string]string{"PRIVATE": "private-value"}}}}
 	s.config.Events.Endpoints = []config.EventEndpoint{{Name: "private-endpoint", Secret: "endpoint-secret"}}
 	s.config.Events.GitHubApp.PrivateKeyFile = "/private/app-key.pem"
 	admin := client.login("admin", "admin-pass")
@@ -339,7 +348,7 @@ func TestEventHTTPEnvironmentAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	cfg := &config.Config{Events: config.EventsConfig{DeliveryLimit: 2, Endpoints: []config.EventEndpoint{{Name: "deploys", Provider: "github", Secret: "secret"}}, Subscriptions: []config.EventSubscription{{Name: "run", Type: "github.push", Action: "run", Run: config.EventRunSpec{Runtime: "firecracker", Image: "example/{{branch}}", Command: []string{"sh", "-c", "echo {{branch}}"}, WorkDir: "/{{branch}}", ArtifactPaths: []string{"/{{branch}}"}, Env: map[string]string{"REVISION": "{{revision}}"}}}}}}
+	cfg := &config.Config{DeploymentsPath: t.TempDir(), Events: config.EventsConfig{DeliveryLimit: 2, Endpoints: []config.EventEndpoint{{Name: "deploys", Provider: "github", Secret: "secret"}}, Subscriptions: []config.EventSubscription{{Name: "run", Type: "github.push", Action: "run", Run: runs.Spec{Runtime: "firecracker", Image: "example/{{branch}}", Command: []string{"sh", "-c", "echo {{branch}}"}, WorkDir: "/{{branch}}", ArtifactPaths: []string{"/{{branch}}"}, Env: map[string]string{"REVISION": "{{revision}}"}}}}}}
 	cfg.Events.SetDefaults()
 	s := &Server{config: cfg, webhooks: webhook.DefaultRegistry(), runsManager: manager}
 	router := gin.New()
@@ -364,7 +373,7 @@ func TestEventHTTPEnvironmentAndRetention(t *testing.T) {
 		}
 		s.deliveries.wg.Wait()
 	}
-	if len(s.deliveries.records) != 2 || s.deliveries.records[0].ID != "b" || s.deliveries.records[1].ID != "c" {
+	if len(eventDeliveryLog(t, s)) != 2 || eventDeliveryLog(t, s)[0].ID != "b" || eventDeliveryLog(t, s)[1].ID != "c" {
 		t.Fatal("delivery retention exceeded")
 	}
 	for range 3 {
@@ -409,7 +418,7 @@ func TestEventLegacyDeliveryID(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no deploy")
 	}
-	if len(s.deliveries.records) != 1 || s.deliveries.records[0].Outcome != "succeeded" {
+	if len(eventDeliveryLog(t, s)) != 1 || eventDeliveryLog(t, s)[0].Outcome != "succeeded" {
 		t.Fatal("legacy delivery not recorded")
 	}
 }
@@ -425,9 +434,9 @@ func TestEventHTTPUnavailableRunnerAndRedelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	cfg := &config.Config{Events: config.EventsConfig{
+	cfg := &config.Config{DeploymentsPath: t.TempDir(), Events: config.EventsConfig{
 		Endpoints:     []config.EventEndpoint{{Name: "ci", Provider: "github", Secret: "test-secret"}},
-		Subscriptions: []config.EventSubscription{{Name: "runner", Type: "github.workflow_job.queued", Labels: []string{"ubuntu-latest"}, Action: "run", GitHubRunner: true}},
+		Subscriptions: []config.EventSubscription{{Name: "runner", Action: "github_runner", Labels: []string{"UBUNTU-latest"}}},
 	}}
 	cfg.Events.SetDefaults()
 	s := &Server{config: cfg, webhooks: webhook.DefaultRegistry(), runsManager: manager}
@@ -457,8 +466,8 @@ func TestEventHTTPUnavailableRunnerAndRedelivery(t *testing.T) {
 	log.SetOutput(&logs)
 	defer log.SetOutput(previous)
 	deliver(202, "accepted")
-	if len(s.deliveries.records) != 1 || s.deliveries.records[0].Outcome != "failed" {
-		t.Fatalf("delivery not failed: %+v", s.deliveries.records)
+	if len(eventDeliveryLog(t, s)) != 1 || eventDeliveryLog(t, s)[0].Outcome != "failed" {
+		t.Fatalf("delivery not failed: %+v", eventDeliveryLog(t, s))
 	}
 	if !strings.Contains(logs.String(), "delivery failed: runtime firecracker unavailable") {
 		t.Fatalf("missing runtime failure log: %s", logs.String())
@@ -467,16 +476,16 @@ func TestEventHTTPUnavailableRunnerAndRedelivery(t *testing.T) {
 	if err != nil || len(records) != 0 {
 		t.Fatalf("unavailable runtime created a run: %+v %v", records, err)
 	}
-	first := s.deliveries.records[0]
 	deliver(202, "accepted")
-	if len(s.deliveries.records) != 1 || s.deliveries.records[0] == first || s.deliveries.records[0].Outcome != "failed" {
+	if len(eventDeliveryLog(t, s)) != 1 || eventDeliveryLog(t, s)[0].Outcome != "failed" {
 		t.Fatal("failed attempt was not replaced")
 	}
-	cfg.Events.Subscriptions[0].GitHubRunner = false
+	cfg.Events.Subscriptions[0].Action = "run"
+	cfg.Events.Subscriptions[0].Run.Image = "ghcr.io/actions/actions-runner"
 	cfg.Events.Subscriptions[0].Run.Runtime = "docker"
 	cfg.Events.Subscriptions[0].Run.Command = []string{"echo", "ok"}
 	deliver(202, "accepted")
-	if s.deliveries.records[0].Outcome != "succeeded" {
+	if eventDeliveryLog(t, s)[0].Outcome != "succeeded" {
 		t.Fatal("redelivery did not recover")
 	}
 	deliver(200, "duplicate")
@@ -505,8 +514,8 @@ func TestEventHTTPPartialFailureRedelivery(t *testing.T) {
 	s.config.Events = config.EventsConfig{
 		Endpoints: []config.EventEndpoint{{Name: "retry", Provider: "github", Secret: "test-secret"}},
 		Subscriptions: []config.EventSubscription{
-			{Name: "first", Type: "github.push", Action: "run", Run: config.EventRunSpec{Runtime: "firecracker", Image: "first", Command: []string{"echo", "ok"}}},
-			{Name: "second", Type: "github.push", Action: "run", Run: config.EventRunSpec{Runtime: "docker", Image: "second", Command: []string{"echo", "ok"}}},
+			{Name: "first", Type: "github.push", Action: "run", Run: runs.Spec{Runtime: "firecracker", Image: "first", Command: []string{"echo", "ok"}}},
+			{Name: "second", Type: "github.push", Action: "run", Run: runs.Spec{Runtime: "docker", Image: "second", Command: []string{"echo", "ok"}}},
 		},
 	}
 	payload, err := os.ReadFile("../webhook/testdata/github-push.json")
@@ -584,5 +593,113 @@ func TestEventHTTPPartialFailureRedelivery(t *testing.T) {
 	}
 	if len(listing.Runs) != 2 || counts["first"] != 1 || counts["second"] != 1 {
 		t.Fatalf("runs after redelivery: %s", raw)
+	}
+}
+
+func eventDeliveryLog(t *testing.T, s *Server) []deliveryRecord {
+	t.Helper()
+	records, err := s.deliveryRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return records
+}
+
+func TestEventHTTPDeliverySurvivesRestart(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{DeploymentsPath: root, Events: config.EventsConfig{
+		Endpoints: []config.EventEndpoint{{Name: "ci", Provider: "github", Secret: "test-secret"}},
+		Subscriptions: []config.EventSubscription{
+			{Name: "first", Type: "github.push", Action: "run", Run: runs.Spec{Runtime: "firecracker", Image: "first"}},
+			{Name: "second", Type: "github.push", Action: "run", Run: runs.Spec{Runtime: "docker", Image: "second"}},
+		},
+	}}
+	cfg.Events.SetDefaults()
+	rt := &eventRuntime{specs: make(chan runtimes.Spec, 4)}
+	start := func(docker bool) (*Server, *gin.Engine) {
+		t.Helper()
+		var additional []runtimes.Runtime
+		if docker {
+			additional = append(additional, &eventDockerRuntime{rt})
+		}
+		manager, err := runs.NewManager(root, rt, 1, additional...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := &Server{config: cfg, webhooks: webhook.DefaultRegistry(), runsManager: manager}
+		t.Cleanup(func() {
+			s.deliveries.wg.Wait()
+			_ = manager.Close()
+			if s.deliveries.store != nil {
+				_ = s.deliveries.store.Close()
+			}
+		})
+		router := gin.New()
+		router.POST("/api/event-hooks/:endpoint", s.receiveEvent)
+		admin := router.Group("/api", actorMiddleware(testActor(auth.RoleAdmin, nil)))
+		admin.GET("/events/deliveries", s.listEventDeliveries)
+		admin.GET("/runs", s.listRuns)
+		return s, router
+	}
+	payload, err := os.ReadFile("../webhook/testdata/github-push.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliver := func(s *Server, router *gin.Engine, id string, want int) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/event-hooks/ci", bytes.NewReader(payload))
+		req.Header.Set("X-GitHub-Event", "push")
+		req.Header.Set("X-GitHub-Delivery", id)
+		mac := hmac.New(sha256.New, []byte("test-secret"))
+		mac.Write(payload)
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != want {
+			t.Fatalf("delivery %s: %d %s", id, w.Code, w.Body.String())
+		}
+		s.deliveries.wg.Wait()
+	}
+	before, router := start(false)
+	deliver(before, router, "partial", http.StatusAccepted)
+	cfg.Events.Subscriptions[1].Type = "github.pull_request.opened"
+	deliver(before, router, "complete", http.StatusAccepted)
+	cfg.Events.Subscriptions[1].Type = "github.push"
+	if err := before.runsManager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := before.deliveries.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	after, router := start(true)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/events/deliveries", nil))
+	var log struct {
+		Deliveries []deliveryRecord `json:"deliveries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &log); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || len(log.Deliveries) != 2 || log.Deliveries[0].Outcome != "failed" || log.Deliveries[0].Subscriptions["first"] != "succeeded" || log.Deliveries[0].Subscriptions["second"] != "failed" {
+		t.Fatalf("persisted deliveries: %d %s", w.Code, w.Body.String())
+	}
+	deliver(after, router, "complete", http.StatusOK)
+	deliver(after, router, "partial", http.StatusAccepted)
+	deliver(after, router, "partial", http.StatusOK)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/runs", nil))
+	var listing struct {
+		Runs []runs.Run `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, run := range listing.Runs {
+		counts[run.Spec.Image]++
+	}
+	if w.Code != http.StatusOK || len(listing.Runs) != 3 || counts["first"] != 2 || counts["second"] != 1 {
+		t.Fatalf("runs after restart: %d %s", w.Code, w.Body.String())
 	}
 }

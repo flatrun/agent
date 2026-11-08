@@ -32,16 +32,16 @@ func (s Status) Finished() bool {
 }
 
 type Spec struct {
-	Runtime        runtimes.Type     `json:"runtime"`
-	Image          string            `json:"image"`
-	Command        []string          `json:"command,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	WorkDir        string            `json:"workdir,omitempty"`
-	CPUs           float64           `json:"cpus,omitempty"`
-	MemoryBytes    uint64            `json:"memory_bytes,omitempty"`
-	Egress         bool              `json:"egress"`
-	TimeoutSeconds int               `json:"timeout_seconds"`
-	ArtifactPaths  []string          `json:"artifact_paths,omitempty"`
+	Runtime        runtimes.Type     `yaml:"runtime" json:"runtime"`
+	Image          string            `yaml:"image" json:"image"`
+	Command        []string          `yaml:"command" json:"command,omitempty"`
+	Env            map[string]string `yaml:"env" json:"env,omitempty"`
+	WorkDir        string            `yaml:"workdir" json:"workdir,omitempty"`
+	CPUs           float64           `yaml:"cpus" json:"cpus,omitempty"`
+	MemoryBytes    uint64            `yaml:"memory_bytes" json:"memory_bytes,omitempty"`
+	Egress         bool              `yaml:"egress" json:"egress"`
+	TimeoutSeconds int               `yaml:"timeout_seconds" json:"timeout_seconds"`
+	ArtifactPaths  []string          `yaml:"artifact_paths" json:"artifact_paths,omitempty"`
 }
 
 func (s *Spec) Validate() error {

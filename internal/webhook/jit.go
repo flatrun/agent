@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flatrun/agent/internal/events"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
@@ -24,8 +25,9 @@ type GitHubApp struct {
 	Client         *http.Client
 }
 
-func (a GitHubApp) JIT(ctx context.Context, e *Envelope, group int64) (string, error) {
-	if e.InstallationID <= 0 || len(strings.Split(e.Subject, "/")) != 2 {
+func (a GitHubApp) JIT(ctx context.Context, e events.Event, group int64, labels []string) (string, error) {
+	installationID, _ := e.Attributes["installation_id"].(int64)
+	if installationID <= 0 || len(strings.Split(e.Attribute("subject"), "/")) != 2 {
 		return "", errors.New("missing installation or repository")
 	}
 	raw, err := os.ReadFile(a.PrivateKeyFile)
@@ -44,7 +46,7 @@ func (a GitHubApp) JIT(ctx context.Context, e *Envelope, group int64) (string, e
 	var installation struct {
 		Token string `json:"token"`
 	}
-	if err := a.post(ctx, fmt.Sprintf("/app/installations/%d/access_tokens", e.InstallationID), token, map[string]any{"repositories": []string{strings.Split(e.Subject, "/")[1]}}, &installation); err != nil {
+	if err := a.post(ctx, fmt.Sprintf("/app/installations/%d/access_tokens", installationID), token, map[string]any{"repositories": []string{strings.Split(e.Attribute("subject"), "/")[1]}}, &installation); err != nil {
 		return "", err
 	}
 	if installation.Token == "" {
@@ -53,8 +55,8 @@ func (a GitHubApp) JIT(ctx context.Context, e *Envelope, group int64) (string, e
 	var config struct {
 		Encoded string `json:"encoded_jit_config"`
 	}
-	parts := strings.Split(e.Subject, "/")
-	err = a.post(ctx, "/repos/"+url.PathEscape(parts[0])+"/"+url.PathEscape(parts[1])+"/actions/runners/generate-jitconfig", installation.Token, map[string]any{"name": "flatrun-" + uuid.NewString(), "runner_group_id": group, "labels": e.Labels, "work_folder": "_work"}, &config)
+	parts := strings.Split(e.Attribute("subject"), "/")
+	err = a.post(ctx, "/repos/"+url.PathEscape(parts[0])+"/"+url.PathEscape(parts[1])+"/actions/runners/generate-jitconfig", installation.Token, map[string]any{"name": "flatrun-" + uuid.NewString(), "runner_group_id": group, "labels": labels, "work_folder": "_work"}, &config)
 	if err != nil {
 		return "", err
 	}

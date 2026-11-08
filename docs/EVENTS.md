@@ -20,22 +20,21 @@ events:
   subscriptions:
     - name: actions
       source: github/ci
-      type: github.workflow_job.queued
+      action: github_runner
       labels: [self-hosted, flatrun]
-      action: run
-      github_runner: true
-      runner_group_id: 1
-      run:
+      github_runner:
+        runner_group_id: 1
         image: ghcr.io/actions/actions-runner
         runtime: firecracker
         timeout_seconds: 600
 ```
 
-Events carry `id`, `source` (provider/endpoint), `type`, `subject` (repository),
-`time`, raw JSON `data`, and extracted `attributes`. GitHub types include
+Adapters produce the existing events model with `id`, `source`
+(provider/endpoint), `type`, `occurred_at`, and extracted `attributes`.
+GitHub types include
 `github.push`, `github.pull_request.opened`, and `github.workflow_job.queued`.
 Attributes include `branch`, `revision`, `pr`, `repository`, and, for jobs,
-`job_id`. Job labels are a separate list. Event time uses the job creation time
+`job_id`, `installation_id`, `subject`, and `labels`. Event time uses the job creation time
 when supplied, otherwise the receive time.
 
 A subscription matches its source, type, every attribute filter, and every label
@@ -55,8 +54,10 @@ Actions:
   `FLATRUN_EVENT_REVISION`, `FLATRUN_EVENT_JOB_ID`, `FLATRUN_EVENT_TYPE`, and
   `FLATRUN_EVENT_SUBJECT`. Quote these variables when using them in shell commands
   and never evaluate them as shell code.
-- `notify`: publish the event type and repository to the existing notification
-  rules.
+- `github_runner`: set subscription `labels` (required) and supply a
+  `github_runner` block with optional `runner_group_id`, `runtime`, `image`, `timeout_seconds`, `cpus`, and
+  `memory_bytes`. It always matches `github.workflow_job.queued`; omit `type`.
+- `notify`: publish the same event to the existing notification rules.
 
 Existing deployment URLs, secrets, responses, and push/PR behavior are preserved
 through built-in deploy and preview subscriptions. They also use normalized
@@ -71,7 +72,7 @@ The token is restricted to the delivery's repository.
 
 Runner subscriptions require at least one label. Only queued jobs start runners,
 and every configured label must be present.
-The runner name is unique. JIT labels come from the job and the work folder is
+The runner name is unique. JIT labels come from the subscription and the work folder is
 `_work`. Installation tokens and JIT configuration are never written to records
 or the delivery log. The run receives JIT configuration only as secret env
 `JIT`; its command is `sh -c 'exec ./run.sh --jitconfig "$JIT"'` in
@@ -98,10 +99,11 @@ Verified deliveries return 202 before actions execute. Processing is bounded to
 another action while processing, succeeded, or ignored. A failed delivery may be
 redelivered with the same ID; the new attempt replaces its record. Missing
 delivery IDs use a payload hash. IDs and outcomes are
-kept in memory with the recent delivery log, default 1000 entries, maximum
-10000. Completed entries are evicted oldest first. Restart or eviction removes
-deduplication history. Failures remain recorded and are not retried automatically.
-The queue is not durable across restarts.
+stored in the existing events SQLite database with per-subscription outcomes,
+default 1000 entries, maximum 10000. Completed entries are evicted oldest first.
+Deduplication history survives restarts until eviction. Failed deliveries retry
+only subscriptions that did not succeed. Failures are not retried automatically.
+Actions in progress at shutdown are not resumed automatically.
 
 `GET /api/events/subscriptions` lists configured subscriptions.
 `GET /api/events/deliveries` lists recent IDs, sources, types, times, and outcomes

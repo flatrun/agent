@@ -4,6 +4,8 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+
+	"github.com/flatrun/agent/internal/events"
 )
 
 // Generic is a deploy hook any CI system can call: X-FlatRun-Token carries the
@@ -20,7 +22,12 @@ func (Generic) Verify(h http.Header, _ []byte, secret string) error {
 	return nil
 }
 
-func (Generic) Parse(_ http.Header, body []byte) (*Event, error) {
+func (Generic) Parse(h http.Header, body []byte) (*Event, error) {
+	_, parsed, err := (Generic{}).ParseEvent(h, body)
+	return parsed, err
+}
+
+func (Generic) ParseEvent(_ http.Header, body []byte) (events.Event, *Event, error) {
 	var p struct {
 		Type       string            `json:"type"`
 		Subject    string            `json:"subject"`
@@ -31,8 +38,13 @@ func (Generic) Parse(_ http.Header, body []byte) (*Event, error) {
 	}
 	if len(body) > 0 {
 		if err := json.Unmarshal(body, &p); err != nil {
-			return nil, err
+			return events.Event{}, nil, err
 		}
 	}
-	return &Event{Kind: EventPush, Branch: p.Branch, Revision: p.Revision, Envelope: &Envelope{Type: p.Type, Subject: p.Subject, Attributes: p.Attributes, Labels: p.Labels}}, nil
+	attributes := make(map[string]any, len(p.Attributes)+2)
+	for key, value := range p.Attributes {
+		attributes[key] = value
+	}
+	attributes["subject"], attributes["labels"] = p.Subject, p.Labels
+	return events.Event{Type: p.Type, Attributes: attributes}, &Event{Kind: EventPush, Branch: p.Branch, Revision: p.Revision}, nil
 }

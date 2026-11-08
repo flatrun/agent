@@ -15,8 +15,8 @@ func TestStoreRecordsMigrationVersionAndPreservesIncidents(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT MAX(version_id) FROM events_schema_version WHERE is_applied = 1`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("schema version = %d, want 1", version)
+	if version != 2 {
+		t.Fatalf("schema version = %d, want 2", version)
 	}
 
 	now := time.Now().UTC()
