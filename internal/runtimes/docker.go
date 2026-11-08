@@ -83,7 +83,7 @@ func (d *Docker) Create(ctx context.Context, spec Spec) (Instance, error) {
 	}
 
 	pids := int64(1024)
-	created, err := d.cli.ContainerCreate(ctx,
+	created, err := d.createContainer(ctx,
 		&container.Config{
 			Image:      spec.Image,
 			Cmd:        spec.Command,
@@ -100,12 +100,31 @@ func (d *Docker) Create(ctx context.Context, spec Spec) (Instance, error) {
 				PidsLimit: &pids,
 			},
 		},
-		nil, nil, "flatrun-run-"+id)
+		"flatrun-run-"+id)
 	if err != nil {
 		return nil, fmt.Errorf("create container: %w", err)
 	}
 	inst.container = created.ID
 	return inst, nil
+}
+
+func (d *Docker) createContainer(ctx context.Context, config *container.Config, host *container.HostConfig, name string) (container.CreateResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return container.CreateResponse{}, err
+	}
+	// Keep the create response observable so cancellation cannot strand a container in the daemon.
+	createContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	created, err := d.cli.ContainerCreate(createContext, config, host, nil, nil, name)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return container.CreateResponse{}, errors.Join(err, d.DestroyByID(cleanup, config.Labels[Label]))
+	}
+	return created, nil
 }
 
 // EgressNetwork is shared by every instance that may reach the outside.
