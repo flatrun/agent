@@ -97,7 +97,7 @@ func (f *Firecracker) prepareRoot(ctx context.Context, spec Spec, id string) (st
 		return "", command, err
 	}
 	defer os.RemoveAll(staging)
-	created, err := f.docker.cli.ContainerCreate(ctx, &container.Config{Image: image.ID, Cmd: []string{"/flatrun-init"}, Labels: map[string]string{Label: id, ScopeLabel: f.Scope}}, nil, nil, nil, "")
+	created, err := f.exporter().createContainer(ctx, &container.Config{Image: image.ID, Cmd: []string{"/flatrun-init"}, Labels: map[string]string{Label: id, ScopeLabel: f.Scope}}, nil, "")
 	if err != nil {
 		return "", command, err
 	}

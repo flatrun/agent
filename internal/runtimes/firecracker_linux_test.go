@@ -27,6 +27,34 @@ func TestFirecrackerAvailabilityReportsMissingRequirements(t *testing.T) {
 	}
 }
 
+func TestFirecrackerCreateCancellationLeavesNoContainer(t *testing.T) {
+	d := dockerRuntime(t)
+	dir := t.TempDir()
+	init := filepath.Join(dir, "guest-init")
+	if err := os.WriteFile(init, []byte("unused after cancellation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := NewFirecracker(FirecrackerConfig{StateDir: dir, ChrootBaseDir: filepath.Join(dir, "jailer"), GuestInit: init}, d, d.Scope)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hook := cancelDuringDockerCreate(t, d, cancel)
+	instance, err := f.Create(ctx, Spec{Image: testImage, Command: []string{"true"}})
+	if !hook.called {
+		t.Fatalf("create never reached cancellation hook: %v", err)
+	}
+	if instance != nil || !errors.Is(err, context.Canceled) {
+		t.Errorf("create = %v, %v; want nil, canceled", instance, err)
+	}
+	left, err := d.Leftovers(context.Background())
+	if err != nil || len(left) != 0 {
+		t.Fatalf("containers remain after canceled create: %v (err %v)", left, err)
+	}
+	left, err = f.Leftovers(context.Background())
+	if err != nil || len(left) != 0 {
+		t.Fatalf("VM state remains after canceled create: %v (err %v)", left, err)
+	}
+}
+
 func TestFirecrackerStateAndScope(t *testing.T) {
 	root := t.TempDir()
 	first := NewFirecracker(FirecrackerConfig{StateDir: root, Kernel: "/configured-kernel"}, nil, "first")

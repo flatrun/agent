@@ -5,16 +5,82 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/docker/docker/client"
 	"github.com/google/uuid"
 )
 
 const testImage = "busybox:latest"
+
+type cancelCreateTransport struct {
+	http.RoundTripper
+	cancel context.CancelFunc
+	called bool
+}
+
+func (c *cancelCreateTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	response, err := c.RoundTripper.RoundTrip(req)
+	if err != nil || req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/containers/create") || response.StatusCode != http.StatusCreated {
+		return response, err
+	}
+	c.called = true
+	c.cancel()
+	if err := req.Context().Err(); err != nil {
+		response.Body.Close()
+		return nil, err
+	}
+	return response, nil
+}
+
+func cancelDuringDockerCreate(t *testing.T, d *Docker, cancel context.CancelFunc) *cancelCreateTransport {
+	t.Helper()
+	original := d.cli
+	httpClient := original.HTTPClient()
+	transport := &cancelCreateTransport{RoundTripper: httpClient.Transport, cancel: cancel}
+	httpClient.Transport = transport
+	cli, err := client.NewClientWithOpts(client.WithHost(original.DaemonHost()), client.WithVersion(original.ClientVersion()), client.WithHTTPClient(httpClient))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.cli = cli
+	t.Cleanup(func() {
+		d.cli = original
+		left, err := d.Leftovers(context.Background())
+		if err != nil {
+			t.Error(err)
+		}
+		for _, id := range left {
+			if err := d.DestroyByID(context.Background(), id); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	return transport
+}
+
+func TestDockerCreateCancellationLeavesNoContainer(t *testing.T) {
+	d := dockerRuntime(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hook := cancelDuringDockerCreate(t, d, cancel)
+	instance, err := d.Create(ctx, Spec{Image: testImage, Command: []string{"true"}})
+	if !hook.called {
+		t.Fatalf("create never reached cancellation hook: %v", err)
+	}
+	if instance != nil || !errors.Is(err, context.Canceled) {
+		t.Errorf("create = %v, %v; want nil, canceled", instance, err)
+	}
+	left, err := d.Leftovers(context.Background())
+	if err != nil || len(left) != 0 {
+		t.Fatalf("containers remain after canceled create: %v (err %v)", left, err)
+	}
+}
 
 func dockerRuntime(t *testing.T) *Docker {
 	t.Helper()
