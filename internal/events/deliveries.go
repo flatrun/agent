@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var ErrQueueFull = errors.New("event queue full")
+
 type Delivery struct {
 	ID            string            `json:"id"`
 	Source        string            `json:"source"`
@@ -60,7 +62,7 @@ func (s *Store) BeginDelivery(event Event, limit int) (*Delivery, bool, error) {
 			return nil, false, err
 		}
 		if removed < int64(count-limit+1) {
-			return nil, false, errors.New("event queue full")
+			return nil, false, ErrQueueFull
 		}
 	}
 	data, err = json.Marshal(record)

@@ -55,7 +55,9 @@ func Normalize(p Provider, endpoint string, h http.Header, body []byte) (events.
 			e.Attributes[k] = v
 		}
 	}
-	e.Attributes["repository"] = e.Attributes["subject"]
+	if e.Attributes["repository"] == nil || e.Attributes["repository"] == "" {
+		e.Attributes["repository"] = e.Attributes["subject"]
+	}
 	e.Title, e.Message, e.Severity = e.Type, e.Attribute("subject"), events.SeverityInfo
 	return e, ev, nil
 }

@@ -31,3 +31,13 @@ func TestWorkflowEvent(t *testing.T) {
 		t.Fatal("incorrect filter matched")
 	}
 }
+
+func TestGenericRepositoryPreserved(t *testing.T) {
+	e, _, err := Normalize(Generic{}, "ci", http.Header{}, []byte(`{"subject":"subject","attributes":{"repository":"explicit-repository"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Attribute("repository") != "explicit-repository" {
+		t.Fatalf("repository: %v", e.Attributes["repository"])
+	}
+}

@@ -703,3 +703,119 @@ func TestEventHTTPDeliverySurvivesRestart(t *testing.T) {
 		t.Fatalf("runs after restart: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestEventHTTPInstallationAttribute(t *testing.T) {
+	s := &Server{config: &config.Config{DeploymentsPath: t.TempDir(), Events: config.EventsConfig{
+		Endpoints:     []config.EventEndpoint{{Name: "ci", Provider: "github", Secret: "secret"}},
+		Subscriptions: []config.EventSubscription{{Name: "installation", Type: "github.workflow_job.queued", Action: "run", Attributes: map[string]string{"installation_id": "3456996"}}},
+	}}, webhooks: webhook.DefaultRegistry()}
+	router := gin.New()
+	router.POST("/api/event-hooks/:endpoint", s.receiveEvent)
+	payload, err := os.ReadFile("../webhook/testdata/queued.payload.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/api/event-hooks/ci", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "workflow_job")
+	mac := hmac.New(sha256.New, []byte("secret"))
+	mac.Write(payload)
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 202 {
+		t.Fatalf("receive: %d %s", w.Code, w.Body.String())
+	}
+	s.deliveries.wg.Wait()
+	defer s.deliveries.store.Close()
+	records := eventDeliveryLog(t, s)
+	if len(records) != 1 || records[0].Subscriptions["installation"] != "failed" {
+		t.Fatalf("subscription did not match: %+v", records)
+	}
+}
+
+func TestEventLegacyStoreUnavailableAndCapacity(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		t.Run(fmt.Sprint(full), func(t *testing.T) {
+			runner := &fakeRunner{optsCh: make(chan actionOptions, 1)}
+			s, router, secret := newWebhookTestServer(t, runner, true)
+			if full {
+				s.deliveries.active = 128
+			} else {
+				blocked := filepath.Join(t.TempDir(), "file")
+				if err := os.WriteFile(blocked, []byte("blocked"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				s.config.DeploymentsPath = blocked
+			}
+			payload, err := os.ReadFile("../webhook/testdata/github-push.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest("POST", "/api/hooks/github/hello", bytes.NewReader(payload))
+			req.Header.Set("X-GitHub-Event", "push")
+			req.Header.Set("X-GitHub-Delivery", "legacy")
+			mac := hmac.New(sha256.New, []byte(secret))
+			mac.Write(payload)
+			req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			want := http.StatusAccepted
+			if full {
+				want = http.StatusServiceUnavailable
+			}
+			if w.Code != want {
+				t.Fatalf("receive: %d %s", w.Code, w.Body.String())
+			}
+			if !full {
+				select {
+				case <-runner.optsCh:
+				case <-time.After(5 * time.Second):
+					t.Fatal("no deploy")
+				}
+				s.deliveries.wg.Wait()
+				if s.deliveries.active != 0 {
+					t.Fatal("unexpected active delivery")
+				}
+			}
+		})
+	}
+}
+
+func TestEventLegacySubscriptionsObject(t *testing.T) {
+	runner := &fakeRunner{optsCh: make(chan actionOptions, 1)}
+	s, router, secret := newWebhookTestServer(t, runner, true)
+	router.GET("/api/events/deliveries", actorMiddleware(testActor(auth.RoleAdmin, nil)), s.listEventDeliveries)
+	payload, err := os.ReadFile("../webhook/testdata/github-push.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/api/hooks/github/hello", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-GitHub-Delivery", "legacy-object")
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 202 {
+		t.Fatalf("receive: %d %s", w.Code, w.Body.String())
+	}
+	select {
+	case <-runner.optsCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no deploy")
+	}
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/api/events/deliveries", nil))
+	var listing struct {
+		Deliveries []struct {
+			Subscriptions map[string]string `json:"subscriptions"`
+		} `json:"deliveries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || len(listing.Deliveries) != 1 || listing.Deliveries[0].Subscriptions == nil || len(listing.Deliveries[0].Subscriptions) != 0 {
+		t.Fatalf("listing: %d %s", w.Code, w.Body.String())
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/flatrun/agent/internal/deploys"
+	"github.com/flatrun/agent/internal/events"
 	"github.com/flatrun/agent/internal/webhook"
 	"github.com/flatrun/agent/pkg/models"
 	"github.com/gin-gonic/gin"
@@ -71,21 +72,26 @@ func (s *Server) receiveWebhook(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "duplicate"})
 			return
 		}
-		if err != nil {
+		if errors.Is(err, events.ErrQueueFull) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "event queue full"})
 			return
 		}
-		defer s.deliveries.wg.Done()
-		defer func() {
-			outcome := "succeeded"
-			if c.Writer.Status() == http.StatusOK {
-				outcome = "ignored"
-			}
-			if c.Writer.Status() >= 400 {
-				outcome = "failed"
-			}
-			s.deliveries.finish(record, outcome, nil)
-		}()
+		if err != nil {
+			log.Printf("Begin webhook delivery: %v", err)
+		}
+		if record != nil && err == nil {
+			defer s.deliveries.wg.Done()
+			defer func() {
+				outcome := "succeeded"
+				if c.Writer.Status() == http.StatusOK {
+					outcome = "ignored"
+				}
+				if c.Writer.Status() >= 400 {
+					outcome = "failed"
+				}
+				s.deliveries.finish(record, outcome, nil)
+			}()
+		}
 	}
 	if !event.MatchesRepo(src.Ref) {
 		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "repository does not match this deployment"})

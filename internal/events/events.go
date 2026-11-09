@@ -170,8 +170,14 @@ func CorrelationKey(event Event) string {
 }
 
 func (e Event) Attribute(key string) string {
-	value, _ := e.Attributes[key].(string)
-	return value
+	value := e.Attributes[key]
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return fmt.Sprint(value)
 }
 
 func (e Event) Labels() []string {

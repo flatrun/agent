@@ -271,7 +271,7 @@ func (s *Server) beginDelivery(event events.Event, limit int) (*deliveryRecord, 
 		return nil, false, err
 	}
 	if state.closed || state.active >= 128 {
-		return nil, false, errors.New("event queue full")
+		return nil, false, events.ErrQueueFull
 	}
 	record, duplicate, err := store.BeginDelivery(event, limit)
 	if err != nil || duplicate {
@@ -285,6 +285,9 @@ func (s *Server) beginDelivery(event events.Event, limit int) (*deliveryRecord, 
 func (state *deliveryState) finish(record *deliveryRecord, outcome string, outcomes map[string]string) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	if outcomes == nil {
+		outcomes = map[string]string{}
+	}
 	record.Outcome, record.Subscriptions = outcome, outcomes
 	if err := state.store.FinishDelivery(*record); err != nil {
 		log.Printf("Record event delivery: %v", err)
