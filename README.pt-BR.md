@@ -7,7 +7,7 @@
   <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · Português do Brasil · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-**Alternativa de código aberto e auto-hospedada ao Railway e ao Render.** Implante projetos Docker Compose nos seus próprios servidores.
+**Alternativa de código aberto ao Railway, ao Render e ao E2B.** Implante aplicações, execute sandboxes para agentes de IA e rode jobs de CI a partir do GitHub, do GitLab ou de qualquer webhook nos seus próprios servidores.
 
 O FlatRun leva o fluxo de trabalho do Railway para um servidor que você controla: projetos formados por serviços, ambientes, implantações que você pode reverter, variáveis compartilhadas entre projetos e modelos para aplicações comuns. Cada projeto é uma pasta com um arquivo Compose padrão, então continua rodando com `docker compose` se você parar de usar o FlatRun.
 
@@ -48,7 +48,9 @@ flatrun health
 - Notificações relacionadas agrupadas em incidentes úteis.
 - Espaços de trabalho para equipes, com proprietários, administradores e membros.
 - Segredos criptografados, rotacionáveis e nunca exibidos novamente, ou fornecidos por Infisical, Vault, OpenBao, Doppler ou 1Password.
-- Variáveis que referenciam as de outro projeto, e um histórico de cada implantação com seus logs.
+- Variáveis que referenciam as de outro projeto, e o histórico das últimas 50 implantações com seus logs.
+- Sandboxes que executam um comando em uma microVM Firecracker nova, ou em um contêiner Docker para código confiável, sem rede por padrão, e coletam a saída e os arquivos pedidos.
+- Jobs de CI: cada job do GitHub Actions com seus rótulos recebe um runner auto-hospedado de uso único, e um push ou webhook do GitHub, do GitLab ou de qualquer serviço pode iniciar um comando em uma instância nova.
 
 O painel, o CLI, o GitHub Actions e as integrações externas usam a mesma API. A
 descrição OpenAPI exata do agente instalado está disponível em

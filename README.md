@@ -12,7 +12,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
-**Open source, self-hosted alternative to Railway and Render.** Deploy Docker Compose projects on your own servers.
+**Open source alternative to Railway, Render and E2B.** Deploy apps, run sandboxes for AI agents, and run CI jobs from GitHub, GitLab or any webhook on your own servers.
 
 FlatRun brings the Railway workflow to a server you control: projects made of services, environments, deployments you can roll back, variables shared between projects, and templates for common apps. Each project is a directory with a standard Compose file, so it keeps running under plain `docker compose` if you stop using FlatRun.
 
@@ -62,13 +62,15 @@ FlatRun inverts that. Every app is a directory: a `docker-compose.yml` and its d
 - **S3-compatible backups**: schedule deployment backups to any S3-compatible object store. Set your own endpoint and bucket; it is not tied to AWS.
 - **AI-native operation**: a built-in assistant reads a deployment's logs and config and answers in plain operator terms: diagnose a failure, suggest improvements, harden security, or explain what a stack is doing. It is off until you configure a provider, and secrets are redacted before anything is sent.
 - **Automatable end to end**: the same actions are available from the UI, the `flatrun` CLI, and a GitHub Action, so a deploy is a dashboard click or a CI step.
+- **Sandboxes**: run one command in a fresh Firecracker microVM, or a Docker container for trusted code, with no network unless you allow it, and collect its output and the files you ask for.
+- **CI jobs**: each queued GitHub Actions job that carries your labels gets a single-use self-hosted runner, and a push or webhook from GitHub, GitLab or any service can start a command in a fresh instance.
 - **Fleet management**: connect independent FlatRun servers, give each peer scoped access, and manage its deployments from one dashboard.
 - **Managed scaling**: validate a stateless workload, scale it through Docker Swarm or k3s, and use peer capacity only when an administrator grants explicit limits.
 - **Grouped notifications**: related events become one incident, then delivery rules route useful updates to email, webhooks, or other supported targets.
 - **Workspaces**: teams with owners, admins and members, and projects that belong to a team rather than to one login.
 - **Secrets that stay sealed**: secrets are encrypted at rest, can be rotated on a schedule, and are never shown again once saved. Infisical, HashiCorp Vault or OpenBao, Doppler and 1Password Connect can supply them instead, fetched again on every deploy.
 - **Variables that reference each other**: `${{ billing.API_URL }}` pulls a value from another project, so a change in one place reaches every project that uses it.
-- **Deploy history**: every deploy is kept with its commit, phase and logs, ready to redeploy or roll back.
+- **Deploy history**: the last 50 deploys of each project are kept with their commit, phase and logs, ready to redeploy or roll back.
 
 ## What gets installed
 

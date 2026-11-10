@@ -35,6 +35,10 @@ func NewStore(basePath string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if _, err := db.Exec(`UPDATE deliveries SET outcome = 'failed', record = json_set(record, '$.outcome', 'failed') WHERE outcome = 'processing'`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 

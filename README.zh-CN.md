@@ -7,7 +7,7 @@
   <a href="README.md">English</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português do Brasil</a> · 简体中文
 </p>
 
-**Railway 和 Render 的开源、自托管替代方案。** 在你自己的服务器上部署 Docker Compose 项目。
+**Railway、Render 和 E2B 的开源替代方案。** 在你自己的服务器上部署应用、为 AI 智能体运行沙箱，并运行来自 GitHub、GitLab 或任意 webhook 的 CI 任务。
 
 FlatRun 把 Railway 的工作方式带到你掌控的服务器上：由服务组成的项目、环境、可以回滚的部署、在项目之间共享的变量，以及常用应用的模板。每个项目都是一个包含标准 Compose 文件的目录，即使不再使用 FlatRun，也能继续用 `docker compose` 运行。
 
@@ -47,7 +47,9 @@ flatrun health
 - 将相关通知合并为有用的事件。
 - 面向团队的工作区，包含所有者、管理员和成员角色。
 - 加密的密钥，可以轮换，保存后不再显示，也可以由 Infisical、Vault、OpenBao、Doppler 或 1Password 提供。
-- 可以引用其他项目变量的变量，以及每次部署的记录和日志。
+- 可以引用其他项目变量的变量，以及最近 50 次部署的记录和日志。
+- 沙箱：在全新的 Firecracker 微虚拟机中运行一条命令，可信代码也可以用 Docker 容器运行，默认不联网，并收集输出和你指定的文件。
+- CI 任务：带有你所设标签的每个排队 GitHub Actions 任务都会得到一个一次性的自托管 runner，来自 GitHub、GitLab 或任意服务的推送或 webhook 也可以在全新实例中启动一条命令。
 
 控制面板、CLI、GitHub Actions 和外部集成都使用同一个 API。已安装代理的准确
 OpenAPI 描述位于 `/api/openapi.json`。

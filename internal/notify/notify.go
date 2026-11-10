@@ -462,3 +462,7 @@ func eventPanels(event events.Event) []Panel {
 	}
 	return panels
 }
+
+func (s *Service) EventStore() (*events.Store, error) {
+	return s.store, s.storeErr
+}

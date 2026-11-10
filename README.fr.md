@@ -7,7 +7,7 @@
   <a href="README.md">English</a> · Français · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português do Brasil</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-**Alternative open source et auto-hébergée à Railway et Render.** Déployez des projets Docker Compose sur vos propres serveurs.
+**Alternative open source à Railway, Render et E2B.** Déployez des applications, exécutez des sandboxes pour agents IA et lancez des tâches CI depuis GitHub, GitLab ou n'importe quel webhook, sur vos propres serveurs.
 
 FlatRun apporte le fonctionnement de Railway sur un serveur que vous contrôlez : des projets composés de services, des environnements, des déploiements que vous pouvez annuler, des variables partagées entre projets et des modèles pour les applications courantes. Chaque projet est un dossier avec un fichier Compose standard : il continue de tourner avec `docker compose` si vous arrêtez d'utiliser FlatRun.
 
@@ -48,7 +48,9 @@ flatrun health
 - Des notifications regroupées en incidents utiles.
 - Des espaces de travail pour les équipes, avec propriétaires, administrateurs et membres.
 - Des secrets chiffrés, renouvelables, jamais réaffichés, ou fournis par Infisical, Vault, OpenBao, Doppler ou 1Password.
-- Des variables qui font référence à celles d'un autre projet, et un historique de chaque déploiement avec ses journaux.
+- Des variables qui font référence à celles d'un autre projet, et l'historique des 50 derniers déploiements avec leurs journaux.
+- Des sandboxes qui exécutent une commande dans une microVM Firecracker neuve, ou un conteneur Docker pour du code de confiance, sans réseau par défaut, et récupèrent sa sortie et les fichiers demandés.
+- Des tâches CI : chaque job GitHub Actions portant vos labels reçoit un runner auto-hébergé à usage unique, et un push ou un webhook de GitHub, GitLab ou tout autre service peut lancer une commande dans une instance neuve.
 
 Le tableau de bord, le CLI, GitHub Actions et les intégrations externes utilisent
 la même API. La description OpenAPI exacte de l'agent installé est disponible à
