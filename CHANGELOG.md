@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0-beta.15] - 2026-11-10
+
+### Added
+- Run commands in fresh Docker containers through the API, with timeouts, live logs, downloadable output files and cancellation
+- Runs support CPU and memory limits, with network access disabled by default
+- Runs can use Firecracker microVMs with a separate kernel for each run
+- The runs API lists available runtimes and explains why a runtime is unavailable
+- Secret environment values of a run are left out of its record and masked in its logs and errors; saved output files are not redacted
+- Event subscriptions trigger deploys, previews, runs or notifications from matching GitHub, GitLab and generic webhooks, with a delivery history
+- Repeated webhook deliveries are skipped; redelivering a failed delivery retries only the actions that did not succeed
+- Matching queued GitHub Actions jobs start single-use self-hosted runners, in Firecracker by default
+
+### Fixed
+- Docker runs cancelled or timed out while their container was being created no longer leave it behind
+- API keys record the correct IP address for their last use
+
+### Upgrading
+- Admins and operators can read and start runs by default, and viewers can read them. Custom permission grants need `runs:read` and `runs:write`
+- Firecracker stays off until a guest kernel is configured and the host meets its requirements; see `docs/RUNTIMES_AND_RUNS.md`. Docker runs work without it
+- Event subscriptions need agent configuration and a restart, and GitHub Actions runners also need a GitHub App; see `docs/EVENTS.md`
+- Existing deployment webhooks keep working
+
 ## [0.4.0-beta.14] - 2026-10-28
 
 ### Fixed
