@@ -47,7 +47,9 @@ flatrun health
 - 将相关通知合并为有用的事件。
 - 面向团队的工作区，包含所有者、管理员和成员角色。
 - 加密的密钥，可以轮换，保存后不再显示，也可以由 Infisical、Vault、OpenBao、Doppler 或 1Password 提供。
-- 可以引用其他项目变量的变量，以及每次部署的记录和日志。
+- 可以引用其他项目变量的变量，以及最近 50 次部署的记录和日志。
+- 沙箱：在全新的 Firecracker 微虚拟机中运行一条命令，可信代码也可以用 Docker 容器运行，默认不联网，并收集输出和你指定的文件。
+- CI 任务：带有你所设标签的每个排队 GitHub Actions 任务都会得到一个一次性的自托管 runner，来自 GitHub、GitLab 或任意服务的推送或 webhook 也可以在全新实例中启动一条命令。
 
 控制面板、CLI、GitHub Actions 和外部集成都使用同一个 API。已安装代理的准确
 OpenAPI 描述位于 `/api/openapi.json`。

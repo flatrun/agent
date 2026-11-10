@@ -48,7 +48,9 @@ flatrun health
 - Des notifications regroupées en incidents utiles.
 - Des espaces de travail pour les équipes, avec propriétaires, administrateurs et membres.
 - Des secrets chiffrés, renouvelables, jamais réaffichés, ou fournis par Infisical, Vault, OpenBao, Doppler ou 1Password.
-- Des variables qui font référence à celles d'un autre projet, et un historique de chaque déploiement avec ses journaux.
+- Des variables qui font référence à celles d'un autre projet, et l'historique des 50 derniers déploiements avec leurs journaux.
+- Des sandboxes qui exécutent une commande dans une microVM Firecracker neuve, ou un conteneur Docker pour du code de confiance, sans réseau par défaut, et récupèrent sa sortie et les fichiers demandés.
+- Des tâches CI : chaque job GitHub Actions portant vos labels reçoit un runner auto-hébergé à usage unique, et un push ou un webhook de GitHub, GitLab ou tout autre service peut lancer une commande dans une instance neuve.
 
 Le tableau de bord, le CLI, GitHub Actions et les intégrations externes utilisent
 la même API. La description OpenAPI exacte de l'agent installé est disponible à
