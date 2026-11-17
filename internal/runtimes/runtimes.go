@@ -28,16 +28,16 @@ type Network struct {
 	Egress bool `json:"egress,omitempty"`
 }
 
-// Spec describes one instance. Nothing from the host enters it: there are
-// no mounts, so inputs arrive through the image, the command or the env.
 type Spec struct {
-	Image     string            `json:"image"`
-	Command   []string          `json:"command,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	WorkDir   string            `json:"work_dir,omitempty"`
-	Resources Resources         `json:"resources"`
-	Network   Network           `json:"network"`
-	Labels    map[string]string `json:"labels,omitempty"`
+	CacheKey                 string            `json:"-"`
+	AllowPrivilegeEscalation bool              `json:"-"`
+	Image                    string            `json:"image"`
+	Command                  []string          `json:"command,omitempty"`
+	Env                      map[string]string `json:"env,omitempty"`
+	WorkDir                  string            `json:"work_dir,omitempty"`
+	Resources                Resources         `json:"resources"`
+	Network                  Network           `json:"network"`
+	Labels                   map[string]string `json:"labels,omitempty"`
 }
 
 type Exit struct {

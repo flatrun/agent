@@ -17,6 +17,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/flatrun/agent/internal/guestinit"
+	imagespec "github.com/moby/docker-image-spec/specs-go/v1"
 	"golang.org/x/sys/unix"
 )
 
@@ -31,29 +32,9 @@ func (f *Firecracker) prepareRoot(ctx context.Context, spec Spec, id string) (st
 	if err != nil {
 		return "", command, err
 	}
-	environment := map[string]string{}
-	if image.Config != nil {
-		for _, entry := range image.Config.Env {
-			key, value, ok := strings.Cut(entry, "=")
-			if ok {
-				environment[key] = value
-			}
-		}
-		if len(command.Argv) == 0 {
-			command.Argv = append(append([]string{}, image.Config.Entrypoint...), image.Config.Cmd...)
-		} else {
-			command.Argv = append(append([]string{}, image.Config.Entrypoint...), command.Argv...)
-		}
-		if command.Cwd == "" {
-			command.Cwd = image.Config.WorkingDir
-		}
-	}
-	for key, value := range spec.Env {
-		environment[key] = value
-	}
-	command.Env = envList(environment)
-	if len(command.Argv) == 0 {
-		return "", command, errors.New("image has no command")
+	command, err = imageCommand(spec, image.Config)
+	if err != nil {
+		return "", command, err
 	}
 	init, err := os.ReadFile(f.Config.GuestInit)
 	if err != nil {
@@ -332,4 +313,34 @@ func (f *Firecracker) cachedKernel(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+func imageCommand(spec Spec, config *imagespec.DockerOCIImageConfig) (guestinit.Start, error) {
+	command := guestinit.Start{Argv: spec.Command, Cwd: spec.WorkDir}
+	environment := map[string]string{}
+	if config != nil {
+		for _, entry := range config.Env {
+			key, value, ok := strings.Cut(entry, "=")
+			if ok {
+				environment[key] = value
+			}
+		}
+		if len(command.Argv) == 0 {
+			command.Argv = append(append([]string{}, config.Entrypoint...), config.Cmd...)
+		} else {
+			command.Argv = append(append([]string{}, config.Entrypoint...), command.Argv...)
+		}
+		if command.Cwd == "" {
+			command.Cwd = config.WorkingDir
+		}
+	}
+	for key, value := range spec.Env {
+		environment[key] = value
+	}
+	command.Env = envList(environment)
+	if len(command.Argv) == 0 {
+		return command, errors.New("image has no command")
+	}
+
+	return command, nil
 }

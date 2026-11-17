@@ -33,9 +33,17 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type eventRuntime struct{ specs chan runtimes.Spec }
+type eventRuntime struct {
+	specs       chan runtimes.Spec
+	runtimeType runtimes.Type
+}
 
-func (r *eventRuntime) Type() runtimes.Type             { return runtimes.TypeFirecracker }
+func (r *eventRuntime) Type() runtimes.Type {
+	if r.runtimeType != "" {
+		return r.runtimeType
+	}
+	return runtimes.TypeFirecracker
+}
 func (r *eventRuntime) Available(context.Context) error { return nil }
 func (r *eventRuntime) Create(_ context.Context, spec runtimes.Spec) (runtimes.Instance, error) {
 	env := map[string]string{}
@@ -127,7 +135,7 @@ func TestEventHTTPRunner(t *testing.T) {
 		}
 	}()
 	root := t.TempDir()
-	rt := &eventRuntime{specs: make(chan runtimes.Spec, 5)}
+	rt := &eventRuntime{specs: make(chan runtimes.Spec, 5), runtimeType: runtimes.TypeDocker}
 	manager, err := runs.NewManager(root, rt, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +143,10 @@ func TestEventHTTPRunner(t *testing.T) {
 	defer manager.Close()
 	cfg := &config.Config{DeploymentsPath: t.TempDir(), Events: config.EventsConfig{Endpoints: []config.EventEndpoint{{Name: "ci", Provider: "github", Secret: "test-secret"}}, Subscriptions: []config.EventSubscription{{Name: "runner", Source: "github/ci", Action: "github_runner", Labels: []string{"UBUNTU-latest"}, GitHubRunner: config.GitHubRunnerSpec{TimeoutSeconds: 120}}}}}
 	cfg.Events.SetDefaults()
+	cfg.Events.Subscriptions[0].GitHubRunner.Runtime = runtimes.TypeDocker
+	cfg.Events.Subscriptions[0].GitHubRunner.Cache = true
+	cfg.Events.Subscriptions[0].GitHubRunner.AllowPrivilegeEscalation = true
+	cfg.Events.Subscriptions[0].Attributes = map[string]string{"subject": "Codertocat/Hello-World"}
 	s := &Server{config: cfg, webhooks: webhook.DefaultRegistry(), runsManager: manager, githubApp: &webhook.GitHubApp{AppID: 42, PrivateKeyFile: keyPath, BaseURL: github.URL}}
 	router := gin.New()
 	router.POST("/api/event-hooks/:endpoint", s.receiveEvent)
@@ -189,6 +201,9 @@ func TestEventHTTPRunner(t *testing.T) {
 	s.deliveries.wg.Wait()
 	select {
 	case spec := <-rt.specs:
+		if spec.CacheKey == "" || !spec.AllowPrivilegeEscalation || spec.Env["GOMAXPROCS"] != "2" || spec.Env["GOFLAGS"] != "-p=2" {
+			t.Fatalf("runner execution policy missing: %+v", spec)
+		}
 		if spec.Image != "ghcr.io/actions/actions-runner" || spec.WorkDir != "/home/runner" || !spec.Network.Egress || spec.Env["JIT"] != "abc123" || spec.Env["RUNNER_ALLOW_RUNASROOT"] != "1" || !reflect.DeepEqual(spec.Command, []string{"sh", "-c", `exec ./run.sh --jitconfig "$JIT"`}) {
 			t.Fatalf("runner spec: %+v", spec)
 		}
@@ -225,7 +240,7 @@ func TestEventHTTPRunner(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if records[0].Runtime != runtimes.TypeFirecracker || records[0].Spec.TimeoutSeconds != 120 {
+	if records[0].Runtime != runtimes.TypeDocker || records[0].Spec.TimeoutSeconds != 120 {
 		t.Fatal("run runtime or timeout changed")
 	}
 	raw, _ := json.Marshal(records)

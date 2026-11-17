@@ -40,12 +40,15 @@ type EventSubscription struct {
 }
 
 type GitHubRunnerSpec struct {
-	RunnerGroupID  int64         `yaml:"runner_group_id" json:"runner_group_id"`
-	Runtime        runtimes.Type `yaml:"runtime" json:"runtime"`
-	Image          string        `yaml:"image" json:"image"`
-	TimeoutSeconds int           `yaml:"timeout_seconds" json:"timeout_seconds"`
-	CPUs           float64       `yaml:"cpus" json:"cpus,omitempty"`
-	MemoryBytes    uint64        `yaml:"memory_bytes" json:"memory_bytes,omitempty"`
+	Cache                    bool          `yaml:"cache" json:"cache"`
+	WarmIdle                 int           `yaml:"warm_idle" json:"warm_idle"`
+	AllowPrivilegeEscalation bool          `yaml:"allow_privilege_escalation" json:"allow_privilege_escalation"`
+	RunnerGroupID            int64         `yaml:"runner_group_id" json:"runner_group_id"`
+	Runtime                  runtimes.Type `yaml:"runtime" json:"runtime"`
+	Image                    string        `yaml:"image" json:"image"`
+	TimeoutSeconds           int           `yaml:"timeout_seconds" json:"timeout_seconds"`
+	CPUs                     float64       `yaml:"cpus" json:"cpus,omitempty"`
+	MemoryBytes              uint64        `yaml:"memory_bytes" json:"memory_bytes,omitempty"`
 }
 
 func (c *EventsConfig) SetDefaults() {
@@ -70,6 +73,12 @@ func (c *EventsConfig) SetDefaults() {
 			}
 			if r.RunnerGroupID == 0 {
 				r.RunnerGroupID = 1
+			}
+			if r.CPUs == 0 {
+				r.CPUs = 2
+			}
+			if r.MemoryBytes == 0 {
+				r.MemoryBytes = 4 << 30
 			}
 			if r.TimeoutSeconds == 0 {
 				r.TimeoutSeconds = 600
@@ -110,6 +119,22 @@ func (c EventsConfig) Validate() error {
 			}
 		case "github_runner":
 			r := s.GitHubRunner
+			if r.WarmIdle < 0 || r.WarmIdle > 32 {
+				return errors.New("warm_idle must be between 0 and 32")
+			}
+			if r.WarmIdle > 0 && !strings.Contains(r.Image, "@sha256:") && !strings.HasPrefix(r.Image, "sha256:") {
+				return errors.New("warm runners require an immutable image digest")
+			}
+			if r.WarmIdle > 0 && (r.Runtime != runtimes.TypeFirecracker || s.Attributes["subject"] == "" || s.Attributes["branch"] == "") {
+				return errors.New("warm runners require Firecracker and a fixed repository and branch")
+			}
+			if r.AllowPrivilegeEscalation && r.Runtime != runtimes.TypeDocker {
+				return errors.New("allow_privilege_escalation applies to Docker runners")
+			}
+			if r.AllowPrivilegeEscalation && s.Attributes["subject"] == "" {
+				return errors.New("privileged runner options require a fixed repository")
+			}
+
 			if len(s.Labels) == 0 {
 				return errors.New("GitHub runner subscriptions require at least one label")
 			}

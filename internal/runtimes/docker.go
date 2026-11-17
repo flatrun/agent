@@ -13,7 +13,9 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -30,6 +32,8 @@ type Docker struct {
 	// daemon choose; set it on hosts whose default address pools are used up.
 	EgressSubnet string
 	Scope        string
+	RegistryAuth func(string) (string, error)
+	cacheSlots   map[string]map[int]bool
 }
 
 func NewDocker() (*Docker, error) {
@@ -82,6 +86,27 @@ func (d *Docker) Create(ctx context.Context, spec Spec) (Instance, error) {
 		networkMode = container.NetworkMode(EgressNetwork)
 	}
 
+	security := []string{"no-new-privileges"}
+	if spec.AllowPrivilegeEscalation {
+		security = nil
+	}
+	mounts := []mount.Mount{}
+	if spec.CacheKey != "" {
+		name, release := d.leaseCache(spec.CacheKey)
+		inst.releaseCache = release
+		defer func() {
+			if inst.container == "" && inst.releaseCache != nil {
+				inst.releaseCache()
+				inst.releaseCache = nil
+			}
+		}()
+		if err := d.ensureCacheVolume(ctx, name); err != nil {
+			return nil, err
+		}
+		mounts = append(mounts, mount.Mount{Type: mount.TypeVolume, Source: name, Target: CachePath})
+		spec.Env = cacheEnvironment(spec.Env)
+	}
+
 	pids := int64(1024)
 	created, err := d.createContainer(ctx,
 		&container.Config{
@@ -93,7 +118,8 @@ func (d *Docker) Create(ctx context.Context, spec Spec) (Instance, error) {
 		},
 		&container.HostConfig{
 			NetworkMode: networkMode,
-			SecurityOpt: []string{"no-new-privileges"},
+			SecurityOpt: security,
+			Mounts:      mounts,
 			Resources: container.Resources{
 				NanoCPUs:  int64(spec.Resources.CPUs * 1e9),
 				Memory:    int64(spec.Resources.Memory),
@@ -160,7 +186,15 @@ func (d *Docker) ensureImage(ctx context.Context, ref string) error {
 	} else if !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("inspect image: %w", err)
 	}
-	pull, err := d.cli.ImagePull(ctx, ref, image.PullOptions{})
+	options := image.PullOptions{}
+	if d.RegistryAuth != nil {
+		auth, err := d.RegistryAuth(ref)
+		if err != nil {
+			return errors.New("registry credentials unavailable")
+		}
+		options.RegistryAuth = auth
+	}
+	pull, err := d.cli.ImagePull(ctx, ref, options)
 	if err != nil {
 		return fmt.Errorf("pull image: %w", err)
 	}
@@ -204,10 +238,11 @@ func (d *Docker) DestroyByID(ctx context.Context, id string) error {
 }
 
 type dockerInstance struct {
-	cli       *client.Client
-	id        string
-	container string
-	mu        sync.Mutex
+	cli          *client.Client
+	id           string
+	container    string
+	releaseCache func()
+	mu           sync.Mutex
 }
 
 func (i *dockerInstance) ID() string { return i.id }
@@ -268,6 +303,10 @@ func (i *dockerInstance) Destroy(ctx context.Context) error {
 		return fmt.Errorf("remove container: %w", err)
 	}
 	i.container = ""
+	if i.releaseCache != nil {
+		i.releaseCache()
+		i.releaseCache = nil
+	}
 	return nil
 }
 
@@ -282,4 +321,19 @@ func envList(env map[string]string) []string {
 		out = append(out, k+"="+env[k])
 	}
 	return out
+}
+
+func (d *Docker) ensureCacheVolume(ctx context.Context, name string) error {
+	existing, err := d.cli.VolumeInspect(ctx, name)
+	if err == nil {
+		if existing.Labels[CacheLabel] != "true" || existing.Labels[ScopeLabel] != d.Scope {
+			return errors.New("cache volume ownership mismatch")
+		}
+		return nil
+	}
+	if !cerrdefs.IsNotFound(err) {
+		return err
+	}
+	_, err = d.cli.VolumeCreate(ctx, volume.CreateOptions{Name: name, Labels: map[string]string{CacheLabel: "true", ScopeLabel: d.Scope}})
+	return err
 }

@@ -111,3 +111,9 @@ Actions in progress at shutdown are not resumed automatically.
 receiver secrets. Both require `config:read` and global admin access, including
 an unscoped API key when a key is used: this is agent-wide automation configured
 in the agent file. The generic config API cannot edit the events section.
+
+## Runner capacity and caches
+
+[Runner performance](RUNNER_PERFORMANCE.md) describes the generic CI image,
+repository-scoped caches, resource limits, administrator-controlled sudo and
+optional warm Firecracker capacity.

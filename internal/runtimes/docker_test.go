@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
 )
@@ -351,5 +353,54 @@ func TestDecodeImagePullError(t *testing.T) {
 	stream := strings.NewReader("{\"status\":\"Pulling from library/busybox\"}\n{\"errorDetail\":{\"message\":\"manifest unknown\"},\"error\":\"manifest unknown\"}\n")
 	if err := decodeImagePull(stream); err == nil || err.Error() != "manifest unknown" {
 		t.Fatalf("pull error = %v", err)
+	}
+}
+
+func TestDockerRunnerCacheAndPrivilegePolicy(t *testing.T) {
+	image := os.Getenv("FLATRUN_RUNNER_TEST_IMAGE")
+	if image == "" {
+		t.Skip("set FLATRUN_RUNNER_TEST_IMAGE to the built runner image")
+	}
+	d := dockerRuntime(t)
+	t.Cleanup(func() {
+		volumes, err := d.cli.VolumeList(context.Background(), volume.ListOptions{Filters: filters.NewArgs(filters.Arg("label", ScopeLabel+"="+d.Scope), filters.Arg("label", CacheLabel+"=true"))})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for _, v := range volumes.Volumes {
+			if err := d.cli.VolumeRemove(context.Background(), v.Name, false); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	for pass := 0; pass < 2; pass++ {
+		command := `if sudo -n true; then echo unexpected-sudo >&2; exit 1; fi; printf saved > /flatrun-cache/probe`
+		if pass == 1 {
+			command = `test "$(cat /flatrun-cache/probe)" = saved; test -s /flatrun-cache/.flatrun-last-used; sudo -n true`
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		instance, err := d.Create(ctx, Spec{Image: image, Command: []string{"bash", "-euc", command}, CacheKey: "repository-main", AllowPrivilegeEscalation: pass == 1, Resources: Resources{CPUs: 2, Memory: 4 << 30}})
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		if err = instance.Start(ctx); err != nil {
+			_ = instance.Destroy(context.Background())
+			cancel()
+			t.Fatal(err)
+		}
+		exit, err := instance.Wait(ctx)
+		logs, logErr := instance.Logs(ctx, false)
+		var output []byte
+		if logErr == nil {
+			output, _ = io.ReadAll(logs)
+			logs.Close()
+		}
+		cleanupErr := instance.Destroy(context.Background())
+		cancel()
+		if err != nil || exit.Code != 0 || cleanupErr != nil || logErr != nil {
+			t.Fatalf("pass %d: exit=%d wait=%v cleanup=%v logs=%v: %s", pass, exit.Code, err, cleanupErr, logErr, output)
+		}
 	}
 }

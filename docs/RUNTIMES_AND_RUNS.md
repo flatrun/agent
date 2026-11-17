@@ -132,8 +132,11 @@ With `egress: false`, the container uses Docker's `none` network. With
 that bridge, the agent disables inter-container communication. An existing
 bridge with that name is reused without changing its settings.
 
-Containers have no host mounts, use `no-new-privileges` and have a process limit
-of 1024. Inputs come from the image, command and environment.
+Containers do not accept arbitrary host mounts and have a process limit of
+1024. Ordinary runs use `no-new-privileges`. Administrator-configured runner
+subscriptions can opt into managed cache volumes and Docker privilege
+escalation as described in [Runner performance](RUNNER_PERFORMANCE.md).
+Inputs come from the image, command and environment.
 
 Each container has `dev.flatrun.runtime.instance` and
 `dev.flatrun.runtime.scope` labels. The scope is derived from the absolute

@@ -145,6 +145,8 @@ type firecrackerInstance struct {
 	process    *exec.Cmd
 	done       chan struct{}
 	mu         sync.Mutex
+	prepared   bool
+	cacheLock  *os.File
 }
 
 func (i *firecrackerInstance) ID() string { return i.id }
@@ -181,6 +183,9 @@ func (f *Firecracker) Create(ctx context.Context, spec Spec) (instance Instance,
 	if err := i.writeState(dir); err != nil {
 		return nil, err
 	}
+	if spec.CacheKey != "" {
+		spec.Env = cacheEnvironment(spec.Env)
+	}
 	root, command, err := f.prepareRoot(ctx, spec, id)
 	if err != nil {
 		return nil, err
@@ -205,6 +210,11 @@ func (f *Firecracker) Create(ctx context.Context, spec Spec) (instance Instance,
 	}
 	if spec.Network.Egress {
 		if err = i.setupNetwork(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if spec.CacheKey != "" {
+		if err = i.attachCache(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -279,6 +289,11 @@ func (i *firecrackerInstance) configure(ctx context.Context) error {
 			return err
 		}
 	}
+	if i.spec.CacheKey != "" {
+		if err = i.api(ctx, api, "/drives/cache", map[string]any{"drive_id": "cache", "path_on_host": "/cache.ext4", "is_root_device": false, "is_read_only": false}); err != nil {
+			return err
+		}
+	}
 	if i.spec.Network.Egress {
 		if err = i.api(ctx, api, "/network-interfaces/eth0", map[string]any{"iface_id": "eth0", "host_dev_name": i.tap(), "guest_mac": "06:00:ac:10:00:02"}); err != nil {
 			return err
@@ -287,7 +302,10 @@ func (i *firecrackerInstance) configure(ctx context.Context) error {
 	return nil
 }
 
-func (i *firecrackerInstance) Start(ctx context.Context) error {
+func (i *firecrackerInstance) Prepare(ctx context.Context) error {
+	if i.prepared {
+		return i.Ready(ctx)
+	}
 	api := i.client(false)
 	defer api.CloseIdleConnections()
 	var err error
@@ -305,6 +323,42 @@ func (i *firecrackerInstance) Start(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	i.prepared = true
+	return nil
+}
+
+func (i *firecrackerInstance) Ready(ctx context.Context) error {
+	guest := i.client(true)
+	defer guest.CloseIdleConnections()
+	response, err := i.request(ctx, guest, http.MethodGet, "/logs", nil)
+	if err != nil {
+		return err
+	}
+	return response.Body.Close()
+}
+
+func (i *firecrackerInstance) Configure(ctx context.Context, spec Spec) error {
+	image, err := i.runtime.docker.cli.ImageInspect(ctx, spec.Image)
+	if err != nil {
+		return err
+	}
+	if spec.CacheKey != "" {
+		spec.Env = cacheEnvironment(spec.Env)
+	}
+	command, err := imageCommand(spec, image.Config)
+	if err != nil {
+		return err
+	}
+	i.command = command
+	return nil
+}
+
+func (i *firecrackerInstance) Start(ctx context.Context) error {
+	if err := i.Prepare(ctx); err != nil {
+		return err
+	}
+	guest := i.client(true)
+	defer guest.CloseIdleConnections()
 	response, err := i.request(ctx, guest, http.MethodPost, "/start", i.command)
 	if err != nil {
 		return err
@@ -608,6 +662,11 @@ func (i *firecrackerInstance) Destroy(ctx context.Context) error {
 	}
 	if err = os.RemoveAll(i.runtime.directory(i.id)); err != nil {
 		return err
+	}
+	if i.cacheLock != nil {
+		_ = unix.Flock(int(i.cacheLock.Fd()), unix.LOCK_UN)
+		_ = i.cacheLock.Close()
+		i.cacheLock = nil
 	}
 	scope := filepath.Dir(i.runtime.directory(i.id))
 	return removeEmptyParents(scope, scope)

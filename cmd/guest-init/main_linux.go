@@ -32,6 +32,14 @@ func main() {
 			fatal(err)
 		}
 	}
+	if _, err := os.Stat("/dev/vdb"); err == nil {
+		if err = os.MkdirAll("/flatrun-cache", 0755); err != nil {
+			fatal(err)
+		}
+		if err = unix.Mount("/dev/vdb", "/flatrun-cache", "ext4", 0, ""); err != nil {
+			fatal(err)
+		}
+	}
 	if err := loopback(); err != nil {
 		fatal(err)
 	}

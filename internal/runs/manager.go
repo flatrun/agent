@@ -179,7 +179,14 @@ func (m *Manager) Close() error {
 	close(m.queue)
 	m.mu.Unlock()
 	m.wg.Wait()
-	return m.Store.Close()
+	var failures []error
+	for _, runtime := range m.runtimes {
+		if closer, ok := runtime.(io.Closer); ok {
+			failures = append(failures, closer.Close())
+		}
+	}
+	failures = append(failures, m.Store.Close())
+	return errors.Join(failures...)
 }
 
 func (m *Manager) LogPath(id string) string {
@@ -306,12 +313,14 @@ func (m *Manager) startRun(ctx context.Context, queued *pending, run *Run) (runt
 	queued.secrets = nil
 	defer clear(environment)
 	instance, err := m.runtimes[run.Runtime].Create(ctx, runtimes.Spec{
-		Image:     run.Spec.Image,
-		Command:   run.Spec.Command,
-		Env:       environment,
-		WorkDir:   run.Spec.WorkDir,
-		Resources: runtimes.Resources{CPUs: run.Spec.CPUs, Memory: run.Spec.MemoryBytes},
-		Network:   runtimes.Network{Egress: run.Spec.Egress},
+		Image:                    run.Spec.Image,
+		CacheKey:                 run.Spec.CacheKey,
+		AllowPrivilegeEscalation: run.Spec.AllowPrivilegeEscalation,
+		Command:                  run.Spec.Command,
+		Env:                      environment,
+		WorkDir:                  run.Spec.WorkDir,
+		Resources:                runtimes.Resources{CPUs: run.Spec.CPUs, Memory: run.Spec.MemoryBytes},
+		Network:                  runtimes.Network{Egress: run.Spec.Egress},
 	})
 	if err != nil {
 		return instance, fmt.Errorf("instance creation failed: %w", err)
@@ -402,9 +411,10 @@ func (m *Manager) collectArtifacts(run *Run, instance runtimes.Instance, directo
 var ErrUnknownRuntime = errors.New("unknown runtime")
 
 type RuntimeStatus struct {
-	Type      runtimes.Type `json:"type"`
-	Available bool          `json:"available"`
-	Reason    string        `json:"reason,omitempty"`
+	Type      runtimes.Type         `json:"type"`
+	Available bool                  `json:"available"`
+	Reason    string                `json:"reason,omitempty"`
+	WarmPools []runtimes.PoolStatus `json:"warm_pools,omitempty"`
 }
 
 func (m *Manager) CheckRuntime(ctx context.Context, kind runtimes.Type) error {
@@ -429,6 +439,9 @@ func (m *Manager) Runtimes(ctx context.Context) []RuntimeStatus {
 	result := []RuntimeStatus{}
 	for _, kind := range knownRuntimeTypes {
 		status := RuntimeStatus{Type: kind, Available: true}
+		if warm, ok := m.runtimes[kind].(*runtimes.WarmRuntime); ok {
+			status.WarmPools = warm.Status()
+		}
 		if err := m.CheckRuntime(ctx, kind); err != nil {
 			status.Available = false
 			status.Reason = err.Error()

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/docker/docker/api/types/registry"
 	"io"
 	"log"
 	"math/big"
@@ -496,8 +497,42 @@ func New(cfg *config.Config, configPath string) *Server {
 			scopeHash := sha256.Sum256([]byte(deploymentsPath))
 			runtime.Scope = fmt.Sprintf("%x", scopeHash[:12])
 			runtime.EgressSubnet = cfg.Runs.EgressSubnet
-			firecracker := runtimes.NewFirecracker(cfg.Runs.Firecracker, runtime, runtime.Scope)
+			runtime.RegistryAuth = func(image string) (string, error) {
+				allowed := false
+				for _, subscription := range cfg.Events.Subscriptions {
+					if subscription.Action == "github_runner" && subscription.GitHubRunner.Image == image {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					return "", nil
+				}
+
+				credential := credentialsManager.FindCredentialForImage(image)
+				if credential == nil {
+					return "", nil
+				}
+				return registry.EncodeAuthConfig(registry.AuthConfig{Username: credential.Username, Password: credential.Password, ServerAddress: credential.RegistryURL})
+			}
+			firecracker := runtimes.NewWarmRuntime(runtimes.NewFirecracker(cfg.Runs.Firecracker, runtime, runtime.Scope))
 			s.runsManager, runErr = runs.NewManager(cfg.DeploymentsPath, runtime, cfg.Runs.Workers, firecracker)
+			if runErr == nil {
+				for _, subscription := range cfg.Events.Subscriptions {
+					if subscription.Action != "github_runner" || subscription.GitHubRunner.WarmIdle == 0 {
+						continue
+					}
+					if err := s.runsManager.CheckRuntime(context.Background(), runtimes.TypeFirecracker); err != nil {
+						log.Printf("Warning: runner warm pool %s unavailable: %v", subscription.Name, err)
+						continue
+					}
+					spec := runnerSpec(subscription, subscription.Attributes["subject"], subscription.Attributes["branch"])
+					err := firecracker.AddPool(runtimes.Spec{Image: spec.Image, Resources: runtimes.Resources{CPUs: spec.CPUs, Memory: spec.MemoryBytes}, Network: runtimes.Network{Egress: true}, CacheKey: spec.CacheKey}, subscription.GitHubRunner.WarmIdle)
+					if err != nil {
+						log.Printf("Warning: runner warm pool %s: %v", subscription.Name, err)
+					}
+				}
+			}
 		}
 	}
 	if runErr != nil {

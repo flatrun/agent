@@ -70,3 +70,36 @@ func TestEventsConfigLoad(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerPrivilegesAndWarmCapacityAreExplicit(t *testing.T) {
+	cfg := EventsConfig{GitHubApp: GitHubAppConfig{AppID: 42, PrivateKeyFile: "/etc/flatrun/github.pem"}, Subscriptions: []EventSubscription{{Name: "runner", Action: "github_runner", Labels: []string{"flatrun"}}}}
+	cfg.SetDefaults()
+	runner := &cfg.Subscriptions[0].GitHubRunner
+	if runner.AllowPrivilegeEscalation || runner.Cache || runner.WarmIdle != 0 {
+		t.Fatal("runner privileges, cache or warm capacity enabled by default")
+	}
+	runner.Runtime = "docker"
+	runner.AllowPrivilegeEscalation = true
+	if cfg.Validate() == nil {
+		t.Fatal("privilege escalation accepted without a fixed repository")
+	}
+	cfg.Subscriptions[0].Attributes = map[string]string{"subject": "owner/repo"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	runner.AllowPrivilegeEscalation = false
+	runner.Runtime = "firecracker"
+	runner.Image = "runner@sha256:test"
+	runner.WarmIdle = 1
+	if cfg.Validate() == nil {
+		t.Fatal("warm pool accepted without a fixed branch")
+	}
+	cfg.Subscriptions[0].Attributes["branch"] = "main"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	runner.Runtime = "docker"
+	if cfg.Validate() == nil {
+		t.Fatal("warm microVMs accepted on Docker")
+	}
+}

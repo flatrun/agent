@@ -32,16 +32,18 @@ func (s Status) Finished() bool {
 }
 
 type Spec struct {
-	Runtime        runtimes.Type     `yaml:"runtime" json:"runtime"`
-	Image          string            `yaml:"image" json:"image"`
-	Command        []string          `yaml:"command" json:"command,omitempty"`
-	Env            map[string]string `yaml:"env" json:"env,omitempty"`
-	WorkDir        string            `yaml:"workdir" json:"workdir,omitempty"`
-	CPUs           float64           `yaml:"cpus" json:"cpus,omitempty"`
-	MemoryBytes    uint64            `yaml:"memory_bytes" json:"memory_bytes,omitempty"`
-	Egress         bool              `yaml:"egress" json:"egress"`
-	TimeoutSeconds int               `yaml:"timeout_seconds" json:"timeout_seconds"`
-	ArtifactPaths  []string          `yaml:"artifact_paths" json:"artifact_paths,omitempty"`
+	CacheKey                 string            `yaml:"-" json:"-"`
+	AllowPrivilegeEscalation bool              `yaml:"-" json:"-"`
+	Runtime                  runtimes.Type     `yaml:"runtime" json:"runtime"`
+	Image                    string            `yaml:"image" json:"image"`
+	Command                  []string          `yaml:"command" json:"command,omitempty"`
+	Env                      map[string]string `yaml:"env" json:"env,omitempty"`
+	WorkDir                  string            `yaml:"workdir" json:"workdir,omitempty"`
+	CPUs                     float64           `yaml:"cpus" json:"cpus,omitempty"`
+	MemoryBytes              uint64            `yaml:"memory_bytes" json:"memory_bytes,omitempty"`
+	Egress                   bool              `yaml:"egress" json:"egress"`
+	TimeoutSeconds           int               `yaml:"timeout_seconds" json:"timeout_seconds"`
+	ArtifactPaths            []string          `yaml:"artifact_paths" json:"artifact_paths,omitempty"`
 }
 
 func (s *Spec) Validate() error {

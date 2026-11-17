@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/events"
-	"github.com/flatrun/agent/internal/runs"
 	"github.com/flatrun/agent/internal/webhook"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
@@ -123,8 +124,7 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e events.Even
 		}
 		spec := subscription.Run
 		if subscription.Action == "github_runner" {
-			r := subscription.GitHubRunner
-			spec = runs.Spec{Runtime: r.Runtime, Image: r.Image, TimeoutSeconds: r.TimeoutSeconds, CPUs: r.CPUs, MemoryBytes: r.MemoryBytes}
+			spec = runnerSpec(subscription, e.Attribute("subject"), e.Attribute("branch"))
 		}
 		spec.Env = make(map[string]string, len(subscription.Run.Env)+5)
 		for k, v := range subscription.Run.Env {
@@ -158,6 +158,15 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e events.Even
 			spec.WorkDir = "/home/runner"
 			spec.Egress = true
 			spec.Env["RUNNER_ALLOW_RUNASROOT"] = "1"
+			if spec.CPUs > 0 {
+				parallel := strconv.Itoa(max(1, int(math.Floor(spec.CPUs))))
+				if spec.Env["GOMAXPROCS"] == "" {
+					spec.Env["GOMAXPROCS"] = parallel
+				}
+				if spec.Env["GOFLAGS"] == "" {
+					spec.Env["GOFLAGS"] = "-p=" + parallel
+				}
+			}
 		}
 		_, err := s.runsManager.Submit(0, "events", spec, secrets)
 		return err
