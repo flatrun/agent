@@ -20,7 +20,8 @@ func cacheEnvironment(original map[string]string) map[string]string {
 	}
 	for key, value := range map[string]string{
 		"GOCACHE": CachePath + "/go-build", "GOMODCACHE": CachePath + "/go-mod", "npm_config_cache": CachePath + "/npm",
-		"RUNNER_TOOL_CACHE": CachePath + "/tools", "AGENT_TOOLSDIRECTORY": CachePath + "/tools",
+		"npm_config_prefer_offline": "true",
+		"RUNNER_TOOL_CACHE":         CachePath + "/tools", "AGENT_TOOLSDIRECTORY": CachePath + "/tools",
 	} {
 		env[key] = value
 	}

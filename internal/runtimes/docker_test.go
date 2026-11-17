@@ -375,9 +375,9 @@ func TestDockerRunnerCacheAndPrivilegePolicy(t *testing.T) {
 		}
 	})
 	for pass := 0; pass < 2; pass++ {
-		command := `if sudo -n true; then echo unexpected-sudo >&2; exit 1; fi; printf saved > /flatrun-cache/probe`
+		command := `if sudo -n true; then echo unexpected-sudo >&2; exit 1; fi; printf saved > "$GOCACHE-probe"`
 		if pass == 1 {
-			command = `test "$(cat /flatrun-cache/probe)" = saved; test -s /flatrun-cache/.flatrun-last-used; sudo -n true`
+			command = `test "$(cat "$GOCACHE-probe")" = saved; test -s /flatrun-cache/.flatrun-last-used; sudo -n true`
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		instance, err := d.Create(ctx, Spec{Image: image, Command: []string{"bash", "-euc", command}, CacheKey: "repository-main", AllowPrivilegeEscalation: pass == 1, Resources: Resources{CPUs: 2, Memory: 4 << 30}})
@@ -401,6 +401,60 @@ func TestDockerRunnerCacheAndPrivilegePolicy(t *testing.T) {
 		cancel()
 		if err != nil || exit.Code != 0 || cleanupErr != nil || logErr != nil {
 			t.Fatalf("pass %d: exit=%d wait=%v cleanup=%v logs=%v: %s", pass, exit.Code, err, cleanupErr, logErr, output)
+		}
+	}
+}
+
+func TestDockerRunnerConcurrentCacheSharing(t *testing.T) {
+	image := os.Getenv("FLATRUN_RUNNER_TEST_IMAGE")
+	if image == "" {
+		t.Skip("set FLATRUN_RUNNER_TEST_IMAGE to the built runner image")
+	}
+	d := dockerRuntime(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	var instances []Instance
+	t.Cleanup(func() {
+		for _, instance := range instances {
+			if err := instance.Destroy(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}
+		volumes, err := d.cli.VolumeList(context.Background(), volume.ListOptions{Filters: filters.NewArgs(filters.Arg("label", ScopeLabel+"="+d.Scope), filters.Arg("label", CacheLabel+"=true"))})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for _, v := range volumes.Volumes {
+			if err := d.cli.VolumeRemove(context.Background(), v.Name, false); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	commands := []string{
+		`printf shared > "$GOCACHE-probe"; printf private > "$RUNNER_TOOL_CACHE/private-probe"`,
+		`test "$(cat "$GOCACHE-probe")" = shared; test ! -e "$RUNNER_TOOL_CACHE/private-probe"; test -s /flatrun-cache/shared/.flatrun-last-used`,
+	}
+	for _, command := range commands {
+		instance, err := d.Create(ctx, Spec{Image: image, Command: []string{"bash", "-euc", command}, CacheKey: "repository-main", Resources: Resources{CPUs: 2, Memory: 4 << 30}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		instances = append(instances, instance)
+	}
+	for index, instance := range instances {
+		if err := instance.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		exit, err := instance.Wait(ctx)
+		logs, logErr := instance.Logs(ctx, false)
+		var output []byte
+		if logErr == nil {
+			output, _ = io.ReadAll(logs)
+			logs.Close()
+		}
+		if err != nil || exit.Code != 0 || logErr != nil {
+			t.Fatalf("worker %d: exit=%d wait=%v logs=%v: %s", index, exit.Code, err, logErr, output)
 		}
 	}
 }

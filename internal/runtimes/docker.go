@@ -103,8 +103,18 @@ func (d *Docker) Create(ctx context.Context, spec Spec) (Instance, error) {
 		if err := d.ensureCacheVolume(ctx, name); err != nil {
 			return nil, err
 		}
-		mounts = append(mounts, mount.Mount{Type: mount.TypeVolume, Source: name, Target: CachePath})
+		shared := cacheName(d.Scope, spec.CacheKey) + "-shared"
+		if err := d.ensureCacheVolume(ctx, shared); err != nil {
+			return nil, err
+		}
+		mounts = append(mounts,
+			mount.Mount{Type: mount.TypeVolume, Source: name, Target: CachePath},
+			mount.Mount{Type: mount.TypeVolume, Source: shared, Target: CachePath + "/shared"},
+		)
 		spec.Env = cacheEnvironment(spec.Env)
+		spec.Env["GOCACHE"] = CachePath + "/shared/go-build"
+		spec.Env["GOMODCACHE"] = CachePath + "/shared/go-mod"
+		spec.Env["npm_config_cache"] = CachePath + "/shared/npm"
 	}
 
 	pids := int64(1024)

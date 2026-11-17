@@ -42,11 +42,13 @@ Runner subscriptions default to two CPUs and 4 GiB of memory. Explicit CPU alloc
 
 ## Persistent caches
 
-`cache: true` creates a separate namespace for each event source, subscription, repository and branch. Missing repository or branch information disables caching for that job. Each concurrent Docker job leases a separate named-volume slot, so parallel language installations cannot overwrite one another. Released slots are reused by later jobs.
+`cache: true` creates a separate namespace for each event source, subscription, repository and branch. Missing repository or branch information disables caching for that job. Each concurrent Docker job leases a separate named-volume slot for language installations. Released slots are reused by later jobs. Go build outputs, Go modules and npm downloads share an additional volume within the same branch namespace, so workers can reuse one another's dependencies. These caches support concurrent writers. npm prefers cached downloads and fetches missing packages from its registry.
 
 Managed cache volumes carry `dev.flatrun.cache=true` and the runtime's scope label. The runner image records its last use in `.flatrun-last-used`. A host maintenance policy can remove unused managed caches after an idle retention period. Caches without a valid marker must be retained for inspection.
 
-The tool cache, Go module cache, Go build cache and npm download cache are stored below `/flatrun-cache`. Checkouts are disposable. Cache contents are writable by repository code; do not place credentials in them or treat them as an isolation boundary for mutually untrusted contributors.
+The tool cache, Go module cache, Go build cache and npm download cache are stored below `/flatrun-cache`. Docker mounts the shared dependency volume at `/flatrun-cache/shared`; tool installations stay in the exclusive slot. Checkouts are disposable. Cache contents are writable by repository code; do not place credentials in them or treat them as an isolation boundary for mutually untrusted contributors.
+
+Other build tools can persist data by configuring their cache directory below `/flatrun-cache`, for example `/flatrun-cache/custom-tool`. Docker keeps that directory in the exclusively leased slot. To share it across Docker workers, use `/flatrun-cache/shared/custom-tool` only when the tool supports concurrent writers. Installing another language does not automatically configure its cache. Branch scoping and retention apply to these directories too.
 
 Configured runner images can be pulled with matching stored registry credentials. Ad hoc run images do not receive those credentials. Authentication is used only for image pulling and is not placed in the run record or job environment.
 
@@ -83,7 +85,7 @@ Run records and logs retain their normal persistence. Named cache volumes and Fi
 ## Acceptance
 
 - `TestEventHTTPRunner` drives a captured signed workflow-job webhook through the production receiver and checks runner policy and secret redaction.
-- `TestDockerRunnerCacheAndPrivilegePolicy` runs real Docker instances against the built image and checks cache reuse and both sudo settings.
+- `TestDockerRunnerCacheAndPrivilegePolicy` runs real Docker instances against the built image and checks cache reuse, concurrent dependency sharing, separate tool installations and both sudo settings.
 - `images/runner/test.sh` checks tools, native PostgreSQL and Go/npm cache reuse with offline second downloads.
 - Warm-pool tests cover clean preparation, fresh replacement, health failure, cache scope and shutdown cleanup.
 - A real workflow must pass on the same revision on hosted and self-hosted runners. Compare queue and execution times separately; repeat the self-hosted run to measure cache reuse.

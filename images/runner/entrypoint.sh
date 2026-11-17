@@ -2,6 +2,9 @@
 set -euo pipefail
 if [[ "${RUNNER_TOOL_CACHE:-}" == /flatrun-cache/tools ]]; then
     date +%s > /flatrun-cache/.flatrun-last-used
+    if [[ "${GOCACHE:-}" == /flatrun-cache/shared/go-build ]]; then
+        date +%s > /flatrun-cache/shared/.flatrun-last-used
+    fi
     mkdir -p "$RUNNER_TOOL_CACHE"
     cp -a --update=none /opt/hostedtoolcache/. "$RUNNER_TOOL_CACHE/"
 fi

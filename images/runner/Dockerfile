@@ -41,8 +41,8 @@ COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/ /usr/local/lib/dock
 COPY --from=hadolint /bin/hadolint /usr/local/bin/hadolint
 COPY entrypoint.sh /usr/local/bin/flatrun-runner
 RUN chmod 0755 /usr/local/bin/flatrun-runner \
-    && mkdir -p /flatrun-cache/tools /home/runner/_work \
-    && chown runner:docker /flatrun-cache /flatrun-cache/tools /home/runner/_work
+    && mkdir -p /flatrun-cache/tools /flatrun-cache/shared /home/runner/_work \
+    && chown runner:docker /flatrun-cache /flatrun-cache/tools /flatrun-cache/shared /home/runner/_work
 ENV PATH="/usr/lib/postgresql/16/bin:${PATH}"
 USER runner
 ENTRYPOINT ["/usr/local/bin/flatrun-runner"]
