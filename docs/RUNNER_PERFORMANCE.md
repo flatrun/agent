@@ -2,7 +2,7 @@
 
 ## Runner image
 
-Build `images/runner/Dockerfile` for Linux amd64. It includes Go 1.24 and 1.25, Node 22, Chrome, PostgreSQL 16, compilers, hadolint and Docker CLI plugins. Language setup actions select the requested version from the seeded tool cache. The image does not require a Docker daemon for native database or browser tests.
+Build `images/runner/Dockerfile` for Linux amd64. It includes Go 1.24 and 1.25, Node 22, Chrome, PostgreSQL 16, Poppler PDF tools, compilers, hadolint and Docker CLI plugins. Language setup actions select the requested version from the seeded tool cache. The image does not require a Docker daemon for native database or browser tests.
 
 ```sh
 docker build -t flatrun-runner:local images/runner

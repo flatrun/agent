@@ -7,7 +7,7 @@ trap cleanup EXIT
 docker volume create "$volume" > /dev/null
 docker run --rm --cpus 2 --memory 4g "$image" bash -euc '
     gcc --version; make --version; google-chrome --version
-    psql --version; jq --version; xz --version; zip -v
+    psql --version; pdftotext -v; pdfinfo -v; jq --version; xz --version; zip -v
     docker compose version; docker buildx version; hadolint --version
     sudo -n true
     pgdata=$(mktemp -d)/postgres

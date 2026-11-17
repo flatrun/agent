@@ -28,7 +28,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN test "$(dpkg --print-architecture)" = amd64 \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential fonts-liberation iptables jq postgresql-16 sudo xz-utils zip \
+        build-essential fonts-liberation iptables jq poppler-utils postgresql-16 sudo xz-utils zip \
     && curl --fail --silent --show-error --location --max-time 180 \
         -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/chrome.deb \
