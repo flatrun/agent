@@ -129,6 +129,9 @@ func submitRun(t *testing.T, client workspaceClient, body map[string]any) string
 func awaitRun(t *testing.T, client workspaceClient, id, want string) map[string]any {
 	t.Helper()
 	timeout := 8 * time.Second
+	if t.Name() == "TestTartRunHTTP" {
+		timeout = 4 * time.Minute
+	}
 	if strings.HasPrefix(t.Name(), "TestFirecracker") {
 		timeout = 90 * time.Second
 	}
@@ -559,7 +562,7 @@ func TestRunsHTTPRuntimeSelection(t *testing.T) {
 	var listing struct {
 		Items []runs.RuntimeStatus `json:"items"`
 	}
-	if err := json.Unmarshal(data, &listing); err != nil || status != 200 || len(listing.Items) != 2 {
+	if err := json.Unmarshal(data, &listing); err != nil || status != 200 || len(listing.Items) != 3 {
 		t.Fatalf("runtimes %d %s %v", status, data, err)
 	}
 	available := listing.Items
@@ -803,4 +806,33 @@ func (i *checkedFirecrackerInstance) Destroy(ctx context.Context) error {
 		}
 	}
 	return err
+}
+
+func TestTartRunHTTP(t *testing.T) {
+	image := os.Getenv("FLATRUN_TEST_TART_IMAGE")
+	if image == "" {
+		t.Skip("requires a local Tart VM with the guest agent")
+	}
+	server, client := setupWorkspaceTestServer(t)
+	client = client.login("admin", "admin-pass")
+	rt := &runtimes.Tart{Scope: uuid.NewString(), TartConfig: runtimes.TartConfig{Images: map[string]runtimes.TartImage{"build": {Base: image}}}}
+	manager, err := runs.NewManager(server.config.DeploymentsPath, rt, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.runsManager = manager
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Error(err)
+		}
+		ids, err := rt.Leftovers(context.Background())
+		if err != nil || len(ids) != 0 {
+			t.Errorf("leftover guests: %v, %v", ids, err)
+		}
+	})
+	id := submitRun(t, client, map[string]any{"runtime": "tart", "image": "build", "workdir": "/tmp", "egress": false, "env": map[string]string{"PROBE": "guest's value"}, "command": []string{"sh", "-ec", `test "$PROBE" = "guest's value"; uname -s > platform; cat platform`}, "artifact_paths": []string{"/tmp/platform"}})
+	result := awaitRun(t, client, id, "succeeded")
+	if artifacts, ok := result["artifacts"].([]any); !ok || len(artifacts) != 1 {
+		t.Fatalf("missing platform artifact: %v", result)
+	}
 }

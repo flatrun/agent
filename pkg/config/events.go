@@ -40,6 +40,7 @@ type EventSubscription struct {
 }
 
 type GitHubRunnerSpec struct {
+	WorkDir                  string        `yaml:"workdir" json:"workdir,omitempty"`
 	Cache                    bool          `yaml:"cache" json:"cache"`
 	WarmIdle                 int           `yaml:"warm_idle" json:"warm_idle"`
 	AllowPrivilegeEscalation bool          `yaml:"allow_privilege_escalation" json:"allow_privilege_escalation"`
@@ -119,6 +120,9 @@ func (c EventsConfig) Validate() error {
 			}
 		case "github_runner":
 			r := s.GitHubRunner
+			if r.Runtime == runtimes.TypeTart && r.Cache {
+				return errors.New("Tart runners do not support persistent caches")
+			}
 			if r.WarmIdle < 0 || r.WarmIdle > 32 {
 				return errors.New("warm_idle must be between 0 and 32")
 			}
@@ -156,7 +160,7 @@ func (c EventsConfig) Validate() error {
 }
 
 func validateEventRun(spec runs.Spec) error {
-	if spec.Runtime != "" && spec.Runtime != runtimes.TypeDocker && spec.Runtime != runtimes.TypeFirecracker {
+	if spec.Runtime != "" && spec.Runtime != runtimes.TypeDocker && spec.Runtime != runtimes.TypeFirecracker && spec.Runtime != runtimes.TypeTart {
 		return errors.New("unknown event run runtime")
 	}
 	if spec.TimeoutSeconds < 1 {

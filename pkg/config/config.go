@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flatrun/agent/internal/runtimes"
 	"github.com/flatrun/agent/pkg/models"
 	"gopkg.in/yaml.v3"
 )
@@ -44,9 +45,10 @@ type CapacityConfig struct {
 }
 
 type RunsConfig struct {
-	Firecracker  FirecrackerConfig `yaml:"firecracker" json:"firecracker"`
-	Workers      int               `yaml:"workers" json:"workers"`
-	EgressSubnet string            `yaml:"egress_subnet" json:"egress_subnet"`
+	Tart         runtimes.TartConfig `yaml:"tart" json:"tart"`
+	Firecracker  FirecrackerConfig   `yaml:"firecracker" json:"firecracker"`
+	Workers      int                 `yaml:"workers" json:"workers"`
+	EgressSubnet string              `yaml:"egress_subnet" json:"egress_subnet"`
 }
 
 type Config struct {

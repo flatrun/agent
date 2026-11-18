@@ -155,7 +155,10 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e events.Even
 			}
 			secrets["JIT"] = jit
 			spec.Command = []string{"sh", "-c", `exec ./run.sh --jitconfig "$JIT"`}
-			spec.WorkDir = "/home/runner"
+			spec.WorkDir = subscription.GitHubRunner.WorkDir
+			if spec.WorkDir == "" {
+				spec.WorkDir = "/home/runner"
+			}
 			spec.Egress = true
 			spec.Env["RUNNER_ALLOW_RUNASROOT"] = "1"
 			if spec.CPUs > 0 {
