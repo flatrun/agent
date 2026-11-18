@@ -17,6 +17,8 @@ def main():
     parser.add_argument('--path', action='append', required=True)
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if not args.key.strip():
+        parser.error('a non-empty key is required')
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
     if not command:
         parser.error('a setup command is required after --')
@@ -35,12 +37,21 @@ def main():
     if not cache_root.is_dir():
         return subprocess.call(command)
     cache = cache_root / 'snapshots'
-    cache.mkdir(exist_ok=True)
     identity = json.dumps([args.key, [str(p) for p in outputs], command], separators=(',', ':')).encode()
     name = hashlib.sha256(identity).hexdigest()
     archive = cache / (name + '.tar')
-    with (cache / (name + '.lock')).open('a+b') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        cache.mkdir(exist_ok=True)
+        lock_file = (cache / (name + '.lock')).open('a+b')
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        except OSError:
+            lock_file.close()
+            raise
+    except OSError as error:
+        print(f'FlatRun snapshot unavailable: {error}', file=sys.stderr)
+        return subprocess.call(command)
+    with lock_file:
         if archive.is_file() and not any(os.path.lexists(root / p) for p in outputs):
             with tempfile.TemporaryDirectory(prefix='.flatrun-restore-', dir=root) as staging:
                 stage = Path(staging)
@@ -66,16 +77,24 @@ def main():
         if not all(os.path.lexists(root / p) for p in outputs):
             print('FlatRun snapshot skipped: declared output missing', file=sys.stderr)
             return 0
-        fd, temporary = tempfile.mkstemp(prefix=name + '.', suffix='.tmp', dir=cache)
-        os.close(fd)
+        temporary = None
         try:
+            fd, temporary = tempfile.mkstemp(prefix=name + '.', suffix='.tmp', dir=cache)
+            os.close(fd)
             status = subprocess.call(['tar', '-cf', temporary, '--', *(str(p) for p in outputs)])
             if status:
-                return status
+                print('FlatRun snapshot not saved: archive command failed', file=sys.stderr)
+                return 0
             os.replace(temporary, archive)
+        except OSError as error:
+            print(f'FlatRun snapshot not saved: {error}', file=sys.stderr)
+            return 0
         finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+            if temporary and os.path.exists(temporary):
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
         print('FlatRun snapshot saved', flush=True)
         return 0
 

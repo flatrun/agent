@@ -61,6 +61,20 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual((self.root / 'uncached/out/value').read_text(), 'ready')
         self.assertFalse((self.root / 'missing-cache').exists())
 
+    def test_runs_setup_when_cache_directory_is_unusable(self):
+        (self.cache / 'snapshots').write_text('not a directory')
+        result = self.run_helper('uncached')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('unavailable', result.stderr)
+        self.assertEqual((self.root / 'uncached/out/value').read_text(), 'ready')
+
+    def test_successful_setup_survives_archive_failure(self):
+        self.env['PATH'] = ''
+        result = self.run_helper('uncached')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('not saved', result.stderr)
+        self.assertEqual((self.root / 'uncached/out/value').read_text(), 'ready')
+
     def test_rejects_symlink_outside_restore_root(self):
         self.assertEqual(self.run_helper('first').returncode, 0)
         archive = next((self.cache / 'snapshots').glob('*.tar'))
