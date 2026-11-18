@@ -60,7 +60,12 @@ def main():
                         member_path = Path(member.name)
                         if member_path.is_absolute() or '..' in member_path.parts or not any(member_path == p or p in member_path.parents for p in outputs):
                             raise ValueError('snapshot contains an undeclared path')
-                    tar.extractall(stage, filter='data')
+                    def safe_filter(member, destination):
+                        filtered = tarfile.data_filter(member, destination)
+                        if filtered is not None and (filtered.isfile() or filtered.isdir()):
+                            filtered.mode = member.mode & 0o777
+                        return filtered
+                    tar.extractall(stage, filter=safe_filter)
                 for p in outputs:
                     source, target = stage / p, root / p
                     if not os.path.lexists(source):

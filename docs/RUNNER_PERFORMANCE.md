@@ -50,7 +50,7 @@ The tool cache, Go module cache, Go build cache and npm download cache are store
 
 ### Prepared setup snapshots
 
-`flatrun-snapshot --key KEY --path RELATIVE_PATH [--path RELATIVE_PATH ...] -- COMMAND ...` saves declared setup outputs after a successful command and restores them when the same key, paths and command recur. Outputs must be absent before restoration; otherwise the command runs normally. The command runs without snapshot caching when the scoped cache is unavailable. A per-key lock prevents concurrent jobs from publishing partial snapshots.
+`flatrun-snapshot --key KEY --path RELATIVE_PATH [--path RELATIVE_PATH ...] -- COMMAND ...` saves declared setup outputs after a successful command and restores them when the same key, paths and command recur. Outputs must be absent before restoration; otherwise the command runs normally. The command runs without snapshot caching when the scoped cache is unavailable. A per-key lock prevents concurrent jobs from publishing partial snapshots. Restores preserve ordinary file permissions, remove special permission bits and use the runner user as owner. Links that escape the checkout and special files are rejected.
 
 The caller must include every relevant input in the key, including source and dependency files, tool versions, platform, setup flags and environment settings. Declare every output needed by later steps. A cache hit does not rerun setup, export environment changes or reproduce undeclared side effects. Do not cache credentials, secrets or outputs shared between untrusted jobs. Use only when the setup is reproducible from its declared inputs. Cache keys and output paths are opt-in for each workload, not specific to a language.
 

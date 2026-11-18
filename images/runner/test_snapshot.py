@@ -54,6 +54,14 @@ class SnapshotTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / 'escaped').exists())
 
+    def test_restores_ordinary_group_permissions(self):
+        command = [sys.executable, '-c', 'from pathlib import Path; import os; p=Path("out"); p.mkdir(); os.chmod(p, 0o775); f=p/"value"; f.write_text("ready"); os.chmod(f, 0o664)']
+        first = self.run_helper('first', command=command)
+        second = self.run_helper('second', command=command)
+        self.assertEqual((first.returncode, second.returncode), (0, 0), second.stderr)
+        self.assertEqual((self.root / 'second/out').stat().st_mode & 0o777, 0o775)
+        self.assertEqual((self.root / 'second/out/value').stat().st_mode & 0o777, 0o664)
+
     def test_runs_setup_when_cache_is_unavailable(self):
         self.env['FLATRUN_SNAPSHOT_CACHE'] = str(self.root / 'missing-cache')
         result = self.run_helper('uncached')
