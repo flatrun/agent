@@ -19,7 +19,7 @@ import (
 
 var ErrQueueFull = errors.New("run queue is full")
 
-var knownRuntimeTypes = []runtimes.Type{runtimes.TypeDocker, runtimes.TypeFirecracker}
+var knownRuntimeTypes = []runtimes.Type{runtimes.TypeDocker, runtimes.TypeFirecracker, runtimes.TypeTart}
 
 var ErrClosed = errors.New("runs manager is closed")
 

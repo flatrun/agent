@@ -516,7 +516,11 @@ func New(cfg *config.Config, configPath string) *Server {
 				return registry.EncodeAuthConfig(registry.AuthConfig{Username: credential.Username, Password: credential.Password, ServerAddress: credential.RegistryURL})
 			}
 			firecracker := runtimes.NewWarmRuntime(runtimes.NewFirecracker(cfg.Runs.Firecracker, runtime, runtime.Scope))
-			s.runsManager, runErr = runs.NewManager(cfg.DeploymentsPath, runtime, cfg.Runs.Workers, firecracker)
+			additional := []runtimes.Runtime{firecracker}
+			if len(cfg.Runs.Tart.Images) > 0 {
+				additional = append(additional, &runtimes.Tart{TartConfig: cfg.Runs.Tart, Scope: runtime.Scope})
+			}
+			s.runsManager, runErr = runs.NewManager(cfg.DeploymentsPath, runtime, cfg.Runs.Workers, additional...)
 			if runErr == nil {
 				for _, subscription := range cfg.Events.Subscriptions {
 					if subscription.Action != "github_runner" || subscription.GitHubRunner.WarmIdle == 0 {

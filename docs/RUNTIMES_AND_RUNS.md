@@ -2,8 +2,7 @@
 
 ## What they are
 
-A **runtime** creates, starts and destroys an isolated instance. Runs pick
-`docker` or `firecracker` with the `runtime` field. Docker shares the host
+A **runtime** creates, starts and destroys an isolated instance. Runs select `docker`, `firecracker` or `tart` with the `runtime` field. Docker shares the host
 kernel and should execute trusted code. Firecracker runs each instance in a
 microVM with its own kernel.
 
@@ -15,7 +14,7 @@ Three layers describe the work:
 
 | Layer | Question | Current behaviour |
 | --- | --- | --- |
-| Runtime | What executes the code? | Docker container or Firecracker microVM |
+| Runtime | What executes the code? | Docker container, Firecracker microVM or Tart VM |
 | Lifecycle | How long does the work live? | A run executes once and records its outcome |
 | Placement | Where does it execute? | Runs execute on the receiving agent; deployment placement is unchanged |
 
@@ -29,7 +28,7 @@ inside `spec`.
 
 | Field | Meaning and default |
 | --- | --- |
-| `runtime` | `docker` or `firecracker`. Omitted or empty means `docker`. |
+| `runtime` | `docker`, `firecracker` or `tart`. Omitted or empty means `docker`. |
 | `image` | Required, non-empty image reference. A missing local image is pulled. |
 | `command` | Array of command arguments passed as the container command. |
 | `env` | Map of environment variable names to values. Stored in the run record. |
@@ -228,3 +227,24 @@ the VM process, jail, sockets, filesystem copy, tap, and instance metadata.
 
 If run storage cannot initialize, run endpoints return `503` after
 authorization. Other routes continue to initialize.
+
+## Tart on Apple silicon
+
+A FlatRun agent can clone stopped Linux and macOS VMs on an Apple silicon Mac. Configure the local base images that runs may request. Each base needs a working Tart guest agent. The FlatRun agent runs on the Mac and keeps its GitHub App credentials outside the build guests.
+
+```yaml
+runs:
+  tart:
+    images:
+      android:
+        base: ubuntu-android
+        rosetta: true
+      ios:
+        base: macos-xcode
+```
+
+Deliver GitHub webhooks to this Mac over HTTPS. For a Mac behind NAT, an outbound tunnel can publish the exact `POST /api/event-hooks/<endpoint>` route. Set a strong webhook secret and keep the rest of the agent API private. The runtime accepts only the configured base images and deletes its disposable clones.
+
+Networked jobs require Tart's Softnet helper to be usable noninteractively by the Mac user. Offline runs use a disconnected virtual network. CPU limits use whole cores and memory limits use whole MiB.
+
+On a GitHub runner subscription, set `github_runner.runtime` to `tart`, `image` to a configured image name and `workdir` to the absolute guest directory containing the installed GitHub Actions runner. The subscription's labels must match the workflow job. Keep the control runner on a host that is available when the build Mac sleeps. Configure the subscription timeout to cover a clean build, up to FlatRun's one-hour limit.

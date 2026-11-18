@@ -115,7 +115,7 @@ func TestRunsServerStartupDisabledFirecracker(t *testing.T) {
 			var listing struct {
 				Items []runs.RuntimeStatus `json:"items"`
 			}
-			if err := json.Unmarshal(data, &listing); err != nil || status != http.StatusOK || len(listing.Items) != 2 {
+			if err := json.Unmarshal(data, &listing); err != nil || status != http.StatusOK || len(listing.Items) != 3 {
 				t.Fatalf("runtimes: %d %s %v", status, data, err)
 			}
 			reason := "not configured on this node"

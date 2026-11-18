@@ -166,6 +166,8 @@ templates:
 runs:
   workers: 2
   egress_subnet: ""
+  tart:
+    images: {}
   firecracker:
     binary: firecracker
     jailer: jailer
