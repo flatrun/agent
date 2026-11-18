@@ -48,6 +48,14 @@ Managed cache volumes carry `dev.flatrun.cache=true` and the runtime's scope lab
 
 The tool cache, Go module cache, Go build cache and npm download cache are stored below `/flatrun-cache`. Docker mounts the shared dependency volume at `/flatrun-cache/shared`; tool installations stay in the exclusive slot. Checkouts are disposable. Cache contents are writable by repository code; do not place credentials in them or treat them as an isolation boundary for mutually untrusted contributors.
 
+### Prepared setup snapshots
+
+`flatrun-snapshot --key KEY --path RELATIVE_PATH [--path RELATIVE_PATH ...] -- COMMAND ...` saves declared setup outputs after a successful command and restores them when the same key, paths and command recur. Outputs must be absent before restoration; otherwise the command runs normally. The command runs without snapshot caching when the scoped cache is unavailable. A per-key lock prevents concurrent jobs from publishing partial snapshots.
+
+The caller must include every relevant input in the key, including source and dependency files, tool versions, platform, setup flags and environment settings. Declare every output needed by later steps. A cache hit does not rerun setup, export environment changes or reproduce undeclared side effects. Do not cache credentials, secrets or outputs shared between untrusted jobs. Use only when the setup is reproducible from its declared inputs. Cache keys and output paths are opt-in for each workload, not specific to a language.
+
+For example, a job can calculate a key from its dependency manifest, lockfile, runtime version and operating system, then call `flatrun-snapshot --key "$KEY" --path node_modules -- npm ci`. Include any additional workspace dependency directories as separate `--path` arguments. Cache volumes retain the existing repository and branch scope and expiration policy.
+
 Other build tools can persist data by configuring their cache directory below `/flatrun-cache`, for example `/flatrun-cache/custom-tool`. Docker keeps that directory in the exclusively leased slot. To share it across Docker workers, use `/flatrun-cache/shared/custom-tool` only when the tool supports concurrent writers. Installing another language does not automatically configure its cache. Branch scoping and retention apply to these directories too.
 
 Configured runner images can be pulled with matching stored registry credentials. Ad hoc run images do not receive those credentials. Authentication is used only for image pulling and is not placed in the run record or job environment.
@@ -86,7 +94,7 @@ Run records and logs retain their normal persistence. Named cache volumes and Fi
 
 - `TestEventHTTPRunner` drives a captured signed workflow-job webhook through the production receiver and checks runner policy and secret redaction.
 - `TestDockerRunnerCacheAndPrivilegePolicy` runs real Docker instances against the built image and checks cache reuse, concurrent dependency sharing, separate tool installations and both sudo settings.
-- `images/runner/test.sh` checks tools, native PostgreSQL and Go/npm cache reuse with offline second downloads.
+- `images/runner/test.sh` checks tools, native PostgreSQL, Go/npm cache reuse with offline second downloads, snapshot isolation, concurrent creation and unsafe archive rejection.
 - Warm-pool tests cover clean preparation, fresh replacement, health failure, cache scope and shutdown cleanup.
 - A real workflow must pass on the same revision on hosted and self-hosted runners. Compare queue and execution times separately; repeat the self-hosted run to measure cache reuse.
 

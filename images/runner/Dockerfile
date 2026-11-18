@@ -28,7 +28,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN test "$(dpkg --print-architecture)" = amd64 \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential fonts-liberation iptables jq poppler-utils postgresql-16 sudo xz-utils zip \
+        build-essential fonts-liberation iptables jq poppler-utils postgresql-16 python3 sudo xz-utils zip \
     && curl --fail --silent --show-error --location --max-time 180 \
         -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/chrome.deb \
@@ -40,7 +40,8 @@ COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/ /usr/local/lib/docker/cli-plugins/
 COPY --from=hadolint /bin/hadolint /usr/local/bin/hadolint
 COPY entrypoint.sh /usr/local/bin/flatrun-runner
-RUN chmod 0755 /usr/local/bin/flatrun-runner \
+COPY flatrun-snapshot /usr/local/bin/flatrun-snapshot
+RUN chmod 0755 /usr/local/bin/flatrun-runner /usr/local/bin/flatrun-snapshot \
     && mkdir -p /flatrun-cache/tools /flatrun-cache/shared /home/runner/_work \
     && chown runner:docker /flatrun-cache /flatrun-cache/tools /flatrun-cache/shared /home/runner/_work
 ENV PATH="/usr/lib/postgresql/16/bin:${PATH}"

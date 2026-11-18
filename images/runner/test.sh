@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 image=${1:?runner image is required}
+python3 "$(dirname "$0")/test_snapshot.py" "$(dirname "$0")/flatrun-snapshot"
 volume="flatrun-runner-smoke-$(date +%s)-$$"
 cleanup() { docker volume rm "$volume" > /dev/null; }
 trap cleanup EXIT
 docker volume create "$volume" > /dev/null
 docker run --rm --cpus 2 --memory 4g "$image" bash -euc '
     gcc --version; make --version; google-chrome --version
+    flatrun-snapshot --help > /dev/null
     psql --version; pdftotext -v; pdfinfo -v; jq --version; xz --version; zip -v
     docker compose version; docker buildx version; hadolint --version
     sudo -n true
