@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var ErrMemoryBudget = errors.New("run must request a positive memory size within the configured budget")
+
 var ErrQueueFull = errors.New("run queue is full")
 
 var knownRuntimeTypes = []runtimes.Type{runtimes.TypeDocker, runtimes.TypeFirecracker, runtimes.TypeTart}
@@ -24,10 +27,11 @@ var knownRuntimeTypes = []runtimes.Type{runtimes.TypeDocker, runtimes.TypeFirecr
 var ErrClosed = errors.New("runs manager is closed")
 
 type pending struct {
-	run     Run
-	secrets map[string]string
-	ctx     context.Context
-	cancel  context.CancelFunc
+	reservation uint64
+	run         Run
+	secrets     map[string]string
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 type Manager struct {
@@ -36,13 +40,20 @@ type Manager struct {
 	runtimes       map[runtimes.Type]runtimes.Runtime
 	recoveryErrors map[runtimes.Type]error
 	mu             sync.Mutex
-	queue          chan *pending
+	queue          []*pending
+	ready          *sync.Cond
+	memoryBudget   uint64
+	reserved       uint64
 	active         map[string]*pending
 	closed         bool
 	wg             sync.WaitGroup
 }
 
 func NewManager(root string, runtime runtimes.Runtime, workers int, additional ...runtimes.Runtime) (*Manager, error) {
+	return NewManagerWithMemoryBudget(root, runtime, workers, 0, additional...)
+}
+
+func NewManagerWithMemoryBudget(root string, runtime runtimes.Runtime, workers int, budget uint64, additional ...runtimes.Runtime) (*Manager, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	store, err := NewStore(root)
@@ -84,6 +95,15 @@ func NewManager(root string, runtime runtimes.Runtime, workers int, additional .
 			log.Printf("Run runtime %s: %v", kind, err)
 		}
 	}
+	if budget > 0 && len(recoveryErrors) > 0 {
+		var failures []error
+		for _, kind := range knownRuntimeTypes {
+			if err := recoveryErrors[kind]; err != nil {
+				failures = append(failures, fmt.Errorf("%s: %w", kind, err))
+			}
+		}
+		return nil, fmt.Errorf("cannot establish run memory budget after recovery: %w", errors.Join(failures...))
+	}
 	if workers <= 0 {
 		workers = 2
 	}
@@ -92,9 +112,10 @@ func NewManager(root string, runtime runtimes.Runtime, workers int, additional .
 		root:           filepath.Join(root, ".flatrun", "runs"),
 		runtimes:       runtimeMap,
 		recoveryErrors: recoveryErrors,
-		queue:          make(chan *pending, 128),
+		memoryBudget:   budget,
 		active:         map[string]*pending{},
 	}
+	manager.ready = sync.NewCond(&manager.mu)
 	for range workers {
 		manager.wg.Add(1)
 		go manager.worker()
@@ -106,6 +127,16 @@ func NewManager(root string, runtime runtimes.Runtime, workers int, additional .
 func (m *Manager) Submit(owner int64, username string, spec Spec, secrets map[string]string) (*Run, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err
+	}
+	if m.memoryBudget > 0 {
+		if spec.Runtime == runtimes.TypeFirecracker {
+			// Firecracker allocates whole MiB when configuring the guest.
+			const mib = 1 << 20
+			spec.MemoryBytes = (spec.MemoryBytes + mib - 1) &^ (mib - 1)
+		}
+		if spec.MemoryBytes == 0 || spec.MemoryBytes > m.memoryBudget {
+			return nil, ErrMemoryBudget
+		}
 	}
 	if err := m.CheckRuntime(context.Background(), spec.Runtime); err != nil {
 		return nil, err
@@ -124,7 +155,7 @@ func (m *Manager) Submit(owner int64, username string, spec Spec, secrets map[st
 	if m.closed {
 		return nil, ErrClosed
 	}
-	if len(m.queue) == cap(m.queue) {
+	if len(m.queue) >= 128 {
 		return nil, ErrQueueFull
 	}
 	run := Run{
@@ -143,7 +174,8 @@ func (m *Manager) Submit(owner int64, username string, spec Spec, secrets map[st
 	ctx, cancel := context.WithCancel(context.Background())
 	queued := &pending{run: run, secrets: secretValues, ctx: ctx, cancel: cancel}
 	m.active[run.ID] = queued
-	m.queue <- queued
+	m.queue = append(m.queue, queued)
+	m.ready.Signal()
 	return &run, nil
 }
 
@@ -155,6 +187,7 @@ func (m *Manager) Cancel(id string) error {
 		return nil
 	}
 	queued.cancel()
+	m.ready.Broadcast()
 	if queued.run.Status == StatusQueued {
 		clear(queued.secrets)
 		queued.secrets = nil
@@ -176,7 +209,7 @@ func (m *Manager) Close() error {
 	for _, queued := range m.active {
 		queued.cancel()
 	}
-	close(m.queue)
+	m.ready.Broadcast()
 	m.mu.Unlock()
 	m.wg.Wait()
 	var failures []error
@@ -199,8 +232,35 @@ func (m *Manager) ArtifactPath(id, name string) string {
 
 func (m *Manager) worker() {
 	defer m.wg.Done()
-	for queued := range m.queue {
+	for {
+		m.mu.Lock()
+		queued := m.nextRun()
+		m.mu.Unlock()
+		if queued == nil {
+			return
+		}
 		m.execute(queued)
+	}
+}
+
+func (m *Manager) nextRun() *pending {
+	for {
+		for i, job := range m.queue {
+			size := job.run.Spec.MemoryBytes
+			if job.ctx.Err() == nil && m.memoryBudget > 0 {
+				if size > m.memoryBudget-m.reserved {
+					continue
+				}
+				m.reserved += size
+				job.reservation = size
+			}
+			m.queue = slices.Delete(m.queue, i, i+1)
+			return job
+		}
+		if m.closed {
+			return nil
+		}
+		m.ready.Wait()
 	}
 }
 
@@ -213,6 +273,12 @@ func (m *Manager) finishRun(run *Run) {
 }
 
 func (m *Manager) execute(queued *pending) {
+	defer func() {
+		m.mu.Lock()
+		m.reserved -= queued.reservation
+		m.ready.Broadcast()
+		m.mu.Unlock()
+	}()
 	ctx, cancel := context.WithTimeout(queued.ctx, time.Duration(queued.run.Spec.TimeoutSeconds)*time.Second)
 	defer cancel()
 	m.mu.Lock()
@@ -258,6 +324,8 @@ func (m *Manager) execute(queued *pending) {
 			cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := instance.Destroy(cleanupContext); err != nil {
+				// The instance may still own the memory until operator cleanup and restart.
+				queued.reservation = 0
 				run.Status = StatusFailed
 				run.Error = sanitizer.redact(fmt.Sprintf("instance cleanup failed: %v", err))
 			}

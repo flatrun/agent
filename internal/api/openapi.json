@@ -16132,6 +16132,12 @@
       "config.GitHubRunnerSpec": {
         "type": "object",
         "properties": {
+          "allow_privilege_escalation": {
+            "type": "boolean"
+          },
+          "cache": {
+            "type": "boolean"
+          },
           "cpus": {
             "type": "number"
           },
@@ -16149,9 +16155,19 @@
           },
           "timeout_seconds": {
             "type": "integer"
+          },
+          "warm_idle": {
+            "type": "integer"
+          },
+          "workdir": {
+            "type": "string"
           }
         },
         "x-property-order": [
+          "workdir",
+          "cache",
+          "warm_idle",
+          "allow_privilege_escalation",
           "runner_group_id",
           "runtime",
           "image",
@@ -16160,6 +16176,10 @@
           "memory_bytes"
         ],
         "x-columns": [
+          "workdir",
+          "cache",
+          "warm_idle",
+          "allow_privilege_escalation",
           "runner_group_id",
           "runtime",
           "image",

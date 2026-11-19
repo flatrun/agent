@@ -105,3 +105,9 @@ The image is Linux amd64. Native PostgreSQL runs as the non-root image user in D
 This change does not provide a privileged per-job Docker daemon. Docker-based subscriptions need workflows that use native services and CLI checks, or a separately configured Docker execution environment for container actions and image building.
 
 Warm-pool lifecycle tests do not establish real VM startup performance. Host integration must be exercised on a KVM-capable machine. Docker cache volumes have no size quota. Firecracker cache disks need a host retention policy. Reserve capacity and monitor disk usage.
+
+## Shared run memory budget
+
+Set `runs.memory_budget_bytes` to limit the combined memory reservations of jobs on one agent. Zero disables the budget. With a budget enabled, each submitted job must request a positive memory size within the budget. Workers start the oldest queued job that fits and release its reservation after runtime cleanup. Failed instance cleanup retains the reservation until the operator removes the leftover instance and restarts the agent. Budgeted scheduling starts only after the agent can account for leftover instances on its configured runtimes. Host processes and idle warm pools need separate capacity.
+
+Give regular and heavy GitHub subscriptions distinct runner labels, then set each workflow job’s `runs-on` to its class. With seven workers, a 15,000,000,000-byte budget and requests of 2,040 or 4,080 MiB, seven regular jobs fit, as do three heavy jobs and one regular job. The execution timeout starts at admission.

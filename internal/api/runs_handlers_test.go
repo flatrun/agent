@@ -836,3 +836,41 @@ func TestTartRunHTTP(t *testing.T) {
 		t.Fatalf("missing platform artifact: %v", result)
 	}
 }
+
+func TestRunMemoryBudgetHTTP(t *testing.T) {
+	s, client := setupWorkspaceTestServer(t)
+	const unit uint64 = 2040 << 20
+	m, err := runs.NewManagerWithMemoryBudget(s.config.DeploymentsPath, blockingCreateRuntime{}, 7, 7*unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.runsManager = m
+	t.Cleanup(func() {
+		if err := m.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	admin := client.login("admin", "admin-pass")
+	for _, size := range []uint64{0, 8 * unit} {
+		code, _ := admin.do("POST", "/runs", "", map[string]any{"image": "busybox:latest", "memory_bytes": size})
+		if code != http.StatusBadRequest {
+			t.Fatalf("invalid request size %d returned %d", size, code)
+		}
+	}
+	submit := func(size uint64) string {
+		return submitRun(t, admin, map[string]any{"image": "busybox:latest", "memory_bytes": size})
+	}
+	var heavy string
+	for range 3 {
+		heavy = submit(2 * unit)
+		awaitRun(t, admin, heavy, "starting")
+	}
+	waiting := submit(2 * unit)
+	regular := submit(unit)
+	awaitRun(t, admin, regular, "starting")
+	awaitRun(t, admin, waiting, "queued")
+	if code, _ := admin.do("DELETE", "/runs/"+heavy, "", nil); code != http.StatusOK {
+		t.Fatalf("cancel returned %d", code)
+	}
+	awaitRun(t, admin, waiting, "starting")
+}
