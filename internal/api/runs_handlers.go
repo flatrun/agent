@@ -83,6 +83,10 @@ func (s *Server) createRun(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return
 		}
+		if errors.Is(err, runs.ErrMemoryBudget) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		if errors.Is(err, runs.ErrQueueFull) || errors.Is(err, runs.ErrClosed) {
 			status = http.StatusServiceUnavailable
 		}

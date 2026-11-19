@@ -520,7 +520,7 @@ func New(cfg *config.Config, configPath string) *Server {
 			if len(cfg.Runs.Tart.Images) > 0 {
 				additional = append(additional, &runtimes.Tart{TartConfig: cfg.Runs.Tart, Scope: runtime.Scope})
 			}
-			s.runsManager, runErr = runs.NewManager(cfg.DeploymentsPath, runtime, cfg.Runs.Workers, additional...)
+			s.runsManager, runErr = runs.NewManagerWithMemoryBudget(cfg.DeploymentsPath, runtime, cfg.Runs.Workers, cfg.Runs.MemoryBudgetBytes, additional...)
 			if runErr == nil {
 				for _, subscription := range cfg.Events.Subscriptions {
 					if subscription.Action != "github_runner" || subscription.GitHubRunner.WarmIdle == 0 {

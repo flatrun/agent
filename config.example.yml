@@ -165,6 +165,7 @@ templates:
 
 runs:
   workers: 2
+  memory_budget_bytes: 0
   egress_subnet: ""
   tart:
     images: {}

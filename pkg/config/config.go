@@ -45,10 +45,11 @@ type CapacityConfig struct {
 }
 
 type RunsConfig struct {
-	Tart         runtimes.TartConfig `yaml:"tart" json:"tart"`
-	Firecracker  FirecrackerConfig   `yaml:"firecracker" json:"firecracker"`
-	Workers      int                 `yaml:"workers" json:"workers"`
-	EgressSubnet string              `yaml:"egress_subnet" json:"egress_subnet"`
+	MemoryBudgetBytes uint64              `yaml:"memory_budget_bytes" json:"memory_budget_bytes"`
+	Tart              runtimes.TartConfig `yaml:"tart" json:"tart"`
+	Firecracker       FirecrackerConfig   `yaml:"firecracker" json:"firecracker"`
+	Workers           int                 `yaml:"workers" json:"workers"`
+	EgressSubnet      string              `yaml:"egress_subnet" json:"egress_subnet"`
 }
 
 type Config struct {
