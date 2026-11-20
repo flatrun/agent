@@ -81,11 +81,38 @@ func TestEventHTTPRunner(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
 	var apiCalls atomic.Int32
+	var completed atomic.Bool
+	var blockLookup atomic.Bool
+	lookupStarted := make(chan struct{})
+	resume := make(chan struct{})
+	defer close(resume)
 	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiCalls.Add(1)
 		if r.URL.Path == "/app/installations/3456996/access_tokens" {
-			started <- struct{}{}
+			select {
+			case started <- struct{}{}:
+			default:
+			}
 			<-release
+		}
+		if r.URL.Path == "/repos/Codertocat/Hello-World/actions/jobs/289782451" {
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer ghs_16C7e42F292c6912E7710c838347Ae178B4a" {
+				t.Error("invalid job lookup")
+			}
+			if blockLookup.Load() {
+				close(lookupStarted)
+				select {
+				case <-r.Context().Done():
+					return
+				case <-resume:
+				}
+			}
+			if completed.Load() {
+				_, _ = io.WriteString(w, `{"status":"completed"}`)
+			} else {
+				_, _ = io.WriteString(w, `{"status":"queued"}`)
+			}
+			return
 		}
 		if r.Method != "POST" || r.Header.Get("Accept") != "application/vnd.github+json" {
 			t.Error("invalid API request")
@@ -222,7 +249,7 @@ func TestEventHTTPRunner(t *testing.T) {
 	if status := deliver("in_progress.payload.json", "in_progress.payload.json", "test-secret"); status != 200 {
 		t.Fatalf("ignored duplicate: %d", status)
 	}
-	if apiCalls.Load() != 2 {
+	if apiCalls.Load() != 3 {
 		t.Fatalf("API calls: %d", apiCalls.Load())
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -259,6 +286,61 @@ func TestEventHTTPRunner(t *testing.T) {
 		t.Fatal("extra run")
 	default:
 	}
+	waitCancelled := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			records, err := manager.Store.List(nil, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, r := range records {
+				if r.Status == runs.StatusCancelled {
+					count++
+				}
+			}
+			if count == want {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("expected %d cancelled runner requests", want)
+	}
+	completed.Store(true)
+	if deliver("late-queued", "queued.payload.json", "test-secret") != 202 {
+		t.Fatal("late delivery rejected")
+	}
+	s.deliveries.wg.Wait()
+	waitCancelled(1)
+	if apiCalls.Load() != 5 {
+		t.Fatal("finished job requested a runner")
+	}
+
+	blockLookup.Store(true)
+	if deliver("preparing", "queued.payload.json", "test-secret") != 202 {
+		t.Fatal("queue failed")
+	}
+	select {
+	case <-lookupStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("lookup did not start")
+	}
+	if deliver("waiting", "queued.payload.json", "test-secret") != 202 {
+		t.Fatal("queue failed")
+	}
+	s.deliveries.wg.Wait()
+	if deliver("finished", "completed.success.with-organization.payload.json", "test-secret") != 202 {
+		t.Fatal("completion rejected")
+	}
+	s.deliveries.wg.Wait()
+	waitCancelled(3)
+	select {
+	case <-rt.specs:
+		t.Fatal("started an obsolete runner")
+	default:
+	}
+
 }
 
 func TestEventReadHTTPAuthorization(t *testing.T) {

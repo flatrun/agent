@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ func (a GitHubApp) JIT(ctx context.Context, e events.Event, group int64, labels 
 	var installation struct {
 		Token string `json:"token"`
 	}
-	if err := a.post(ctx, fmt.Sprintf("/app/installations/%d/access_tokens", installationID), token, map[string]any{"repositories": []string{strings.Split(e.Attribute("subject"), "/")[1]}}, &installation); err != nil {
+	if err := a.request(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", installationID), token, map[string]any{"repositories": []string{strings.Split(e.Attribute("subject"), "/")[1]}}, &installation, http.StatusCreated); err != nil {
 		return "", err
 	}
 	if installation.Token == "" {
@@ -56,7 +57,25 @@ func (a GitHubApp) JIT(ctx context.Context, e events.Event, group int64, labels 
 		Encoded string `json:"encoded_jit_config"`
 	}
 	parts := strings.Split(e.Attribute("subject"), "/")
-	err = a.post(ctx, "/repos/"+url.PathEscape(parts[0])+"/"+url.PathEscape(parts[1])+"/actions/runners/generate-jitconfig", installation.Token, map[string]any{"name": "flatrun-" + uuid.NewString(), "runner_group_id": group, "labels": labels, "work_folder": "_work"}, &config)
+	jobID, err := strconv.ParseInt(e.Attribute("job_id"), 10, 64)
+	if err != nil || jobID <= 0 {
+		return "", errors.New("invalid workflow job ID")
+	}
+	repo := "/repos/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1]) + "/actions"
+	var job struct {
+		Status string `json:"status"`
+	}
+	if err := a.request(ctx, http.MethodGet, repo+"/jobs/"+strconv.FormatInt(jobID, 10), installation.Token, nil, &job, http.StatusOK); err != nil {
+		return "", err
+	}
+	switch job.Status {
+	case "in_progress", "completed":
+		return "", nil
+	case "queued":
+	default:
+		return "", fmt.Errorf("unexpected workflow job status %q", job.Status)
+	}
+	err = a.request(ctx, http.MethodPost, repo+"/runners/generate-jitconfig", installation.Token, map[string]any{"name": "flatrun-" + uuid.NewString(), "runner_group_id": group, "labels": labels, "work_folder": "_work"}, &config, http.StatusCreated)
 	if err != nil {
 		return "", err
 	}
@@ -66,16 +85,20 @@ func (a GitHubApp) JIT(ctx context.Context, e events.Event, group int64, labels 
 	return config.Encoded, nil
 }
 
-func (a GitHubApp) post(ctx context.Context, path, token string, body, output any) error {
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return errors.New("invalid GitHub request")
+func (a GitHubApp) request(ctx context.Context, method, path, token string, body, output any, expected int) error {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return errors.New("invalid GitHub request")
+		}
+		reader = bytes.NewReader(raw)
 	}
 	base := a.BaseURL
 	if base == "" {
 		base = "https://api.github.com"
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(raw))
+	request, err := http.NewRequestWithContext(ctx, method, base+path, reader)
 	if err != nil {
 		return errors.New("invalid GitHub API URL")
 	}
@@ -92,7 +115,7 @@ func (a GitHubApp) post(ctx context.Context, path, token string, body, output an
 		return errors.New("GitHub API request failed")
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusCreated {
+	if response.StatusCode != expected {
 		return fmt.Errorf("GitHub API returned %d", response.StatusCode)
 	}
 	if json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(output) != nil {
