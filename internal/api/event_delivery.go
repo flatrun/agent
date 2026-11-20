@@ -15,6 +15,7 @@ import (
 
 	"github.com/flatrun/agent/internal/auth"
 	"github.com/flatrun/agent/internal/events"
+	"github.com/flatrun/agent/internal/runs"
 	"github.com/flatrun/agent/internal/webhook"
 	"github.com/flatrun/agent/pkg/config"
 	"github.com/gin-gonic/gin"
@@ -84,6 +85,16 @@ func (s *Server) receiveEvent(c *gin.Context) {
 		for name, result := range record.Subscriptions {
 			outcomes[name] = result
 		}
+		if s.runsManager != nil && (event.Type == "github.workflow_job.completed" || event.Type == "github.workflow_job.in_progress") {
+			count, err := s.runsManager.CancelPending(runnerJobKey(event))
+			if err != nil {
+				state.finish(record, "failed", outcomes)
+				return
+			}
+			if count > 0 {
+				outcome = "succeeded"
+			}
+		}
 		for _, subscription := range s.config.Events.Subscriptions {
 			if len(record.Subscriptions) > 0 && record.Subscriptions[subscription.Name] == "" {
 				continue
@@ -116,6 +127,10 @@ func (s *Server) receiveEvent(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
 }
 
+func runnerJobKey(e events.Event) string {
+	return strings.Join([]string{e.Source, strings.ToLower(e.Attribute("subject")), e.Attribute("job_id")}, "\x00")
+}
+
 func (s *Server) actOnEvent(subscription config.EventSubscription, e events.Event, parsed *webhook.Event) error {
 	switch subscription.Action {
 	case "run", "github_runner":
@@ -136,8 +151,7 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e events.Even
 		spec.Env["FLATRUN_EVENT_TYPE"] = e.Type
 		spec.Env["FLATRUN_EVENT_SUBJECT"] = e.Attribute("subject")
 
-		secrets := map[string]string{}
-		defer clear(secrets)
+		var preparation runs.Preparation
 		if subscription.Action == "github_runner" {
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer cancel()
@@ -149,11 +163,16 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e events.Even
 				log.Printf("Event runner delivery failed: runtime %s unavailable: %v", spec.Runtime, err)
 				return fmt.Errorf("runner runtime %s unavailable: %w", spec.Runtime, err)
 			}
-			jit, err := app.JIT(ctx, e, subscription.GitHubRunner.RunnerGroupID, subscription.Labels)
-			if err != nil {
-				return err
-			}
-			secrets["JIT"] = jit
+			preparation = runs.Preparation{Key: runnerJobKey(e), Apply: func(ctx context.Context, secrets map[string]string) (bool, error) {
+				ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+				defer cancel()
+				jit, err := app.JIT(ctx, e, subscription.GitHubRunner.RunnerGroupID, subscription.Labels)
+				if err != nil || jit == "" {
+					return false, err
+				}
+				secrets["JIT"] = jit
+				return true, nil
+			}}
 			spec.Command = []string{"sh", "-c", `exec ./run.sh --jitconfig "$JIT"`}
 			spec.WorkDir = subscription.GitHubRunner.WorkDir
 			if spec.WorkDir == "" {
@@ -171,7 +190,7 @@ func (s *Server) actOnEvent(subscription config.EventSubscription, e events.Even
 				}
 			}
 		}
-		_, err := s.runsManager.Submit(0, "events", spec, secrets)
+		_, err := s.runsManager.SubmitPrepared(0, "events", spec, nil, preparation)
 		return err
 	case "deploy", "preview":
 		deployment, err := s.manager.GetDeployment(subscription.Deployment)

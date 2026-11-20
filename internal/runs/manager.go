@@ -26,7 +26,13 @@ var knownRuntimeTypes = []runtimes.Type{runtimes.TypeDocker, runtimes.TypeFirecr
 
 var ErrClosed = errors.New("runs manager is closed")
 
+type Preparation struct {
+	Key   string
+	Apply func(context.Context, map[string]string) (bool, error)
+}
+
 type pending struct {
+	preparation Preparation
 	reservation uint64
 	run         Run
 	secrets     map[string]string
@@ -125,6 +131,10 @@ func NewManagerWithMemoryBudget(root string, runtime runtimes.Runtime, workers i
 }
 
 func (m *Manager) Submit(owner int64, username string, spec Spec, secrets map[string]string) (*Run, error) {
+	return m.SubmitPrepared(owner, username, spec, secrets, Preparation{})
+}
+
+func (m *Manager) SubmitPrepared(owner int64, username string, spec Spec, secrets map[string]string, preparation Preparation) (*Run, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
@@ -172,29 +182,53 @@ func (m *Manager) Submit(owner int64, username string, spec Spec, secrets map[st
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	queued := &pending{run: run, secrets: secretValues, ctx: ctx, cancel: cancel}
+	queued := &pending{preparation: preparation, run: run, secrets: secretValues, ctx: ctx, cancel: cancel}
 	m.active[run.ID] = queued
 	m.queue = append(m.queue, queued)
 	m.ready.Signal()
 	return &run, nil
 }
 
+func (m *Manager) CancelPending(key string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if key == "" {
+		return 0, nil
+	}
+	count := 0
+	for _, job := range m.active {
+		if job.preparation.Key == key {
+			if err := m.cancelLocked(job); err != nil {
+				return count, err
+			}
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *Manager) Cancel(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	queued := m.active[id]
-	if queued == nil {
-		return nil
+	if job := m.active[id]; job != nil {
+		return m.cancelLocked(job)
 	}
-	queued.cancel()
+	return nil
+}
+
+func (m *Manager) cancelLocked(job *pending) error {
+	job.cancel()
 	m.ready.Broadcast()
-	if queued.run.Status == StatusQueued {
-		clear(queued.secrets)
-		queued.secrets = nil
-		queued.run.Status = StatusCancelled
+	if index := slices.Index(m.queue, job); index >= 0 {
+		job.run.Status = StatusCancelled
 		now := time.Now().UTC()
-		queued.run.FinishedAt = &now
-		return m.Store.Save(&queued.run)
+		job.run.FinishedAt = &now
+		if err := m.Store.Save(&job.run); err != nil {
+			return err
+		}
+		clear(job.secrets)
+		m.queue = slices.Delete(m.queue, index, index+1)
+		delete(m.active, job.run.ID)
 	}
 	return nil
 }
@@ -310,6 +344,23 @@ func (m *Manager) execute(queued *pending) {
 		m.mu.Unlock()
 	}()
 	defer m.finishRun(&run)
+
+	if prepare := queued.preparation.Apply; prepare != nil {
+		needed, err := prepare(ctx, queued.secrets)
+		m.mu.Lock()
+		queued.preparation.Key = ""
+		cancelled := queued.ctx.Err() != nil
+		m.mu.Unlock()
+		switch {
+		case cancelled || (err == nil && !needed):
+			run.Status = StatusCancelled
+			return
+		case err != nil:
+			run.Status = StatusFailed
+			run.Error = err.Error()
+			return
+		}
+	}
 
 	artifactDirectory := filepath.Join(m.root, run.ID, "artifacts")
 	if err := os.MkdirAll(artifactDirectory, 0700); err != nil {

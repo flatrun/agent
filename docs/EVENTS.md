@@ -65,7 +65,7 @@ events and share delivery logging and deduplication when a delivery ID is given.
 
 ## Actions runners
 
-Install the GitHub App on the repository with Administration write permission
+Install the GitHub App on the repository with Administration write and Actions read permissions
 and subscribe its webhook to workflow jobs. Keep its private key readable only
 by the agent. The delivery's installation ID selects the installation token.
 The token is restricted to the delivery's repository.
@@ -77,8 +77,11 @@ The runner name is unique. JIT labels come from the subscription and the work fo
 or the delivery log. The run receives JIT configuration only as secret env
 `JIT`; its command is `sh -c 'exec ./run.sh --jitconfig "$JIT"'` in
 `/home/runner`, with `RUNNER_ALLOW_RUNASROOT=1` and egress enabled.
-Completed and cancelled job events require no cleanup action: the runner exits
-with the job.
+When GitHub assigns or finishes a job, FlatRun cancels pending runner requests
+for that job on the same webhook endpoint and repository. Before starting a
+runner, FlatRun checks that GitHub still lists the job as queued. This also
+covers missed or out-of-order deliveries. A failed lookup marks the local run
+as failed. Once a runner starts, GitHub controls its assigned job.
 
 Image defaults to `ghcr.io/actions/actions-runner`, timeout to 600 seconds
 (maximum 3600), and runner group to 1. Set runtime to `firecracker` or `docker`.
