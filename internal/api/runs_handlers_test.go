@@ -874,3 +874,67 @@ func TestRunMemoryBudgetHTTP(t *testing.T) {
 	}
 	awaitRun(t, admin, waiting, "starting")
 }
+
+type retryCleanupRuntime struct {
+	eventRuntime
+	retryStarted chan struct{}
+	allowCleanup chan struct{}
+}
+
+func (r *retryCleanupRuntime) Create(ctx context.Context, spec runtimes.Spec) (runtimes.Instance, error) {
+	if spec.Image == "cleanup-probe" {
+		return &retryCleanupInstance{runtime: r}, nil
+	}
+	return eventInstance{}, nil
+}
+
+type retryCleanupInstance struct {
+	eventInstance
+	runtime  *retryCleanupRuntime
+	attempts int
+}
+
+func (i *retryCleanupInstance) Destroy(ctx context.Context) error {
+	i.attempts++
+	if i.attempts == 1 {
+		return context.DeadlineExceeded
+	}
+	close(i.runtime.retryStarted)
+	select {
+	case <-i.runtime.allowCleanup:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestRunCleanupReleasesBudgetHTTP(t *testing.T) {
+	server, client := setupWorkspaceTestServer(t)
+	rt := &retryCleanupRuntime{eventRuntime: eventRuntime{runtimeType: runtimes.TypeDocker}, retryStarted: make(chan struct{}), allowCleanup: make(chan struct{})}
+	manager, err := runs.NewManagerWithMemoryBudget(server.config.DeploymentsPath, rt, 2, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.runsManager = manager
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	admin := client.login("admin", "admin-pass")
+	submit := func(image string) string {
+		return submitRun(t, admin, map[string]any{"image": image, "memory_bytes": 1 << 30})
+	}
+	first := submit("cleanup-probe")
+	awaitRun(t, admin, first, "failed")
+	waiting := submit("next")
+	select {
+	case <-rt.retryStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup did not retry")
+	}
+	awaitRun(t, admin, waiting, "queued")
+	close(rt.allowCleanup)
+	awaitRun(t, admin, waiting, "succeeded")
+	awaitRun(t, admin, first, "failed")
+}

@@ -42,6 +42,8 @@ type Manager struct {
 	mu             sync.Mutex
 	queue          []*pending
 	ready          *sync.Cond
+	cleanupCtx     context.Context
+	stopCleanup    context.CancelFunc
 	memoryBudget   uint64
 	reserved       uint64
 	active         map[string]*pending
@@ -115,6 +117,7 @@ func NewManagerWithMemoryBudget(root string, runtime runtimes.Runtime, workers i
 		memoryBudget:   budget,
 		active:         map[string]*pending{},
 	}
+	manager.cleanupCtx, manager.stopCleanup = context.WithCancel(context.Background())
 	manager.ready = sync.NewCond(&manager.mu)
 	for range workers {
 		manager.wg.Add(1)
@@ -206,6 +209,7 @@ func (m *Manager) Close() error {
 		return nil
 	}
 	m.closed = true
+	m.stopCleanup()
 	for _, queued := range m.active {
 		queued.cancel()
 	}
@@ -324,8 +328,11 @@ func (m *Manager) execute(queued *pending) {
 			cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := instance.Destroy(cleanupContext); err != nil {
-				// The instance may still own the memory until operator cleanup and restart.
-				queued.reservation = 0
+				if queued.reservation > 0 {
+					m.wg.Add(1)
+					go m.retryCleanup(instance, queued.reservation)
+					queued.reservation = 0
+				}
 				run.Status = StatusFailed
 				run.Error = sanitizer.redact(fmt.Sprintf("instance cleanup failed: %v", err))
 			}
@@ -367,6 +374,27 @@ func (m *Manager) execute(queued *pending) {
 		<-logsDone
 	}
 	m.collectArtifacts(&run, instance, artifactDirectory, sanitizer)
+}
+
+func (m *Manager) retryCleanup(instance runtimes.Instance, reservation uint64) {
+	defer m.wg.Done()
+	for delay := time.Second; ; delay = min(2*delay, time.Minute) {
+		select {
+		case <-m.cleanupCtx.Done():
+			return
+		case <-time.After(delay):
+		}
+		ctx, cancel := context.WithTimeout(m.cleanupCtx, time.Minute)
+		err := instance.Destroy(ctx)
+		cancel()
+		if err == nil {
+			m.mu.Lock()
+			m.reserved -= reservation
+			m.ready.Broadcast()
+			m.mu.Unlock()
+			return
+		}
+	}
 }
 
 func (m *Manager) startRun(ctx context.Context, queued *pending, run *Run) (runtimes.Instance, error) {
